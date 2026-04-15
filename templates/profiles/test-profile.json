@@ -1,0 +1,13 @@
+{
+  "id": "test-profile",
+  "name": "Test Profile",
+  "category": "engineering",
+  "description": "Test profile for validation",
+  "defaultModel": "openai/gpt-4",
+  "defaultSkills": ["test.read", "test.write"],
+  "defaultPolicies": ["test-policy"],
+  "routines": ["test-routine-1", "test-routine-2"],
+  "tags": ["test", "validation"],
+  "visibility": "public",
+  "priority": 999
+}
