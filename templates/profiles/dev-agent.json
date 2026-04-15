@@ -7,7 +7,5 @@
   "defaultSkills": ["code.search", "code.edit", "tests.run"],
   "defaultPolicies": ["safe-operator"],
   "routines": ["task-prep", "eod-review"],
-  "tags": ["development", "code-quality", "engineering"],
-  "visibility": "public",
-  "priority": 3
+  "tags": ["development", "code-quality", "engineering"]
 }

@@ -7,7 +7,5 @@
   "defaultSkills": ["test.read", "test.write"],
   "defaultPolicies": ["test-policy"],
   "routines": ["test-routine-1", "test-routine-2"],
-  "tags": ["test", "validation"],
-  "visibility": "public",
-  "priority": 999
+  "tags": ["test", "validation"]
 }

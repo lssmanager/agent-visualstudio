@@ -7,7 +7,5 @@
   "defaultSkills": ["status.read", "tasks.manage", "notes.capture"],
   "defaultPolicies": ["safe-operator"],
   "routines": ["morning-brief", "eod-review", "followup-sweep", "task-prep"],
-  "tags": ["orchestration", "follow-ups", "leadership"],
-  "visibility": "public",
-  "priority": 1
+  "tags": ["orchestration", "follow-ups", "leadership"]
 }

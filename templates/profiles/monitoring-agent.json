@@ -7,7 +7,5 @@
   "defaultSkills": ["health.read", "logs.analyze", "usage.cost.read"],
   "defaultPolicies": ["safe-operator"],
   "routines": ["system-check", "anomaly-scan"],
-  "tags": ["monitoring", "health", "diagnostics"],
-  "visibility": "public",
-  "priority": 3
+  "tags": ["monitoring", "health", "diagnostics"]
 }

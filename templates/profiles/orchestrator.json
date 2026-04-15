@@ -7,7 +7,5 @@
   "defaultSkills": ["routing.apply", "status.read"],
   "defaultPolicies": ["safe-operator"],
   "routines": ["task-prep", "followup-sweep"],
-  "tags": ["orchestration", "delegation", "routing"],
-  "visibility": "public",
-  "priority": 1
+  "tags": ["orchestration", "delegation", "routing"]
 }

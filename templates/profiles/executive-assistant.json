@@ -7,7 +7,5 @@
   "defaultSkills": ["calendar.read", "tasks.manage", "notes.capture"],
   "defaultPolicies": ["safe-operator"],
   "routines": ["morning-brief", "task-prep", "followup-sweep"],
-  "tags": ["communication", "coordination", "support"],
-  "visibility": "public",
-  "priority": 2
+  "tags": ["communication", "coordination", "support"]
 }

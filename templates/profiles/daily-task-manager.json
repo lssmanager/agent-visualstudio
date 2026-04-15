@@ -7,7 +7,5 @@
   "defaultSkills": ["tasks.manage", "calendar.read"],
   "defaultPolicies": ["safe-operator"],
   "routines": ["morning-brief", "task-prep", "eod-review"],
-  "tags": ["task-execution", "planning", "discipline"],
-  "visibility": "public",
-  "priority": 2
+  "tags": ["task-execution", "planning", "discipline"]
 }

@@ -7,7 +7,5 @@
   "defaultSkills": ["contacts.search", "followups.plan"],
   "defaultPolicies": ["safe-operator"],
   "routines": ["followup-sweep", "relationship-review"],
-  "tags": ["relationships", "outreach", "continuity"],
-  "visibility": "public",
-  "priority": 2
+  "tags": ["relationships", "outreach", "continuity"]
 }
