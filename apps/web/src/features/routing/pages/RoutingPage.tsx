@@ -7,7 +7,7 @@ import { ChannelBindingsTable } from '../components/ChannelBindingsTable';
 import { RouteEditor } from '../components/RouteEditor';
 import { PageHeader, Alert, Card } from '../../../components';
 
-export function RoutingPage() {
+export default function RoutingPage() {
   const { state } = useStudioState();
   const [workspace, setWorkspace] = useState<WorkspaceSpec | null>(state.workspace);
 

@@ -10,7 +10,7 @@ import { WorkspaceFileTree } from '../components/WorkspaceFileTree';
 import { WorkspaceList } from '../components/WorkspaceList';
 import { PageHeader, Card } from '../../../components';
 
-export function WorkspacesPage() {
+export default function WorkspacesPage() {
   const { state, refresh } = useStudioState();
   const [preview, setPreview] = useState<DeployPreview | null>(null);
   const [showEditor, setShowEditor] = useState(false);
