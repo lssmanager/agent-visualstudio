@@ -15,7 +15,7 @@ export class WorkspacesCompiler {
   private readonly policiesRepo = new PoliciesRepository();
   private readonly profilesService = new ProfilesService();
 
-  compileCurrent(): { artifacts: DeployableArtifact[]; diagnostics: string[] } {
+  async compileCurrent(): Promise<{ artifacts: DeployableArtifact[]; diagnostics: string[] }> {
     const workspace = this.workspacesRepo.getCurrent();
     if (!workspace) {
       return { artifacts: [], diagnostics: ['Workspace spec not found'] };
@@ -26,7 +26,7 @@ export class WorkspacesCompiler {
       agents: this.agentsRepo.list(),
       skills: this.skillsRepo.list(),
       flows: this.flowsRepo.list(),
-      profiles: this.profilesService.getAll(),
+      profiles: await this.profilesService.getAll(),
       policies: this.policiesRepo.list(),
     });
   }

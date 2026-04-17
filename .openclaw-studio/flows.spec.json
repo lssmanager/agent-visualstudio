@@ -1,0 +1,36 @@
+[
+  {
+    "id": "daily-ops-flow",
+    "workspaceId": "chief-of-staff-ws",
+    "name": "Daily Operations Flow",
+    "description": "Automated daily flow: morning brief, task triage, EOD review.",
+    "trigger": "schedule:daily:08:00",
+    "nodes": [
+      {
+        "id": "morning-brief",
+        "type": "routine",
+        "label": "Morning Brief",
+        "config": { "routineId": "morning-brief" }
+      },
+      {
+        "id": "task-triage",
+        "type": "routine",
+        "label": "Task Triage",
+        "config": { "routineId": "task-prep" }
+      },
+      {
+        "id": "eod-review",
+        "type": "routine",
+        "label": "EOD Review",
+        "config": { "routineId": "eod-review" }
+      }
+    ],
+    "edges": [
+      { "from": "morning-brief", "to": "task-triage" },
+      { "from": "task-triage", "to": "eod-review" }
+    ],
+    "isEnabled": true,
+    "createdAt": "2026-04-16T00:00:00.000Z",
+    "updatedAt": "2026-04-16T00:00:00.000Z"
+  }
+]

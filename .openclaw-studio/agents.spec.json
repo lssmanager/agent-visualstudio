@@ -1,0 +1,23 @@
+[
+  {
+    "id": "ops-coordinator",
+    "workspaceId": "chief-of-staff-ws",
+    "name": "Operations Coordinator",
+    "role": "coordinator",
+    "description": "Coordinates operational tasks, follow-ups, and executive summaries for the chief-of-staff workspace.",
+    "instructions": "You are the Operations Coordinator. Your role is to manage daily operations, track priorities, coordinate follow-ups, and prepare executive summaries. Use status.read to check current state, tasks.manage to handle task lifecycle, and notes.capture for meeting notes and action items.",
+    "model": "openai/gpt-5.4-mini",
+    "skillRefs": ["status.read", "tasks.manage", "notes.capture"],
+    "tags": ["operations", "coordination"],
+    "visibility": "workspace",
+    "executionMode": "direct",
+    "handoffRules": [],
+    "channelBindings": [],
+    "policyBindings": [
+      { "policyId": "safe-operator", "mode": "enforce" }
+    ],
+    "isEnabled": true,
+    "createdAt": "2026-04-16T00:00:00.000Z",
+    "updatedAt": "2026-04-16T00:00:00.000Z"
+  }
+]

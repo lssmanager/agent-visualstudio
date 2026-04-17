@@ -176,6 +176,15 @@ export const profileSpecSchema = z.object({
   tags: z.array(z.string()).optional(),
 });
 
+export const routineSpecSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string().min(1),
+  schedule: z.string().optional(),
+  promptTemplate: z.string().optional(),
+  steps: z.array(z.string()).default([]),
+});
+
 export const studioEntitySchemas = {
   workspace: workspaceSpecSchema,
   agent: agentSpecSchema,
@@ -183,6 +192,7 @@ export const studioEntitySchemas = {
   flow: flowSpecSchema,
   profile: profileSpecSchema,
   policy: policySpecSchema,
+  routine: routineSpecSchema,
 } as const;
 
 export type WorkspaceSpecInput = z.infer<typeof workspaceSpecSchema>;
@@ -191,3 +201,4 @@ export type SkillSpecInput = z.infer<typeof skillSpecSchema>;
 export type FlowSpecInput = z.infer<typeof flowSpecSchema>;
 export type ProfileSpecInput = z.infer<typeof profileSpecSchema>;
 export type PolicySpecInput = z.infer<typeof policySpecSchema>;
+export type RoutineSpecInput = z.infer<typeof routineSpecSchema>;

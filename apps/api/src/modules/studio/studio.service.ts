@@ -18,10 +18,12 @@ export class StudioService {
   private readonly gateway = new GatewayService();
 
   async getState() {
-    const [health, diagnostics, sessions] = await Promise.all([
+    const [health, diagnostics, sessions, profiles, compile] = await Promise.all([
       this.gateway.health(),
       this.gateway.diagnostics(),
       this.gateway.listSessions(),
+      this.profiles.getAll(),
+      this.compiler.compileCurrent(),
     ]);
 
     return {
@@ -30,8 +32,8 @@ export class StudioService {
       skills: this.skills.findAll(),
       flows: this.flows.findAll(),
       policies: this.policies.findAll(),
-      profiles: this.profiles.getAll(),
-      compile: this.compiler.compileCurrent(),
+      profiles,
+      compile,
       runtime: {
         health,
         diagnostics,

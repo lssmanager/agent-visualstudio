@@ -57,8 +57,11 @@ export interface ProfileSpec {
   id: string;
   name: string;
   description: string;
-  routines: string[];
-  defaultSkills: string[];
+  category?: string;
+  defaultModel?: string;
+  defaultSkills?: string[];
+  routines?: string[];
+  tags?: string[];
 }
 
 export interface DeployPreview {

@@ -1,0 +1,60 @@
+[
+  {
+    "id": "status.read",
+    "name": "Status Reader",
+    "description": "Read current status of tasks, projects, and team members.",
+    "version": "1.0.0",
+    "category": "operations",
+    "permissions": ["read:tasks", "read:projects"],
+    "functions": [
+      {
+        "name": "get_status",
+        "description": "Retrieve current status for a given entity (task, project, or team member)."
+      },
+      {
+        "name": "list_active",
+        "description": "List all active items with their current status."
+      }
+    ]
+  },
+  {
+    "id": "tasks.manage",
+    "name": "Task Manager",
+    "description": "Create, update, and close tasks in the workspace.",
+    "version": "1.0.0",
+    "category": "operations",
+    "permissions": ["read:tasks", "write:tasks"],
+    "functions": [
+      {
+        "name": "create_task",
+        "description": "Create a new task with title, assignee, and priority."
+      },
+      {
+        "name": "update_task",
+        "description": "Update task status, priority, or assignee."
+      },
+      {
+        "name": "close_task",
+        "description": "Mark a task as completed or cancelled."
+      }
+    ]
+  },
+  {
+    "id": "notes.capture",
+    "name": "Notes Capture",
+    "description": "Capture meeting notes, action items, and key decisions.",
+    "version": "1.0.0",
+    "category": "support",
+    "permissions": ["write:notes"],
+    "functions": [
+      {
+        "name": "save_note",
+        "description": "Save a note with optional tags and category."
+      },
+      {
+        "name": "list_notes",
+        "description": "List recent notes filtered by date or tags."
+      }
+    ]
+  }
+]

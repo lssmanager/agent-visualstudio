@@ -10,8 +10,8 @@ export function registerDeployRoutes(router: Router) {
   const diffService = new DeployDiffService();
   const deployService = new DeployService();
 
-  router.get('/deploy/preview', (_req, res) => {
-    const compileResult = compiler.compileCurrent();
+  router.get('/deploy/preview', async (_req, res) => {
+    const compileResult = await compiler.compileCurrent();
     const diff = diffService.diffArtifacts(compileResult.artifacts);
 
     res.json({
@@ -22,7 +22,7 @@ export function registerDeployRoutes(router: Router) {
 
   router.post('/deploy/apply', async (req, res) => {
     const provided = req.body as { artifacts?: DeployableArtifact[]; applyRuntime?: boolean };
-    const compileResult = compiler.compileCurrent();
+    const compileResult = await compiler.compileCurrent();
     if (compileResult.diagnostics.length > 0) {
       return res.status(422).json({ ok: false, diagnostics: compileResult.diagnostics });
     }

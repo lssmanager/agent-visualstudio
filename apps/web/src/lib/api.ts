@@ -29,13 +29,37 @@ export async function applyDeploy(payload: { applyRuntime?: boolean }) {
   return parseJson<{ ok: boolean }>(response);
 }
 
-export async function createWorkspace(input: { id: string; name: string; slug: string; profileId?: string }) {
-  const response = await fetch(`${API_BASE}/workspaces`, {
+export async function createWorkspace(input: {
+  id?: string;
+  name: string;
+  slug?: string;
+  profileId?: string;
+  defaultModel?: string;
+  skillIds?: string[];
+}) {
+  // Bootstrap endpoint: backend handles merge order (request > profile > defaults)
+  // Only include fields user explicitly set - backend fills in profile defaults
+  const workspaceSpec: Record<string, any> = {
+    name: input.name,
+    agentIds: [],
+    flowIds: [],
+    policyIds: [],
+  };
+
+  // Only include optional fields if explicitly set (not undefined)
+  if (input.slug !== undefined) workspaceSpec.slug = input.slug;
+  if (input.defaultModel !== undefined) workspaceSpec.defaultModel = input.defaultModel;
+  if (input.skillIds !== undefined) workspaceSpec.skillIds = input.skillIds;
+
+  const response = await fetch(`${API_BASE}/workspaces/bootstrap`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(input),
+    body: JSON.stringify({
+      profileId: input.profileId,
+      workspaceSpec,
+    }),
   });
-  return parseJson<WorkspaceSpec>(response);
+  return parseJson<{ workspaceSpec: WorkspaceSpec; created: boolean; message: string; timestamp: string }>(response);
 }
 
 export async function updateWorkspace(input: Partial<WorkspaceSpec>) {

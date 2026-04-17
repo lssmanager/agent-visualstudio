@@ -84,12 +84,13 @@ export function registerWorkspacesRoutes(router: Router) {
     }
   });
 
-  router.get('/workspaces/compile', (_req, res) => {
-    res.json(compiler.compileCurrent());
+  router.get('/workspaces/compile', async (_req, res) => {
+    const result = await compiler.compileCurrent();
+    res.json(result);
   });
 
-  router.post('/compile', (_req, res) => {
-    const result = compiler.compileCurrent();
+  router.post('/compile', async (_req, res) => {
+    const result = await compiler.compileCurrent();
     if (result.diagnostics.length > 0) {
       return res.status(422).json(result);
     }

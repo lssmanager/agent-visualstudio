@@ -95,7 +95,6 @@ export class WorkspacesService {
       routingRules: input.workspaceSpec.routingRules ?? [],
       routines: input.workspaceSpec.routines ?? profileDefaults.routines ?? [],
       tags: input.workspaceSpec.tags ?? [],
-      metadata: input.workspaceSpec.metadata,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     }) as WorkspaceSpec;
