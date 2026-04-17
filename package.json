@@ -37,6 +37,7 @@
     "react-hook-form": "^7.53.0",
     "react-router-dom": "^6.26.0",
     "reactflow": "^11.11.0",
+    "lucide-react": "^0.344.0",
     "ws": "^8.15.0",
     "zod": "^3.22.0"
   },

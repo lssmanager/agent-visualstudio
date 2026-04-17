@@ -1,10 +1,18 @@
 import { useEffect, useState } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 
 import { getStudioState } from './lib/api';
 import { StudioStateResponse } from './lib/types';
 import { StudioStateContext } from './lib/StudioStateContext';
+import { MainLayout } from './layouts/MainLayout';
 import OnboardingPage from './features/onboarding/pages/OnboardingPage';
 import StudioPage from './features/studio/pages/StudioPage';
+import WorkspacesPage from './features/workspaces/pages/WorkspacesPage';
+import AgentListPage from './features/agents/pages/AgentListPage';
+import ProfilesPage from './features/profiles/pages/ProfilesPage';
+import DiagnosticsPage from './features/diagnostics/pages/DiagnosticsPage';
+import SessionsPage from './features/sessions/pages/SessionsPage';
+import RoutingPage from './features/routing/pages/RoutingPage';
 
 export function App() {
   const [state, setState] = useState<StudioStateResponse | null>(null);
@@ -76,7 +84,22 @@ export function App() {
 
   return (
     <StudioStateContext.Provider value={{ state, refresh: refreshState }}>
-      <StudioPage />
+      <BrowserRouter>
+        <Routes>
+          {/* Authenticated routes with layout */}
+          <Route element={<MainLayout />}>
+            <Route path="/" element={<StudioPage />} />
+            <Route path="/workspaces" element={<WorkspacesPage />} />
+            <Route path="/agents" element={<AgentListPage />} />
+            <Route path="/profiles" element={<ProfilesPage />} />
+            <Route path="/diagnostics" element={<DiagnosticsPage />} />
+            <Route path="/sessions" element={<SessionsPage />} />
+            <Route path="/routing" element={<RoutingPage />} />
+            {/* Catch-all for undefined routes */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
     </StudioStateContext.Provider>
   );
 }
