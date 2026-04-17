@@ -1,5 +1,5 @@
 import { useStudioState } from '../../../lib/StudioStateContext';
-import { Activity, AlertCircle, CheckCircle, Circle, Zap } from 'lucide-react';
+import { Activity, Circle, MessageSquare, Zap } from 'lucide-react';
 import { PageHeader, Alert, Card } from '../../../components';
 
 export default function DiagnosticsPage() {
@@ -19,7 +19,7 @@ export default function DiagnosticsPage() {
       />
 
       {/* Runtime Health Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Online Status */}
         <Card>
           <div className="flex items-center gap-3 mb-4">
@@ -66,6 +66,16 @@ export default function DiagnosticsPage() {
             {workspace ? `Loaded: ${workspace.name}` : 'No workspace selected'}
           </p>
         </Card>
+
+        {/* Sessions */}
+        <Card>
+          <div className="flex items-center gap-3 mb-4">
+            <MessageSquare size={20} className="text-blue-600" />
+            <h3 className="font-semibold text-slate-900">Sessions</h3>
+          </div>
+          <div className="text-3xl font-bold text-slate-900">{sessions.length}</div>
+          <p className="text-sm text-slate-600 mt-2">Active gateway sessions</p>
+        </Card>
       </div>
 
       {/* Sessions */}
@@ -78,30 +88,41 @@ export default function DiagnosticsPage() {
                 <tr className="border-b border-slate-200">
                   <th className="text-left py-3 px-4 font-medium text-slate-700">Session ID</th>
                   <th className="text-left py-3 px-4 font-medium text-slate-700">Status</th>
-                  <th className="text-left py-3 px-4 font-medium text-slate-700">Messages</th>
+                  <th className="text-left py-3 px-4 font-medium text-slate-700">Channel</th>
+                  <th className="text-left py-3 px-4 font-medium text-slate-700">Agent</th>
                 </tr>
               </thead>
               <tbody>
-                {sessions.slice(0, 10).map((session: any, idx: number) => (
-                  <tr key={idx} className="border-b border-slate-200 hover:bg-slate-50">
-                    <td className="py-3 px-4 text-slate-900 font-mono text-xs">
-                      {typeof session === 'string'
-                        ? session.substring(0, 24) + '...'
-                        : `Session ${idx + 1}`}
-                    </td>
-                    <td className="py-3 px-4">
-                      <span className="inline-flex items-center gap-2">
-                        <Circle size={10} className="fill-emerald-500 text-emerald-500" />
-                        <span className="text-emerald-700">Active</span>
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-slate-600">
-                      {typeof session === 'object' && session?.messages
-                        ? session.messages.length
-                        : '—'}
-                    </td>
-                  </tr>
-                ))}
+                {sessions.slice(0, 10).map((session: any, idx: number) => {
+                  const s = session as {
+                    id?: string;
+                    agentId?: string;
+                    status?: string;
+                    channel?: string;
+                  };
+                  return (
+                    <tr key={s.id ?? idx} className="border-b border-slate-100 hover:bg-slate-50">
+                      <td className="py-3 px-4 font-mono text-xs text-slate-900">
+                        {s.id ? s.id.substring(0, 16) + '…' : `session-${idx + 1}`}
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className="inline-flex items-center gap-1.5">
+                          <Circle
+                            size={8}
+                            className={
+                              s.status === 'active'
+                                ? 'fill-emerald-500 text-emerald-500'
+                                : 'fill-slate-300 text-slate-300'
+                            }
+                          />
+                          <span className="text-xs text-slate-700">{s.status ?? 'unknown'}</span>
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-sm text-slate-600">{s.channel ?? '—'}</td>
+                      <td className="py-3 px-4 font-mono text-xs text-slate-600">{s.agentId ?? '—'}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
             {sessions.length > 10 && (

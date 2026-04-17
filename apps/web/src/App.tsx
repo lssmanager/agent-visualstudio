@@ -6,6 +6,7 @@ import { StudioStateResponse } from './lib/types';
 import { StudioStateContext } from './lib/StudioStateContext';
 import { MainLayout } from './layouts/MainLayout';
 import OnboardingPage from './features/onboarding/pages/OnboardingPage';
+import OverviewPage from './features/overview/pages/OverviewPage';
 import StudioPage from './features/studio/pages/StudioPage';
 import WorkspacesPage from './features/workspaces/pages/WorkspacesPage';
 import AgentListPage from './features/agents/pages/AgentListPage';
@@ -88,7 +89,8 @@ export function App() {
         <Routes>
           {/* Authenticated routes with layout */}
           <Route element={<MainLayout />}>
-            <Route path="/" element={<StudioPage />} />
+            <Route path="/" element={<OverviewPage />} />
+            <Route path="/studio" element={<StudioPage />} />
             <Route path="/workspaces" element={<WorkspacesPage />} />
             <Route path="/agents" element={<AgentListPage />} />
             <Route path="/profiles" element={<ProfilesPage />} />

@@ -1,11 +1,17 @@
 import { useStudioState } from '../../../lib/StudioStateContext';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare, Circle } from 'lucide-react';
 import { PageHeader, Card, Badge } from '../../../components';
 
 export default function SessionsPage() {
   const { state } = useStudioState();
 
   const sessions = state.runtime?.sessions?.payload ?? [];
+
+  const hasStatusData = sessions.some((s: any) => s?.status !== undefined);
+  const activeCount = hasStatusData
+    ? sessions.filter((s: any) => s?.status === 'active').length
+    : sessions.length;
+  const activeLabel = hasStatusData ? 'Active Now' : 'Sessions';
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -22,38 +28,56 @@ export default function SessionsPage() {
             <table className="w-full">
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">ID</th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Agent</th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Created</th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Messages</th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Session ID</th>
                   <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Status</th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Channel</th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Agent</th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold text-slate-900">Messages</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200">
-                {sessions.map((session: any, idx: number) => (
-                  <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-6 py-4 text-sm">
-                      <code className="bg-slate-100 text-slate-900 px-2 py-1 rounded text-xs font-mono">
-                        {typeof session === 'string' ? session.substring(0, 16) : `sess-${idx}`}
-                      </code>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-slate-900">
-                      {session?.agentId || 'Unknown'}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-slate-600">
-                      {session?.createdAt ? new Date(session.createdAt).toLocaleString() : '—'}
-                    </td>
-                    <td className="px-6 py-4 text-sm">
-                      <div className="flex items-center gap-2 text-slate-600">
-                        <MessageSquare size={16} />
-                        <span>{session?.messages?.length || 0}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-sm">
-                      <Badge variant="success">Active</Badge>
-                    </td>
-                  </tr>
-                ))}
+              <tbody className="divide-y divide-slate-100">
+                {sessions.map((session: any, idx: number) => {
+                  const s = session as {
+                    id?: string;
+                    agentId?: string;
+                    status?: string;
+                    channel?: string;
+                    messages?: unknown[];
+                    createdAt?: string;
+                  };
+                  return (
+                    <tr key={s.id ?? idx} className="hover:bg-slate-50 transition-colors">
+                      <td className="px-6 py-4 text-sm">
+                        <code className="bg-slate-100 text-slate-900 px-2 py-1 rounded text-xs font-mono">
+                          {s.id ? s.id.substring(0, 20) : `sess-${idx + 1}`}
+                        </code>
+                      </td>
+                      <td className="px-6 py-4 text-sm">
+                        <span className="inline-flex items-center gap-1.5">
+                          <Circle
+                            size={8}
+                            className={
+                              s.status === 'active'
+                                ? 'fill-emerald-500 text-emerald-500'
+                                : 'fill-slate-300 text-slate-300'
+                            }
+                          />
+                          <span className="text-xs text-slate-700">{s.status ?? 'unknown'}</span>
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-slate-600">{s.channel ?? '—'}</td>
+                      <td className="px-6 py-4 text-sm">
+                        <span className="font-mono text-xs text-slate-900">{s.agentId ?? '—'}</span>
+                      </td>
+                      <td className="px-6 py-4 text-sm">
+                        <div className="flex items-center gap-2 text-slate-600">
+                          <MessageSquare size={14} />
+                          <span>{s.messages?.length ?? 0}</span>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -73,8 +97,13 @@ export default function SessionsPage() {
           <p className="text-2xl font-bold text-slate-900 mt-1">{sessions.length}</p>
         </Card>
         <Card className="p-4">
-          <p className="text-sm text-slate-600">Active Now</p>
-          <p className="text-2xl font-bold text-emerald-600 mt-1">{sessions.length}</p>
+          <p className="text-sm text-slate-600">{activeLabel}</p>
+          <p className="text-2xl font-bold text-emerald-600 mt-1">{activeCount}</p>
+          <div className="mt-2">
+            <Badge variant={activeCount > 0 ? 'success' : 'default'}>
+              {activeCount > 0 ? 'Active' : 'None'}
+            </Badge>
+          </div>
         </Card>
         <Card className="p-4">
           <p className="text-sm text-slate-600">Avg Messages/Session</p>

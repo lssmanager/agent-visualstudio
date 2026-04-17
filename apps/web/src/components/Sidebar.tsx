@@ -1,6 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  Home,
+  LayoutDashboard,
+  Cpu,
   Package,
   Users,
   BookOpen,
@@ -21,13 +22,14 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { label: 'Studio', path: '/', icon: <Home size={20} /> },
-  { label: 'Workspaces', path: '/workspaces', icon: <Package size={20} /> },
-  { label: 'Agents', path: '/agents', icon: <Users size={20} /> },
-  { label: 'Profiles', path: '/profiles', icon: <BookOpen size={20} /> },
+  { label: 'Overview',    path: '/',            icon: <LayoutDashboard size={20} /> },
+  { label: 'Studio',      path: '/studio',      icon: <Cpu size={20} /> },
+  { label: 'Workspaces',  path: '/workspaces',  icon: <Package size={20} /> },
+  { label: 'Agents',      path: '/agents',      icon: <Users size={20} /> },
+  { label: 'Profiles',    path: '/profiles',    icon: <BookOpen size={20} /> },
   { label: 'Diagnostics', path: '/diagnostics', icon: <AlertCircle size={20} /> },
-  { label: 'Sessions', path: '/sessions', icon: <MessageSquare size={20} /> },
-  { label: 'Routing', path: '/routing', icon: <Landmark size={20} /> },
+  { label: 'Sessions',    path: '/sessions',    icon: <MessageSquare size={20} /> },
+  { label: 'Routing',     path: '/routing',     icon: <Landmark size={20} /> },
 ];
 
 export function Sidebar({ onNavigate }: SidebarProps) {
@@ -50,7 +52,10 @@ export function Sidebar({ onNavigate }: SidebarProps) {
       {/* Navigation */}
       <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
         {navItems.map((item) => {
-          const isActive = location.pathname === item.path;
+          const isActive =
+            item.path === '/'
+              ? location.pathname === '/'
+              : location.pathname.startsWith(item.path);
           return (
             <button
               key={item.path}

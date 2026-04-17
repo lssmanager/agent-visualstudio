@@ -1,15 +1,16 @@
 import { useState } from 'react';
-import { Landmark } from 'lucide-react';
+import { Landmark, GitBranch } from 'lucide-react';
 
 import { useStudioState } from '../../../lib/StudioStateContext';
 import { WorkspaceSpec } from '../../../lib/types';
 import { ChannelBindingsTable } from '../components/ChannelBindingsTable';
 import { RouteEditor } from '../components/RouteEditor';
-import { PageHeader, Alert, Card } from '../../../components';
+import { PageHeader, Alert, Card, Badge, EmptyState } from '../../../components';
 
 export default function RoutingPage() {
   const { state } = useStudioState();
   const [workspace, setWorkspace] = useState<WorkspaceSpec | null>(state.workspace);
+  const flows = state.flows ?? [];
 
   if (!workspace) {
     return (
@@ -29,6 +30,58 @@ export default function RoutingPage() {
         description="Configure how agents are routed to channels and manage channel bindings."
         icon={Landmark}
       />
+
+      {/* Flows */}
+      <div>
+        <h2 className="text-base font-semibold text-slate-900 mb-3 flex items-center gap-2">
+          <GitBranch size={18} className="text-blue-600" />
+          Flows
+        </h2>
+        {flows.length === 0 ? (
+          <EmptyState
+            icon={GitBranch}
+            title="No Flows"
+            description="No flows configured in this workspace."
+          />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {flows.map((flow: any) => (
+              <Card key={flow.id} className="p-4">
+                <div className="flex items-start justify-between mb-2 gap-2">
+                  <span className="text-sm font-semibold text-slate-900">{flow.name}</span>
+                  <Badge variant={flow.isEnabled ? 'success' : 'default'}>
+                    {flow.isEnabled ? 'Enabled' : 'Disabled'}
+                  </Badge>
+                </div>
+                {flow.description && (
+                  <p className="text-xs text-slate-500 mb-3 line-clamp-2">{flow.description}</p>
+                )}
+                <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
+                  {flow.trigger && (
+                    <span className="bg-slate-100 text-slate-600 rounded-full px-2 py-0.5">
+                      {flow.trigger}
+                    </span>
+                  )}
+                  <span>{flow.nodes?.length ?? 0} nodes</span>
+                  <span>{flow.edges?.length ?? 0} edges</span>
+                </div>
+                {flow.tags?.length > 0 && (
+                  <div className="flex gap-1 flex-wrap mt-2">
+                    {flow.tags.map((tag: string) => (
+                      <span
+                        key={tag}
+                        className="bg-blue-50 text-blue-600 rounded-full px-2 py-0.5 text-xs"
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* 2-Panel Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

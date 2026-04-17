@@ -1,8 +1,8 @@
 import { useState, useMemo } from 'react';
 import { useStudioState } from '../../../lib/StudioStateContext';
 import { AgentEditorForm } from '../components/AgentEditorForm';
-import { Search, Plus, Users } from 'lucide-react';
-import { PageHeader, EmptyState, Card } from '../../../components';
+import { Search, Plus, Users, Circle } from 'lucide-react';
+import { PageHeader, EmptyState, Card, Badge } from '../../../components';
 
 export default function AgentListPage() {
   const { state } = useStudioState();
@@ -71,20 +71,52 @@ export default function AgentListPage() {
 
             {/* Agent List */}
             <div className="space-y-2">
-              {filteredAgents.map((agent) => (
-                <button
-                  key={agent.id}
-                  onClick={() => setSelectedAgentId(agent.id)}
-                  className={`w-full text-left px-3 py-2 rounded-lg transition-colors text-sm ${
-                    (selectedAgentId === agent.id || (!selectedAgentId && agent === agents[0]))
-                      ? 'bg-blue-50 border border-blue-200 text-blue-900 font-medium'
-                      : 'hover:bg-slate-50 text-slate-700'
-                  }`}
-                >
-                  <div className="font-medium">{agent.name}</div>
-                  <div className="text-xs text-slate-500">{agent.id}</div>
-                </button>
-              ))}
+              {filteredAgents.map((agent) => {
+                const a = agent as any;
+                return (
+                  <button
+                    key={agent.id}
+                    onClick={() => setSelectedAgentId(agent.id)}
+                    className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors ${
+                      (selectedAgentId === agent.id || (!selectedAgentId && agent === agents[0]))
+                        ? 'bg-blue-50 border border-blue-200'
+                        : 'hover:bg-slate-50 border border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5 w-full">
+                      <Circle
+                        size={8}
+                        className={`mt-1.5 flex-shrink-0 ${
+                          a.isEnabled
+                            ? 'fill-emerald-500 text-emerald-500'
+                            : 'fill-slate-300 text-slate-300'
+                        }`}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span
+                            className={`text-sm font-medium truncate ${
+                              (selectedAgentId === agent.id || (!selectedAgentId && agent === agents[0]))
+                                ? 'text-blue-900'
+                                : 'text-slate-900'
+                            }`}
+                          >
+                            {agent.name}
+                          </span>
+                          {a.executionMode && (
+                            <Badge variant={a.executionMode === 'proactive' ? 'warning' : 'info'}>
+                              {a.executionMode}
+                            </Badge>
+                          )}
+                        </div>
+                        {a.role && (
+                          <p className="text-xs text-slate-500 mt-0.5 truncate">{a.role}</p>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
 
             {/* Add Agent button */}
@@ -99,9 +131,49 @@ export default function AgentListPage() {
         <div className="md:col-span-3">
           {selectedAgent ? (
             <Card>
-              <h3 className="text-lg font-semibold text-slate-900 mb-6">
-                Edit Agent: {selectedAgent.name}
-              </h3>
+              {/* Header */}
+              <div className="flex items-center gap-3 mb-4">
+                <h3 className="text-lg font-semibold text-slate-900 flex-1">
+                  {selectedAgent.name}
+                </h3>
+                <Badge variant={(selectedAgent as any).isEnabled ? 'success' : 'default'}>
+                  {(selectedAgent as any).isEnabled ? 'Enabled' : 'Disabled'}
+                </Badge>
+              </div>
+
+              {/* Metadata strip */}
+              {((selectedAgent as any).role || (selectedAgent as any).model || (selectedAgent as any).tags?.length > 0) && (
+                <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm mb-6 p-4 bg-slate-50 rounded-lg border border-slate-100">
+                  {(selectedAgent as any).role && (
+                    <>
+                      <dt className="text-slate-500">Role</dt>
+                      <dd className="font-medium text-slate-900">{(selectedAgent as any).role}</dd>
+                    </>
+                  )}
+                  {(selectedAgent as any).model && (
+                    <>
+                      <dt className="text-slate-500">Model</dt>
+                      <dd className="font-mono text-xs text-slate-900 self-center">{(selectedAgent as any).model}</dd>
+                    </>
+                  )}
+                  {(selectedAgent as any).tags?.length > 0 && (
+                    <>
+                      <dt className="text-slate-500">Tags</dt>
+                      <dd className="flex gap-1 flex-wrap">
+                        {(selectedAgent as any).tags.map((tag: string) => (
+                          <span
+                            key={tag}
+                            className="bg-slate-100 text-slate-600 rounded-full px-2 py-0.5 text-xs"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </dd>
+                    </>
+                  )}
+                </dl>
+              )}
+
               <AgentEditorForm
                 workspaceId={state.workspace?.id || ''}
                 agent={selectedAgent}

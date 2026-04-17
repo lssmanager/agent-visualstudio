@@ -8,6 +8,8 @@ import { StudioCanvas } from '../components/StudioCanvas';
 import { StudioInspector } from '../components/StudioInspector';
 import { StudioSidebar } from '../components/StudioSidebar';
 import { StudioToolbar } from '../components/StudioToolbar';
+import { EmptyState } from '../../../components';
+import { Cpu } from 'lucide-react';
 
 export default function StudioPage() {
   const { state, refresh } = useStudioState();
@@ -55,26 +57,23 @@ export default function StudioPage() {
 
   if (state.agents.length === 0) {
     return (
-      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-        <div className="bg-white rounded-lg border border-slate-200 p-8 text-center max-w-md">
-          <div className="text-5xl mb-4">🤖</div>
-          <h3 className="text-lg font-semibold text-slate-900 mb-2">No Agents</h3>
-          <p className="text-sm text-slate-600 mb-6">
-            Create your first agent in the workspace to start editing.
-          </p>
-          <a
-            href="/agents"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
-          >
-            Go to Agents
-          </a>
-        </div>
-      </div>
+      <EmptyState
+        icon={Cpu}
+        title="No Agents"
+        description="Create your first agent in the workspace to start editing."
+      >
+        <a
+          href="/agents"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+        >
+          Go to Agents
+        </a>
+      </EmptyState>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900">
+    <div>
       <StudioToolbar onRefresh={load} onPreview={previewDiff} onApply={deploy} isBusy={busy} />
 
       {/* Agent Selector */}
