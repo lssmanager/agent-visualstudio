@@ -1,20 +1,12 @@
-import { useEffect, useState } from 'react';
-
-import { getStudioState } from '../../../lib/api';
+import { useStudioState } from '../../../lib/StudioStateContext';
 import { SessionsPanel } from '../components/SessionsPanel';
 
 export function SessionsPage() {
-  const [sessions, setSessions] = useState<unknown[]>([]);
-
-  useEffect(() => {
-    void getStudioState().then((state) => {
-      setSessions(state.runtime.sessions.payload ?? []);
-    });
-  }, []);
+  const { state } = useStudioState();
 
   return (
     <div className="p-4">
-      <SessionsPanel sessions={sessions} />
+      <SessionsPanel sessions={state.runtime.sessions.payload ?? []} />
     </div>
   );
 }

@@ -33,6 +33,7 @@
   "exclude": [
     "node_modules",
     "dist",
+    "apps/web",
     "**/__tests__/**",
     "**/*.test.ts"
   ]
