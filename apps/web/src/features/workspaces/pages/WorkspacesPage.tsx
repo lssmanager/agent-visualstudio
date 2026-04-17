@@ -8,15 +8,39 @@ import { WorkspaceDeployPanel } from '../components/WorkspaceDeployPanel';
 import { WorkspaceEditor } from '../components/WorkspaceEditor';
 import { WorkspaceFileTree } from '../components/WorkspaceFileTree';
 import { WorkspaceList } from '../components/WorkspaceList';
-import { PageHeader, Card } from '../../../components';
+import { PageHeader, Card, Toast } from '../../../components';
 
 export default function WorkspacesPage() {
   const { state, refresh } = useStudioState();
   const [preview, setPreview] = useState<DeployPreview | null>(null);
   const [showEditor, setShowEditor] = useState(false);
-  const [selectedForDelete, setSelectedForDelete] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+
+  async function handlePreview() {
+    try {
+      const result = await getDeployPreview();
+      setPreview(result);
+    } catch (err) {
+      setToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to load preview' });
+    }
+  }
+
+  async function handleDeploy() {
+    try {
+      await applyDeploy({ applyRuntime: true });
+      await refresh();
+      setPreview(await getDeployPreview());
+      setToast({ type: 'success', message: 'Deployment applied successfully' });
+    } catch (err) {
+      setToast({ type: 'error', message: err instanceof Error ? err.message : 'Deployment failed' });
+    }
+  }
 
   const workspaces: WorkspaceSpec[] = state.workspace ? [state.workspace] : [];
+
+  function handleDeleteClick() {
+    setToast({ type: 'info', message: 'Workspace deletion is not available in this version.' });
+  }
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -36,7 +60,7 @@ export default function WorkspacesPage() {
                 <p className="text-xs text-slate-500 font-mono mt-1">{ws.slug}</p>
               </div>
               <button
-                onClick={() => setSelectedForDelete(ws.id)}
+                onClick={handleDeleteClick}
                 className="p-2 hover:bg-red-50 rounded-lg transition-colors text-slate-400 hover:text-red-600"
                 title="Delete workspace"
               >
@@ -111,8 +135,8 @@ export default function WorkspacesPage() {
           <div className="space-y-4">
             <Card>
               <WorkspaceDeployPanel
-                onPreview={() => void getDeployPreview().then(setPreview)}
-                onDeploy={() => void applyDeploy({ applyRuntime: true })}
+                onPreview={handlePreview}
+                onDeploy={handleDeploy}
               />
             </Card>
           </div>
@@ -127,33 +151,9 @@ export default function WorkspacesPage() {
         </Card>
       )}
 
-      {/* Delete Confirmation Modal */}
-      {selectedForDelete && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <Card className="max-w-sm">
-            <h3 className="text-lg font-semibold text-slate-900 mb-2">Delete Workspace?</h3>
-            <p className="text-slate-600 text-sm mb-6">
-              This action cannot be undone. All agents, skills, and flows in this workspace will be permanently deleted.
-            </p>
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setSelectedForDelete(null)}
-                className="px-4 py-2 text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  // TODO: Implement delete
-                  setSelectedForDelete(null);
-                }}
-                className="px-4 py-2 bg-red-600 text-white hover:bg-red-700 rounded-lg transition-colors"
-              >
-                Delete
-              </button>
-            </div>
-          </Card>
-        </div>
+      {/* Toast */}
+      {toast && (
+        <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />
       )}
     </div>
   );

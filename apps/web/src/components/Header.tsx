@@ -1,61 +1,59 @@
+import { Menu, RotateCw } from 'lucide-react';
 import { useStudioState } from '../lib/StudioStateContext';
-import { Menu, RotateCw, Circle } from 'lucide-react';
+import { RuntimeBadge } from './ui/RuntimeBadge';
 
 interface HeaderProps {
   onToggleSidebar: () => void;
-  sidebarOpen: boolean;
 }
 
-export function Header({ onToggleSidebar, sidebarOpen }: HeaderProps) {
+export function Header({ onToggleSidebar }: HeaderProps) {
   const { state, refresh } = useStudioState();
 
-  const runtimeOk = state.runtime?.ok ?? false;
-  const hasWorkspace = state.workspace !== null;
+  const workspace = state.workspace;
+  const runtimeOk = state.runtime?.health?.ok ?? false;
 
   return (
-    <div className="flex items-center justify-between w-full">
-      {/* Left: Menu toggle + branding */}
-      <div className="flex items-center gap-4">
+    <div className="flex items-center justify-between w-full gap-4">
+      {/* Left: toggle + breadcrumb */}
+      <div className="flex items-center gap-3 min-w-0">
         <button
           onClick={onToggleSidebar}
-          className="p-2 hover:bg-slate-100 rounded-lg transition-colors md:hidden"
+          className="p-2 hover:bg-slate-100 rounded-lg transition-colors flex-shrink-0"
           title="Toggle sidebar"
         >
-          <Menu size={20} className="text-slate-600" />
+          <Menu size={18} className="text-slate-500" />
         </button>
-        <h2 className="text-sm font-semibold text-slate-900 hidden md:block">
-          {hasWorkspace ? `Workspace: ${state.workspace?.name}` : 'No Workspace'}
-        </h2>
+
+        <div className="min-w-0">
+          {workspace ? (
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-sm font-semibold text-slate-800 truncate">{workspace.name}</span>
+              {workspace.defaultModel && (
+                <>
+                  <span className="text-slate-300 flex-shrink-0">/</span>
+                  <span className="text-xs font-mono text-slate-500 truncate hidden sm:block">
+                    {workspace.defaultModel}
+                  </span>
+                </>
+              )}
+            </div>
+          ) : (
+            <span className="text-sm text-slate-400 font-medium">No workspace</span>
+          )}
+        </div>
       </div>
 
-      {/* Right: Status + Actions */}
-      <div className="flex items-center gap-4">
-        {/* Runtime Health */}
-        <div className="flex items-center gap-2">
-          <Circle
-            size={10}
-            className={runtimeOk ? 'fill-emerald-500 text-emerald-500' : 'fill-red-500 text-red-500'}
-          />
-          <span className="text-xs text-slate-600">
-            {runtimeOk ? 'Online' : 'Offline'}
-          </span>
-        </div>
+      {/* Right: runtime status + refresh */}
+      <div className="flex items-center gap-3 flex-shrink-0">
+        <RuntimeBadge ok={runtimeOk} size="sm" />
 
-        {/* Refresh button */}
         <button
-          onClick={() => refresh()}
+          onClick={() => void refresh()}
           className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
           title="Refresh state"
         >
-          <RotateCw size={18} className="text-slate-600" />
+          <RotateCw size={16} className="text-slate-400" />
         </button>
-
-        {/* Workspace indicator if exists */}
-        {hasWorkspace && (
-          <div className="text-xs bg-blue-50 text-blue-700 px-3 py-1 rounded-full">
-            Active
-          </div>
-        )}
       </div>
     </div>
   );

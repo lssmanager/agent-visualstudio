@@ -1,18 +1,15 @@
-import { useState } from 'react';
 import { Landmark, GitBranch } from 'lucide-react';
 
 import { useStudioState } from '../../../lib/StudioStateContext';
-import { WorkspaceSpec } from '../../../lib/types';
 import { ChannelBindingsTable } from '../components/ChannelBindingsTable';
 import { RouteEditor } from '../components/RouteEditor';
 import { PageHeader, Alert, Card, Badge, EmptyState } from '../../../components';
 
 export default function RoutingPage() {
-  const { state } = useStudioState();
-  const [workspace, setWorkspace] = useState<WorkspaceSpec | null>(state.workspace);
+  const { state, refresh } = useStudioState();
   const flows = state.flows ?? [];
 
-  if (!workspace) {
+  if (!state.workspace) {
     return (
       <div className="max-w-6xl mx-auto">
         <Alert variant="warning" title="No Workspace">
@@ -58,9 +55,7 @@ export default function RoutingPage() {
                 )}
                 <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
                   {flow.trigger && (
-                    <span className="bg-slate-100 text-slate-600 rounded-full px-2 py-0.5">
-                      {flow.trigger}
-                    </span>
+                    <Badge variant="default">{flow.trigger}</Badge>
                   )}
                   <span>{flow.nodes?.length ?? 0} nodes</span>
                   <span>{flow.edges?.length ?? 0} edges</span>
@@ -68,12 +63,7 @@ export default function RoutingPage() {
                 {flow.tags?.length > 0 && (
                   <div className="flex gap-1 flex-wrap mt-2">
                     {flow.tags.map((tag: string) => (
-                      <span
-                        key={tag}
-                        className="bg-blue-50 text-blue-600 rounded-full px-2 py-0.5 text-xs"
-                      >
-                        {tag}
-                      </span>
+                      <Badge key={tag} variant="info">{tag}</Badge>
                     ))}
                   </div>
                 )}
@@ -103,7 +93,7 @@ export default function RoutingPage() {
           <Card>
             <h3 className="text-lg font-semibold text-slate-900 mb-4">Route Configuration</h3>
             <div className="prose prose-sm max-w-none prose-table:w-full">
-              <RouteEditor workspace={workspace} onSaved={setWorkspace} />
+              <RouteEditor workspace={state.workspace} onSaved={(_ws) => { void refresh(); }} />
             </div>
           </Card>
         </div>

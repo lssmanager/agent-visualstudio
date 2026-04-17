@@ -21,7 +21,7 @@ export function MainLayout() {
       {/* Sidebar: always fixed, overlays content */}
       {sidebarOpen && (
         <aside className="w-64 bg-slate-900 text-white flex flex-col border-r border-slate-800 fixed h-screen left-0 top-0 z-40">
-          <Sidebar onNavigate={() => setSidebarOpen(false)} />
+          <Sidebar onNavigate={() => { if (window.innerWidth < 768) setSidebarOpen(false); }} />
         </aside>
       )}
 
@@ -32,7 +32,7 @@ export function MainLayout() {
         }`}
       >
         <header className="bg-white border-b border-slate-200 h-16 flex items-center px-6 sticky top-0 z-30">
-          <Header onToggleSidebar={handleToggleSidebar} sidebarOpen={sidebarOpen} />
+          <Header onToggleSidebar={handleToggleSidebar} />
         </header>
 
         <main className="flex-1 overflow-auto p-6">

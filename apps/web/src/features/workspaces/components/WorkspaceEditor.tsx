@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
+import { Loader2, ArrowRight } from 'lucide-react';
 
 import { createWorkspace } from '../../../lib/api';
 import { ProfileSpec, WorkspaceSpec } from '../../../lib/types';
@@ -10,7 +11,7 @@ interface WorkspaceEditorProps {
 }
 
 export function WorkspaceEditor({ profiles, onCreated }: WorkspaceEditorProps) {
-  const { register, handleSubmit, watch } = useForm<{
+  const { register, handleSubmit, watch, formState: { errors } } = useForm<{
     name: string;
     profileId?: string;
     defaultModel?: string;
@@ -18,22 +19,20 @@ export function WorkspaceEditor({ profiles, onCreated }: WorkspaceEditorProps) {
   }>();
 
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError]     = useState<string | null>(null);
+
   const selectedProfileId = watch('profileId');
-  const selectedProfile = profiles.find((p) => p.id === selectedProfileId);
+  const selectedProfile   = profiles.find((p) => p.id === selectedProfileId);
 
   const handleCreate = handleSubmit(async (values) => {
     setLoading(true);
     setError(null);
     try {
-      // Send only what user explicitly set - backend handles merge order
-      // (request > profile > defaults)
       const result = await createWorkspace({
         name: values.name,
         profileId: values.profileId,
         defaultModel: values.defaultModel || undefined,
         skillIds: values.skillIds?.length ? values.skillIds : undefined,
-        // NO routines - backend resolves from profile
       });
       onCreated(result);
     } catch (err) {
@@ -44,86 +43,102 @@ export function WorkspaceEditor({ profiles, onCreated }: WorkspaceEditorProps) {
   });
 
   return (
-    <form className="rounded border border-slate-300 bg-white p-3" onSubmit={handleCreate}>
-      <h3 className="mb-3 text-sm font-semibold">Create Workspace from Profile</h3>
+    <form onSubmit={handleCreate} className="space-y-5">
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
 
-      {error && <div className="mb-2 rounded bg-red-100 p-2 text-xs text-red-700">{error}</div>}
-
-      <div className="grid grid-cols-1 gap-2">
-        {/* Profile Selector */}
-        <div>
-          <label className="block text-xs font-medium text-slate-600">Profile (Required)</label>
-          <select {...register('profileId', { required: true })} className="w-full rounded border px-2 py-1 text-sm">
-            <option value="">Select a profile...</option>
+      {/* Profile selector */}
+      <div className="space-y-1.5">
+        <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide">
+          Profile <span className="text-red-500">*</span>
+        </label>
+        <div className="relative">
+          <select
+            {...register('profileId', { required: 'Select a profile' })}
+            className="w-full appearance-none rounded-xl border border-slate-200 bg-white px-4 py-2.5 pr-9 text-sm text-slate-900 shadow-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100 transition-all"
+          >
+            <option value="">Select a profile…</option>
             {profiles.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} ({p.id})
-              </option>
+              <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </select>
+          <ArrowRight size={13} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rotate-90 text-slate-400" />
         </div>
+        {errors.profileId && <p className="text-xs text-red-600">{errors.profileId.message}</p>}
+      </div>
 
-        {/* Workspace Name */}
-        <div>
-          <label className="block text-xs font-medium text-slate-600">Workspace Name (Required)</label>
+      {/* Profile summary */}
+      {selectedProfile && (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs space-y-1.5">
+          {selectedProfile.description && (
+            <p className="text-slate-600">{selectedProfile.description}</p>
+          )}
+          {selectedProfile.defaultModel && (
+            <p className="text-slate-500">
+              Model: <span className="font-mono text-slate-700">{selectedProfile.defaultModel}</span>
+            </p>
+          )}
+          {selectedProfile.defaultSkills && selectedProfile.defaultSkills.length > 0 && (
+            <p className="text-slate-500">
+              Skills: <span className="text-slate-700">{selectedProfile.defaultSkills.join(', ')}</span>
+            </p>
+          )}
+          {selectedProfile.routines && selectedProfile.routines.length > 0 && (
+            <p className="text-slate-500">
+              Routines: <span className="text-slate-700">{selectedProfile.routines.join(', ')}</span>
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Workspace name */}
+      <div className="space-y-1.5">
+        <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide">
+          Workspace Name <span className="text-red-500">*</span>
+        </label>
+        <input
+          {...register('name', {
+            required: 'Name is required',
+            minLength: { value: 2, message: 'At least 2 characters' },
+          })}
+          placeholder="e.g., My Operations Workspace"
+          className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100 transition-all"
+        />
+        {errors.name && <p className="text-xs text-red-600">{errors.name.message}</p>}
+      </div>
+
+      {/* Optional: Model override */}
+      {selectedProfile && (
+        <div className="space-y-1.5">
+          <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide">
+            Model <span className="text-slate-400 font-normal normal-case">(optional override)</span>
+          </label>
           <input
-            {...register('name', { required: true })}
-            placeholder="e.g., My Operations Workspace"
-            className="w-full rounded border px-2 py-1 text-sm"
+            {...register('defaultModel')}
+            placeholder={selectedProfile.defaultModel ?? 'e.g., openai/gpt-4o'}
+            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100 transition-all"
           />
         </div>
-
-        {/* Optional: Model Override */}
-        {selectedProfile && (
-          <div>
-            <label className="block text-xs font-medium text-slate-600">
-              AI Model (Optional - uses profile default: {selectedProfile.defaultModel})
-            </label>
-            <input
-              {...register('defaultModel')}
-              placeholder="e.g., openai/gpt-5.4-mini"
-              className="w-full rounded border px-2 py-1 text-sm"
-            />
-          </div>
-        )}
-
-        {/* Show Profile Info (Information-only, backend handles merge) */}
-        {selectedProfile && (
-          <div className="rounded bg-slate-50 p-2 text-xs">
-            <div className="font-medium text-slate-700">Profile: {selectedProfile.name}</div>
-            <div className="mt-1 text-slate-600">{selectedProfile.description}</div>
-            {selectedProfile.defaultModel && (
-              <div className="mt-1">
-                <span className="font-medium">Default Model:</span> {selectedProfile.defaultModel}
-              </div>
-            )}
-            {selectedProfile.defaultSkills && selectedProfile.defaultSkills.length > 0 && (
-              <div className="mt-1">
-                <span className="font-medium">Profile Skills:</span> {selectedProfile.defaultSkills.join(', ')}
-              </div>
-            )}
-            {selectedProfile.routines && selectedProfile.routines.length > 0 && (
-              <div className="mt-1">
-                <span className="font-medium">Profile Routines:</span> {selectedProfile.routines.join(', ')}
-              </div>
-            )}
-            <div className="mt-2 rounded bg-slate-100 p-1.5 text-slate-600">
-              <strong>Note:</strong> These profile values will be applied by the backend if you don't override them.
-            </div>
-          </div>
-        )}
-      </div>
+      )}
 
       <button
+        type="submit"
         disabled={loading || !selectedProfileId}
-        className="mt-3 w-full rounded bg-slate-900 px-3 py-1 text-sm text-white disabled:opacity-50"
+        className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
       >
-        {loading ? 'Creating...' : 'Create with Bootstrap'}
+        {loading ? (
+          <><Loader2 size={15} className="animate-spin" />Creating workspace…</>
+        ) : (
+          'Create with Bootstrap'
+        )}
       </button>
 
-      <div className="mt-2 text-xs text-slate-500">
-        Workspace will be created with profile defaults. Profile skills and routines will be applied automatically.
-      </div>
+      <p className="text-center text-xs text-slate-400">
+        Profile skills and routines will be applied automatically by the backend.
+      </p>
     </form>
   );
 }

@@ -1,13 +1,16 @@
 import { useState, useMemo } from 'react';
 import { useStudioState } from '../../../lib/StudioStateContext';
+import { AgentSpec } from '../../../lib/types';
 import { AgentEditorForm } from '../components/AgentEditorForm';
 import { Search, Plus, Users, Circle } from 'lucide-react';
-import { PageHeader, EmptyState, Card, Badge } from '../../../components';
+import { PageHeader, EmptyState, Card, Badge, Toast } from '../../../components';
 
 export default function AgentListPage() {
-  const { state } = useStudioState();
+  const { state, refresh } = useStudioState();
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const agents = state.agents || [];
 
@@ -21,7 +24,7 @@ export default function AgentListPage() {
     ? agents.find((a) => a.id === selectedAgentId)
     : agents[0];
 
-  if (agents.length === 0) {
+  if (agents.length === 0 && !creating) {
     return (
       <div className="max-w-6xl mx-auto space-y-6">
         <PageHeader
@@ -34,11 +37,17 @@ export default function AgentListPage() {
           title="No Agents"
           description="Create your first agent to get started."
         >
-          <button className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium">
+          <button
+            onClick={() => setCreating(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+          >
             <Plus size={18} />
             Create Agent
           </button>
         </EmptyState>
+        {toast && (
+          <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />
+        )}
       </div>
     );
   }
@@ -71,14 +80,17 @@ export default function AgentListPage() {
 
             {/* Agent List */}
             <div className="space-y-2">
-              {filteredAgents.map((agent) => {
+              {filteredAgents.length === 0 && searchQuery ? (
+                <p className="text-xs text-slate-500 text-center py-4">No matches found</p>
+              ) : (
+                filteredAgents.map((agent) => {
                 const a = agent as any;
                 return (
                   <button
                     key={agent.id}
-                    onClick={() => setSelectedAgentId(agent.id)}
+                    onClick={() => { setSelectedAgentId(agent.id); setCreating(false); }}
                     className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors ${
-                      (selectedAgentId === agent.id || (!selectedAgentId && agent === agents[0]))
+                      !creating && (selectedAgentId === agent.id || (!selectedAgentId && agent === agents[0]))
                         ? 'bg-blue-50 border border-blue-200'
                         : 'hover:bg-slate-50 border border-transparent'
                     }`}
@@ -96,7 +108,7 @@ export default function AgentListPage() {
                         <div className="flex items-center gap-2 flex-wrap">
                           <span
                             className={`text-sm font-medium truncate ${
-                              (selectedAgentId === agent.id || (!selectedAgentId && agent === agents[0]))
+                              !creating && (selectedAgentId === agent.id || (!selectedAgentId && agent === agents[0]))
                                 ? 'text-blue-900'
                                 : 'text-slate-900'
                             }`}
@@ -116,11 +128,15 @@ export default function AgentListPage() {
                     </div>
                   </button>
                 );
-              })}
+              })
+              )}
             </div>
 
             {/* Add Agent button */}
-            <button className="w-full mt-4 flex items-center justify-center gap-2 px-3 py-2 border-2 border-dashed border-slate-300 rounded-lg text-sm text-slate-600 hover:border-blue-400 hover:text-blue-600 transition-colors">
+            <button
+              onClick={() => { setCreating(true); setSelectedAgentId(null); }}
+              className="w-full mt-4 flex items-center justify-center gap-2 px-3 py-2 border-2 border-dashed border-slate-300 rounded-lg text-sm text-slate-600 hover:border-blue-400 hover:text-blue-600 transition-colors"
+            >
               <Plus size={16} />
               New Agent
             </button>
@@ -129,7 +145,30 @@ export default function AgentListPage() {
 
         {/* Right: Agent Editor */}
         <div className="md:col-span-3">
-          {selectedAgent ? (
+          {creating ? (
+            <Card>
+              <div className="flex items-center gap-3 mb-4">
+                <h3 className="text-lg font-semibold text-slate-900 flex-1">New Agent</h3>
+                <button
+                  onClick={() => setCreating(false)}
+                  className="text-xs text-slate-500 hover:text-slate-700 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+              <AgentEditorForm
+                workspaceId={state.workspace?.id ?? ''}
+                skills={state.skills || []}
+                onSaved={async (saved: AgentSpec) => {
+                  await refresh();
+                  setSelectedAgentId(saved.id);
+                  setCreating(false);
+                  setToast({ type: 'success', message: `Agent "${saved.name}" created successfully` });
+                }}
+                onError={(err) => setToast({ type: 'error', message: err.message })}
+              />
+            </Card>
+          ) : selectedAgent ? (
             <Card>
               {/* Header */}
               <div className="flex items-center gap-3 mb-4">
@@ -161,12 +200,7 @@ export default function AgentListPage() {
                       <dt className="text-slate-500">Tags</dt>
                       <dd className="flex gap-1 flex-wrap">
                         {(selectedAgent as any).tags.map((tag: string) => (
-                          <span
-                            key={tag}
-                            className="bg-slate-100 text-slate-600 rounded-full px-2 py-0.5 text-xs"
-                          >
-                            {tag}
-                          </span>
+                          <Badge key={tag} variant="default">{tag}</Badge>
                         ))}
                       </dd>
                     </>
@@ -178,9 +212,11 @@ export default function AgentListPage() {
                 workspaceId={state.workspace?.id || ''}
                 agent={selectedAgent}
                 skills={state.skills || []}
-                onSaved={() => {
-                  // Could show success toast here
+                onSaved={async (saved: AgentSpec) => {
+                  await refresh();
+                  setToast({ type: 'success', message: `Agent "${saved.name}" saved successfully` });
                 }}
+                onError={(err) => setToast({ type: 'error', message: err.message })}
               />
             </Card>
           ) : (
@@ -190,6 +226,11 @@ export default function AgentListPage() {
           )}
         </div>
       </div>
+
+      {/* Toast */}
+      {toast && (
+        <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />
+      )}
     </div>
   );
 }

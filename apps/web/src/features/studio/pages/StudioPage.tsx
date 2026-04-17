@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 
 import { applyDeploy, getDeployPreview } from '../../../lib/api';
 import { useStudioState } from '../../../lib/StudioStateContext';
@@ -8,7 +9,7 @@ import { StudioCanvas } from '../components/StudioCanvas';
 import { StudioInspector } from '../components/StudioInspector';
 import { StudioSidebar } from '../components/StudioSidebar';
 import { StudioToolbar } from '../components/StudioToolbar';
-import { EmptyState } from '../../../components';
+import { EmptyState, Toast } from '../../../components';
 import { Cpu } from 'lucide-react';
 
 export default function StudioPage() {
@@ -16,6 +17,7 @@ export default function StudioPage() {
   const { selectedAgentId, setSelectedAgentId } = usePreferences();
   const [preview, setPreview] = useState<DeployPreview | null>(null);
   const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Initialize selectedAgentId from preferences or first agent
   const [agentId, setAgentId] = useState<string | null>(selectedAgentId || state.agents[0]?.id || null);
@@ -39,7 +41,11 @@ export default function StudioPage() {
   }
 
   async function previewDiff() {
-    setPreview(await getDeployPreview());
+    try {
+      setPreview(await getDeployPreview());
+    } catch (err) {
+      setToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to load preview' });
+    }
   }
 
   async function deploy() {
@@ -48,12 +54,25 @@ export default function StudioPage() {
       await applyDeploy({ applyRuntime: true });
       await refresh();
       setPreview(await getDeployPreview());
+      setToast({ type: 'success', message: 'Deployment applied successfully' });
+    } catch (err) {
+      setToast({ type: 'error', message: err instanceof Error ? err.message : 'Deployment failed' });
     } finally {
       setBusy(false);
     }
   }
 
-  const workspaceId = state.workspace?.id ?? 'workspace-missing';
+  const workspaceId = state.workspace?.id;
+
+  if (!workspaceId) {
+    return (
+      <EmptyState
+        icon={Cpu}
+        title="No Workspace"
+        description="Create a workspace first to use the Studio."
+      />
+    );
+  }
 
   if (state.agents.length === 0) {
     return (
@@ -62,12 +81,12 @@ export default function StudioPage() {
         title="No Agents"
         description="Create your first agent in the workspace to start editing."
       >
-        <a
-          href="/agents"
+        <Link
+          to="/agents"
           className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
         >
           Go to Agents
-        </a>
+        </Link>
       </EmptyState>
     );
   }
@@ -127,6 +146,11 @@ export default function StudioPage() {
           sessions={state.runtime.sessions.payload ?? []}
         />
       </div>
+
+      {/* Toast */}
+      {toast && (
+        <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />
+      )}
     </div>
   );
 }

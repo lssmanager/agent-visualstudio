@@ -5,6 +5,7 @@ import { getStudioState } from './lib/api';
 import { StudioStateResponse } from './lib/types';
 import { StudioStateContext } from './lib/StudioStateContext';
 import { MainLayout } from './layouts/MainLayout';
+import { LoadingState } from './components/ui/LoadingState';
 import OnboardingPage from './features/onboarding/pages/OnboardingPage';
 import OverviewPage from './features/overview/pages/OverviewPage';
 import StudioPage from './features/studio/pages/StudioPage';
@@ -14,11 +15,12 @@ import ProfilesPage from './features/profiles/pages/ProfilesPage';
 import DiagnosticsPage from './features/diagnostics/pages/DiagnosticsPage';
 import SessionsPage from './features/sessions/pages/SessionsPage';
 import RoutingPage from './features/routing/pages/RoutingPage';
+import { AlertTriangle } from 'lucide-react';
 
 export function App() {
   const [state, setState] = useState<StudioStateResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError]   = useState<string | null>(null);
 
   async function loadState() {
     setLoading(true);
@@ -33,42 +35,35 @@ export function App() {
     }
   }
 
-  // Refresh state without showing full loading screen (for in-page refresh)
   async function refreshState() {
     try {
       const result = await getStudioState();
       setState(result);
-    } catch (err) {
-      // Silently fail on refresh — existing state stays visible
+    } catch {
+      // silently fail — existing state remains visible
     }
   }
 
-  useEffect(() => {
-    void loadState();
-  }, []);
+  useEffect(() => { void loadState(); }, []);
 
   if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-100">
-        <div className="text-center">
-          <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
-          <p className="text-sm text-slate-600">Loading OpenClaw Studio...</p>
-        </div>
-      </div>
-    );
+    return <LoadingState label="Loading OpenClaw Studio..." />;
   }
 
   if (error) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-100">
-        <div className="rounded border border-red-300 bg-red-50 p-6 text-center">
-          <p className="text-sm font-semibold text-red-700">Connection Error</p>
-          <p className="mt-1 text-xs text-red-600">{error}</p>
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
+        <div className="rounded-2xl border border-rose-500/30 bg-slate-900 p-8 max-w-md w-full text-center">
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-rose-500/10 mb-4">
+            <AlertTriangle size={24} className="text-rose-400" />
+          </div>
+          <h1 className="text-lg font-semibold text-white">Failed to load Studio</h1>
+          <p className="mt-2 text-sm text-slate-400">{error}</p>
           <button
             onClick={() => void loadState()}
-            className="mt-3 rounded bg-slate-900 px-4 py-1.5 text-sm text-white hover:bg-slate-800"
+            className="mt-6 inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-500 transition-colors"
           >
-            Retry
+            Retry Connection
           </button>
         </div>
       </div>
@@ -77,9 +72,7 @@ export function App() {
 
   if (!state) return null;
 
-  const hasWorkspace = state.workspace !== null;
-
-  if (!hasWorkspace) {
+  if (!state.workspace) {
     return <OnboardingPage onComplete={loadState} />;
   }
 
@@ -87,18 +80,16 @@ export function App() {
     <StudioStateContext.Provider value={{ state, refresh: refreshState }}>
       <BrowserRouter>
         <Routes>
-          {/* Authenticated routes with layout */}
           <Route element={<MainLayout />}>
-            <Route path="/" element={<OverviewPage />} />
-            <Route path="/studio" element={<StudioPage />} />
-            <Route path="/workspaces" element={<WorkspacesPage />} />
-            <Route path="/agents" element={<AgentListPage />} />
-            <Route path="/profiles" element={<ProfilesPage />} />
+            <Route path="/"            element={<OverviewPage />} />
+            <Route path="/studio"      element={<StudioPage />} />
+            <Route path="/workspaces"  element={<WorkspacesPage />} />
+            <Route path="/agents"      element={<AgentListPage />} />
+            <Route path="/profiles"    element={<ProfilesPage />} />
             <Route path="/diagnostics" element={<DiagnosticsPage />} />
-            <Route path="/sessions" element={<SessionsPage />} />
-            <Route path="/routing" element={<RoutingPage />} />
-            {/* Catch-all for undefined routes */}
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="/sessions"    element={<SessionsPage />} />
+            <Route path="/routing"     element={<RoutingPage />} />
+            <Route path="*"            element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
       </BrowserRouter>

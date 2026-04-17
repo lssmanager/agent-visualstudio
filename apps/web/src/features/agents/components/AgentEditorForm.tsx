@@ -13,9 +13,10 @@ interface AgentEditorFormProps {
   agent?: AgentSpec;
   skills: SkillSpec[];
   onSaved: (agent: AgentSpec) => void;
+  onError?: (err: Error) => void;
 }
 
-export function AgentEditorForm({ workspaceId, agent, skills, onSaved }: AgentEditorFormProps) {
+export function AgentEditorForm({ workspaceId, agent, skills, onSaved, onError }: AgentEditorFormProps) {
   const defaults = useMemo<AgentSpec>(
     () =>
       agent ?? {
@@ -43,8 +44,12 @@ export function AgentEditorForm({ workspaceId, agent, skills, onSaved }: AgentEd
     <form
       className="space-y-4"
       onSubmit={handleSubmit(async (values) => {
-        const saved = await saveAgent(values);
-        onSaved(saved);
+        try {
+          const saved = await saveAgent(values);
+          onSaved(saved);
+        } catch (err) {
+          onError?.(err instanceof Error ? err : new Error(String(err)));
+        }
       })}
     >
       <div className="grid grid-cols-2 gap-3">
