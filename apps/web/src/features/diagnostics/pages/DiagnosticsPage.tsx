@@ -1,5 +1,6 @@
 import { useStudioState } from '../../../lib/StudioStateContext';
 import { Activity, AlertCircle, CheckCircle, Circle, Zap } from 'lucide-react';
+import { PageHeader, Alert, Card } from '../../../components';
 
 export default function DiagnosticsPage() {
   const { state } = useStudioState();
@@ -12,15 +13,15 @@ export default function DiagnosticsPage() {
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       {/* Page Header */}
-      <div>
-        <h1 className="text-3xl font-bold text-slate-900">Diagnostics</h1>
-        <p className="text-slate-600 mt-1">System health, runtime status, and compilation diagnostics</p>
-      </div>
+      <PageHeader
+        title="Diagnostics"
+        description="System health, runtime status, and compilation diagnostics"
+      />
 
-      {/* Runtime Health */}
+      {/* Runtime Health Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Online Status */}
-        <div className="bg-white rounded-lg border border-slate-200 p-6">
+        <Card>
           <div className="flex items-center gap-3 mb-4">
             <div className={`w-3 h-3 rounded-full ${runtimeOk ? 'bg-emerald-500' : 'bg-red-500'}`} />
             <h3 className="font-semibold text-slate-900">Runtime</h3>
@@ -31,10 +32,10 @@ export default function DiagnosticsPage() {
           <p className="text-sm text-slate-600 mt-2">
             {runtimeOk ? '✓ Gateway responding' : '✗ Cannot reach gateway'}
           </p>
-        </div>
+        </Card>
 
         {/* Compilation Status */}
-        <div className="bg-white rounded-lg border border-slate-200 p-6">
+        <Card>
           <div className="flex items-center gap-3 mb-4">
             <Zap size={20} className="text-blue-600" />
             <h3 className="font-semibold text-slate-900">Compilation</h3>
@@ -47,12 +48,15 @@ export default function DiagnosticsPage() {
               ? 'No issues detected'
               : `${compileDiagnostics.length} ${compileDiagnostics.length === 1 ? 'issue' : 'issues'}`}
           </p>
-        </div>
+        </Card>
 
         {/* Workspace Status */}
-        <div className="bg-white rounded-lg border border-slate-200 p-6">
+        <Card>
           <div className="flex items-center gap-3 mb-4">
-            <Activity size={20} className={workspace ? 'text-emerald-600' : 'text-amber-600'} />
+            <Activity
+              size={20}
+              className={workspace ? 'text-emerald-600' : 'text-amber-600'}
+            />
             <h3 className="font-semibold text-slate-900">Workspace</h3>
           </div>
           <div className="text-3xl font-bold text-slate-900">
@@ -61,11 +65,11 @@ export default function DiagnosticsPage() {
           <p className="text-sm text-slate-600 mt-2">
             {workspace ? `Loaded: ${workspace.name}` : 'No workspace selected'}
           </p>
-        </div>
+        </Card>
       </div>
 
       {/* Sessions */}
-      <div className="bg-white rounded-lg border border-slate-200 p-6">
+      <Card>
         <h3 className="text-lg font-semibold text-slate-900 mb-4">Active Sessions</h3>
         {sessions.length > 0 ? (
           <div className="overflow-x-auto">
@@ -111,24 +115,20 @@ export default function DiagnosticsPage() {
             <p>No active sessions</p>
           </div>
         )}
-      </div>
+      </Card>
 
       {/* Compilation Diagnostics */}
       {compileDiagnostics.length > 0 && (
-        <div className="bg-white rounded-lg border border-red-200 bg-red-50 p-6">
-          <div className="flex items-start gap-3 mb-4">
-            <AlertCircle size={20} className="text-red-600 mt-0.5 flex-shrink-0" />
-            <h3 className="text-lg font-semibold text-red-900">Issues</h3>
-          </div>
-          <div className="space-y-2">
+        <Alert variant="error" title="Compilation Issues">
+          <ul className="space-y-2">
             {compileDiagnostics.map((diagnostic: string, idx: number) => (
-              <div key={idx} className="flex items-start gap-2 text-sm text-red-800">
-                <span className="text-red-600 mt-0.5">•</span>
+              <li key={idx} className="flex items-start gap-2">
+                <span>•</span>
                 <span>{diagnostic}</span>
-              </div>
+              </li>
             ))}
-          </div>
-        </div>
+          </ul>
+        </Alert>
       )}
     </div>
   );

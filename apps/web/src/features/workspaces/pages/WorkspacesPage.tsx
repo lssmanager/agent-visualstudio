@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Trash2, ChevronRight } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 
 import { applyDeploy, getDeployPreview } from '../../../lib/api';
 import { useStudioState } from '../../../lib/StudioStateContext';
@@ -8,6 +8,7 @@ import { WorkspaceDeployPanel } from '../components/WorkspaceDeployPanel';
 import { WorkspaceEditor } from '../components/WorkspaceEditor';
 import { WorkspaceFileTree } from '../components/WorkspaceFileTree';
 import { WorkspaceList } from '../components/WorkspaceList';
+import { PageHeader, Card } from '../../../components';
 
 export function WorkspacesPage() {
   const { state, refresh } = useStudioState();
@@ -20,17 +21,15 @@ export function WorkspacesPage() {
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       {/* Page Header */}
-      <div>
-        <h1 className="text-3xl font-bold text-slate-900">Workspaces</h1>
-        <p className="text-slate-600 mt-1">
-          Create and manage workspaces. Each workspace is an independent configuration of agents, skills, and flows.
-        </p>
-      </div>
+      <PageHeader
+        title="Workspaces"
+        description="Create and manage workspaces. Each workspace is an independent configuration of agents, skills, and flows."
+      />
 
       {/* Workspaces Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {workspaces.length > 0 && workspaces.map((ws) => (
-          <div key={ws.id} className="bg-white rounded-lg border border-slate-200 p-6 hover:shadow-md transition-shadow">
+          <Card key={ws.id} className="hover:shadow-md transition-shadow">
             <div className="flex items-start justify-between mb-4">
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">{ws.name}</h3>
@@ -72,7 +71,7 @@ export function WorkspacesPage() {
               <div className="w-2 h-2 rounded-full bg-emerald-500" />
               Active
             </div>
-          </div>
+          </Card>
         ))}
 
         {/* New Workspace Card */}
@@ -87,7 +86,7 @@ export function WorkspacesPage() {
 
       {/* Editor Section */}
       {showEditor && (
-        <div className="bg-white rounded-lg border border-slate-200 p-6">
+        <Card>
           <h2 className="text-lg font-semibold text-slate-900 mb-4">New Workspace</h2>
           <WorkspaceEditor
             profiles={state.profiles}
@@ -96,42 +95,42 @@ export function WorkspacesPage() {
               setShowEditor(false);
             }}
           />
-        </div>
+        </Card>
       )}
 
       {/* Current Workspace Info & Deployment */}
       {state.workspace && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Workspace Details */}
-          <div className="bg-white rounded-lg border border-slate-200 p-6">
+          <Card>
             <h3 className="text-lg font-semibold text-slate-900 mb-4">Workspace Details</h3>
             <WorkspaceList current={state.workspace} />
-          </div>
+          </Card>
 
           {/* Deployment */}
           <div className="space-y-4">
-            <div className="bg-white rounded-lg border border-slate-200 p-6">
+            <Card>
               <WorkspaceDeployPanel
                 onPreview={() => void getDeployPreview().then(setPreview)}
                 onDeploy={() => void applyDeploy({ applyRuntime: true })}
               />
-            </div>
+            </Card>
           </div>
         </div>
       )}
 
       {/* File Tree & Preview */}
       {preview && (
-        <div className="bg-white rounded-lg border border-slate-200 p-6">
+        <Card>
           <h3 className="text-lg font-semibold text-slate-900 mb-4">Deployment Preview</h3>
           <WorkspaceFileTree preview={preview} />
-        </div>
+        </Card>
       )}
 
       {/* Delete Confirmation Modal */}
       {selectedForDelete && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg p-6 max-w-sm">
+          <Card className="max-w-sm">
             <h3 className="text-lg font-semibold text-slate-900 mb-2">Delete Workspace?</h3>
             <p className="text-slate-600 text-sm mb-6">
               This action cannot be undone. All agents, skills, and flows in this workspace will be permanently deleted.
@@ -153,7 +152,7 @@ export function WorkspacesPage() {
                 Delete
               </button>
             </div>
-          </div>
+          </Card>
         </div>
       )}
     </div>

@@ -1,10 +1,11 @@
 import { useState } from 'react';
+import { BookOpen } from 'lucide-react';
 
 import { useStudioState } from '../../../lib/StudioStateContext';
 import { ProfileSpec } from '../../../lib/types';
 import { ProfileEditor } from '../components/ProfileEditor';
 import { ProfileGallery } from '../components/ProfileGallery';
-import { BookOpen } from 'lucide-react';
+import { PageHeader, EmptyState, Badge } from '../../../components';
 
 export default function ProfilesPage() {
   const { state } = useStudioState();
@@ -13,12 +14,11 @@ export default function ProfilesPage() {
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       {/* Page Header */}
-      <div>
-        <h1 className="text-3xl font-bold text-slate-900">Profiles</h1>
-        <p className="text-slate-600 mt-1">
-          Profiles are pre-configured templates for agents, skills, and workflows
-        </p>
-      </div>
+      <PageHeader
+        title="Profiles"
+        description="Pre-configured templates for agents, skills, and workflows"
+        icon={BookOpen}
+      />
 
       {/* Content */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -54,12 +54,9 @@ export default function ProfilesPage() {
                     <p className="text-slate-600 mb-2">Default Skills</p>
                     <div className="flex flex-wrap gap-2">
                       {selected.defaultSkills.map((skill) => (
-                        <span
-                          key={skill}
-                          className="inline-block bg-blue-50 text-blue-700 px-2 py-1 rounded text-xs"
-                        >
+                        <Badge key={skill} variant="info">
                           {skill}
-                        </span>
+                        </Badge>
                       ))}
                     </div>
                   </div>
@@ -70,12 +67,11 @@ export default function ProfilesPage() {
               </div>
             </div>
           ) : (
-            <div className="bg-white rounded-lg border border-slate-200 p-6 text-center text-slate-600 flex items-center justify-center h-64">
-              <div>
-                <BookOpen size={32} className="mx-auto mb-3 text-slate-300" />
-                <p>Select a profile to view details</p>
-              </div>
-            </div>
+            <EmptyState
+              icon={BookOpen}
+              title="No Profile Selected"
+              description="Select a profile from the gallery to view details"
+            />
           )}
         </div>
       </div>
