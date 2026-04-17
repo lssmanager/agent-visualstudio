@@ -13,7 +13,6 @@
     "start": "node dist/apps/api/src/main.js",
     "dev": "NODE_ENV=development ts-node -P tsconfig.json apps/api/src/main.ts",
     "dev:web": "npx vite --config apps/web/vite.config.ts",
-    "dev:legacy": "NODE_ENV=development node backend/server.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
