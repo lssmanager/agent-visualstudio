@@ -1,3 +1,4 @@
+import { type ReactNode } from 'react';
 import { WorkspaceSpec } from '../../../lib/types';
 import { SectionCard } from '../../../components/ui/SectionCard';
 import { Package, Tag, Cpu, Calendar } from 'lucide-react';
@@ -7,7 +8,7 @@ interface WorkspaceSummaryCardProps {
 }
 
 export function WorkspaceSummaryCard({ workspace }: WorkspaceSummaryCardProps) {
-  const rows: { label: string; value: string; mono?: boolean; icon?: JSX.Element }[] = [
+  const rows: { label: string; value: string; mono?: boolean; icon?: ReactNode }[] = [
     ...(workspace.description
       ? [{ label: 'Description', value: workspace.description, icon: <Package size={14} /> }]
       : []),

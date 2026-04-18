@@ -1,3 +1,4 @@
+import { type ReactNode } from 'react';
 import { FolderOpen, Users, GitBranch, Wrench } from 'lucide-react';
 
 interface StudioSidebarProps {
@@ -8,7 +9,7 @@ interface StudioSidebarProps {
 }
 
 interface StatRowProps {
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
   count: number;
 }

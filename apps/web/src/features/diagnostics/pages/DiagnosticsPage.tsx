@@ -4,6 +4,7 @@ import { PageHeader, Alert, Card } from '../../../components';
 import { StatCard } from '../../../components/ui/StatCard';
 import { KpiGrid } from '../../../components/ui/KpiGrid';
 import { DiagnosticsPanel } from '../../../components/ui/DiagnosticsPanel';
+import { GatewayLogsPanel } from '../components/GatewayLogsPanel';
 
 export default function DiagnosticsPage() {
   const { state } = useStudioState();
@@ -12,6 +13,7 @@ export default function DiagnosticsPage() {
   const compileDiagnostics = state.compile?.diagnostics ?? [];
   const sessions           = state.runtime?.sessions?.payload ?? [];
   const workspace          = state.workspace;
+  const runtimeDiagnostics = state.runtime?.diagnostics ?? {};
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -108,6 +110,11 @@ export default function DiagnosticsPage() {
           </div>
         )}
       </Card>
+
+      {/* Gateway diagnostics payload */}
+      {Object.keys(runtimeDiagnostics).length > 0 && (
+        <GatewayLogsPanel diagnostics={runtimeDiagnostics} />
+      )}
 
       {/* Compile errors detailed list */}
       {compileDiagnostics.length > 0 && (

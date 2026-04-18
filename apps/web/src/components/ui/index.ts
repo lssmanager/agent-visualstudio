@@ -4,3 +4,5 @@ export { RuntimeBadge } from './RuntimeBadge';
 export { DiagnosticsPanel } from './DiagnosticsPanel';
 export { LoadingState } from './LoadingState';
 export { SectionCard } from './SectionCard';
+export { AgentCard } from './AgentCard';
+export { EmptySection } from './EmptySection';

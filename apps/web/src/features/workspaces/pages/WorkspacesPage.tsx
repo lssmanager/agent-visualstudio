@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, Package } from 'lucide-react';
 
 import { applyDeploy, getDeployPreview } from '../../../lib/api';
 import { useStudioState } from '../../../lib/StudioStateContext';
@@ -47,6 +47,7 @@ export default function WorkspacesPage() {
       {/* Page Header */}
       <PageHeader
         title="Workspaces"
+        icon={Package}
         description="Create and manage workspaces. Each workspace is an independent configuration of agents, skills, and flows."
       />
 

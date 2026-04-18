@@ -6,7 +6,7 @@ import { StudioStateResponse } from './lib/types';
 import { StudioStateContext } from './lib/StudioStateContext';
 import { MainLayout } from './layouts/MainLayout';
 import { LoadingState } from './components/ui/LoadingState';
-import OnboardingPage from './features/onboarding/pages/OnboardingPage';
+import { OnboardingDrawer } from './features/onboarding/components/OnboardingDrawer';
 import OverviewPage from './features/overview/pages/OverviewPage';
 import StudioPage from './features/studio/pages/StudioPage';
 import WorkspacesPage from './features/workspaces/pages/WorkspacesPage';
@@ -52,16 +52,19 @@ export function App() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
-        <div className="rounded-2xl border border-rose-500/30 bg-slate-900 p-8 max-w-md w-full text-center">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-rose-500/10 mb-4">
-            <AlertTriangle size={24} className="text-rose-400" />
+      <div className="min-h-screen bg-[var(--bg-secondary)] flex items-center justify-center p-6">
+        <div className="rounded-2xl border border-[var(--border-primary)] bg-white p-8 max-w-md w-full text-center shadow-[var(--shadow-lg)]">
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-red-50 mb-4">
+            <AlertTriangle size={24} className="text-red-500" />
           </div>
-          <h1 className="text-lg font-semibold text-white">Failed to load Studio</h1>
-          <p className="mt-2 text-sm text-slate-400">{error}</p>
+          <h1 className="text-lg font-heading font-semibold text-[var(--text-primary)]">
+            Failed to load Studio
+          </h1>
+          <p className="mt-2 text-sm text-[var(--text-muted)]">{error}</p>
           <button
             onClick={() => void loadState()}
-            className="mt-6 inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-500 transition-colors"
+            className="mt-6 inline-flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium text-white transition-colors"
+            style={{ background: 'var(--color-primary)' }}
           >
             Retry Connection
           </button>
@@ -72,13 +75,12 @@ export function App() {
 
   if (!state) return null;
 
-  if (!state.workspace) {
-    return <OnboardingPage onComplete={loadState} />;
-  }
-
   return (
     <StudioStateContext.Provider value={{ state, refresh: refreshState }}>
       <BrowserRouter>
+        {/* Onboarding drawer overlays the dashboard when no workspace exists */}
+        <OnboardingDrawer open={!state.workspace} onComplete={loadState} />
+
         <Routes>
           <Route element={<MainLayout />}>
             <Route path="/"            element={<OverviewPage />} />
