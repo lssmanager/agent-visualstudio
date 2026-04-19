@@ -75,7 +75,19 @@
   --radius-md:   8px;
   --radius-lg:   12px;
   --radius-xl:   16px;
+  --radius-2xl:  18px;
   --radius-full: 9999px;
+
+  /* Tone surfaces (for StatCard, DiagnosticsPanel, RuntimeBadge) */
+  --tone-success-bg:     rgba(34, 197, 94, 0.08);
+  --tone-success-border: rgba(34, 197, 94, 0.25);
+  --tone-success-text:   #166534;
+  --tone-warning-bg:     rgba(245, 158, 11, 0.08);
+  --tone-warning-border: rgba(245, 158, 11, 0.25);
+  --tone-warning-text:   #92400E;
+  --tone-danger-bg:      rgba(239, 68, 68, 0.08);
+  --tone-danger-border:  rgba(239, 68, 68, 0.25);
+  --tone-danger-text:    #991B1B;
 
   /* Spacing (4px base) */
   --space-1:  4px;
@@ -150,6 +162,16 @@
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45);
+
+  --tone-success-bg:     rgba(34, 197, 94, 0.12);
+  --tone-success-border: rgba(34, 197, 94, 0.3);
+  --tone-success-text:   #86EFAC;
+  --tone-warning-bg:     rgba(245, 158, 11, 0.12);
+  --tone-warning-border: rgba(245, 158, 11, 0.3);
+  --tone-warning-text:   #FDE68A;
+  --tone-danger-bg:      rgba(239, 68, 68, 0.12);
+  --tone-danger-border:  rgba(239, 68, 68, 0.3);
+  --tone-danger-text:    #FCA5A5;
 }
 
 /* ── Base ─────────────────────────────────────────────────────── */
@@ -218,4 +240,11 @@
 }
 [data-tip]:hover::after {
   opacity: 1;
+}
+
+/* ── Overview Dashboard Responsive ────────────────────────────── */
+@media (max-width: 1024px) {
+  .grid[style*="1.35fr"] {
+    grid-template-columns: 1fr !important;
+  }
 }

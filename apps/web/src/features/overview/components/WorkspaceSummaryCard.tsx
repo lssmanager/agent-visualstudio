@@ -34,14 +34,19 @@ export function WorkspaceSummaryCard({ workspace }: WorkspaceSummaryCardProps) {
       <dl className="space-y-3">
         {rows.map((row) => (
           <div key={row.label} className="flex items-start justify-between gap-4">
-            <dt className="flex items-center gap-1.5 text-xs text-slate-500 flex-shrink-0">
+            <dt className="flex items-center gap-1.5 text-xs flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
               {row.icon}
               {row.label}
             </dt>
             <dd
-              className={`text-xs text-slate-800 text-right max-w-[60%] truncate ${
-                row.mono ? 'font-mono bg-slate-100 rounded px-1.5 py-0.5' : 'font-medium'
+              className={`text-xs text-right max-w-[60%] truncate ${
+                row.mono ? 'font-mono rounded px-1.5 py-0.5' : 'font-medium'
               }`}
+              style={
+                row.mono
+                  ? { color: 'var(--text-primary)', background: 'var(--bg-tertiary)' }
+                  : { color: 'var(--text-primary)' }
+              }
             >
               {row.value}
             </dd>
@@ -50,13 +55,14 @@ export function WorkspaceSummaryCard({ workspace }: WorkspaceSummaryCardProps) {
       </dl>
 
       {workspace.tags && workspace.tags.length > 0 && (
-        <div className="mt-4 pt-4 border-t border-slate-100">
-          <p className="text-xs text-slate-500 mb-2">Tags</p>
+        <div className="mt-4 pt-4" style={{ borderTop: '1px solid var(--border-secondary)' }}>
+          <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>Tags</p>
           <div className="flex flex-wrap gap-1.5">
             {workspace.tags.map((tag) => (
               <span
                 key={tag}
-                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600"
+                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+                style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}
               >
                 {tag}
               </span>

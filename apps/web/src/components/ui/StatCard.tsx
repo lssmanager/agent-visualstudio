@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, CSSProperties } from 'react';
 
 type StatCardTone = 'default' | 'success' | 'warning' | 'danger';
 
@@ -11,25 +11,42 @@ interface StatCardProps {
   onClick?: () => void;
 }
 
-const toneClasses: Record<StatCardTone, string> = {
-  default: 'border-slate-200 bg-white text-slate-900',
-  success: 'border-emerald-200 bg-emerald-50 text-emerald-900',
-  warning: 'border-amber-200 bg-amber-50 text-amber-900',
-  danger:  'border-rose-200 bg-rose-50 text-rose-900',
+const toneStyles: Record<StatCardTone, CSSProperties> = {
+  default: {
+    background: 'var(--card-bg)',
+    borderColor: 'var(--card-border)',
+    color: 'var(--text-primary)',
+  },
+  success: {
+    background: 'var(--tone-success-bg)',
+    borderColor: 'var(--tone-success-border)',
+    color: 'var(--tone-success-text)',
+  },
+  warning: {
+    background: 'var(--tone-warning-bg)',
+    borderColor: 'var(--tone-warning-border)',
+    color: 'var(--tone-warning-text)',
+  },
+  danger: {
+    background: 'var(--tone-danger-bg)',
+    borderColor: 'var(--tone-danger-border)',
+    color: 'var(--tone-danger-text)',
+  },
 };
 
 export function StatCard({ label, value, helper, tone = 'default', icon, onClick }: StatCardProps) {
   return (
     <div
-      className={`rounded-2xl border p-5 shadow-sm transition-all ${toneClasses[tone]} ${
+      className={`rounded-2xl border p-5 shadow-sm transition-all ${
         onClick ? 'cursor-pointer hover:shadow-md hover:scale-[1.01]' : ''
       }`}
+      style={toneStyles[tone]}
       onClick={onClick}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-wider opacity-60">{label}</p>
-          <p className="mt-2 text-3xl font-bold tracking-tight leading-none">{value}</p>
+          <p className="mt-2 font-bold tracking-tight leading-none" style={{ fontSize: 'var(--text-3xl)' }}>{value}</p>
           {helper && <p className="mt-2 text-sm opacity-60 leading-snug">{helper}</p>}
         </div>
         {icon && <div className="opacity-60 flex-shrink-0 mt-0.5">{icon}</div>}

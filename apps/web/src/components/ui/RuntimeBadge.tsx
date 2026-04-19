@@ -10,14 +10,17 @@ export function RuntimeBadge({ ok, size = 'md', showLabel = true }: RuntimeBadge
 
   return (
     <span
-      className={`inline-flex items-center gap-1.5 font-semibold tracking-wide ${textSizes[size]} ${
-        ok ? 'text-emerald-600' : 'text-amber-600'
-      }`}
+      className={`inline-flex items-center gap-1.5 font-semibold tracking-wide ${textSizes[size]}`}
+      style={{ color: ok ? 'var(--color-success)' : 'var(--color-warning)' }}
     >
       <span
-        className={`${dotSizes[size]} rounded-full flex-shrink-0 ${
-          ok ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]' : 'bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.6)]'
-        }`}
+        className={`${dotSizes[size]} rounded-full flex-shrink-0`}
+        style={{
+          background: ok ? 'var(--color-success)' : 'var(--color-warning)',
+          boxShadow: ok
+            ? '0 0 6px rgba(34, 197, 94, 0.6)'
+            : '0 0 6px rgba(245, 158, 11, 0.6)',
+        }}
       />
       {showLabel && (ok ? 'Online' : 'Offline')}
     </span>
