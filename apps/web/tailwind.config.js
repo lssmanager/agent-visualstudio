@@ -4,6 +4,7 @@ module.exports = {
     './src/**/*.{html,tsx,ts}',
     './index.html',
   ],
+  darkMode: ['selector', '[data-theme="dark"]'],
   theme: {
     extend: {
       fontFamily: {
@@ -21,11 +22,6 @@ module.exports = {
         accent: {
           DEFAULT: '#F3B723',
           hover:   '#ED9E1B',
-        },
-        nav: {
-          DEFAULT: '#1a1a2e',
-          hover:   '#252544',
-          active:  '#2259F2',
         },
       },
       boxShadow: {

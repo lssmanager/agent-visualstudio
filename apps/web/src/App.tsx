@@ -4,6 +4,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { getStudioState } from './lib/api';
 import { StudioStateResponse } from './lib/types';
 import { StudioStateContext } from './lib/StudioStateContext';
+import { ThemeProvider } from './lib/ThemeProvider';
+import { usePreferences } from './lib/usePreferences';
 import { MainLayout } from './layouts/MainLayout';
 import { LoadingState } from './components/ui/LoadingState';
 import { OnboardingDrawer } from './features/onboarding/components/OnboardingDrawer';
@@ -24,6 +26,7 @@ import OperationsPage from './features/operations/pages/OperationsPage';
 import { AlertTriangle } from 'lucide-react';
 
 export function App() {
+  const { theme, setTheme } = usePreferences();
   const [state, setState] = useState<StudioStateResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]   = useState<string | null>(null);
@@ -53,60 +56,123 @@ export function App() {
   useEffect(() => { void loadState(); }, []);
 
   if (loading) {
-    return <LoadingState label="Loading OpenClaw Studio..." />;
+    return (
+      <ThemeProvider initialTheme={theme} onThemeChange={setTheme}>
+        <LoadingState label="Loading OpenClaw Studio..." />
+      </ThemeProvider>
+    );
   }
 
   if (error) {
     return (
-      <div className="min-h-screen bg-[var(--bg-secondary)] flex items-center justify-center p-6">
-        <div className="rounded-2xl border border-[var(--border-primary)] bg-white p-8 max-w-md w-full text-center shadow-[var(--shadow-lg)]">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-red-50 mb-4">
-            <AlertTriangle size={24} className="text-red-500" />
-          </div>
-          <h1 className="text-lg font-heading font-semibold text-[var(--text-primary)]">
-            Failed to load Studio
-          </h1>
-          <p className="mt-2 text-sm text-[var(--text-muted)]">{error}</p>
-          <button
-            onClick={() => void loadState()}
-            className="mt-6 inline-flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium text-white transition-colors"
-            style={{ background: 'var(--color-primary)' }}
+      <ThemeProvider initialTheme={theme} onThemeChange={setTheme}>
+        <div
+          style={{
+            minHeight: '100vh',
+            background: 'var(--bg-secondary)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 24,
+          }}
+        >
+          <div
+            style={{
+              borderRadius: 'var(--radius-xl)',
+              border: '1px solid var(--border-primary)',
+              background: 'var(--card-bg)',
+              padding: 32,
+              maxWidth: 420,
+              width: '100%',
+              textAlign: 'center',
+              boxShadow: 'var(--shadow-lg)',
+            }}
           >
-            Retry Connection
-          </button>
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 48,
+                height: 48,
+                borderRadius: 'var(--radius-full)',
+                background: 'rgba(239,68,68,0.1)',
+                marginBottom: 16,
+              }}
+            >
+              <AlertTriangle size={24} style={{ color: 'var(--color-error)' }} />
+            </div>
+            <h1
+              style={{
+                fontFamily: 'var(--font-heading)',
+                fontSize: 'var(--text-lg)',
+                fontWeight: 600,
+                color: 'var(--text-primary)',
+                margin: 0,
+              }}
+            >
+              Failed to load Studio
+            </h1>
+            <p style={{ marginTop: 8, fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>{error}</p>
+            <button
+              onClick={() => void loadState()}
+              style={{
+                marginTop: 24,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '10px 20px',
+                borderRadius: 'var(--radius-md)',
+                fontSize: 'var(--text-sm)',
+                fontFamily: 'var(--font-heading)',
+                fontWeight: 500,
+                color: 'var(--btn-primary-text)',
+                background: 'var(--btn-primary-bg)',
+                border: 'none',
+                cursor: 'pointer',
+                transition: 'background var(--transition)',
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--btn-primary-hover)'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--btn-primary-bg)'; }}
+            >
+              Retry Connection
+            </button>
+          </div>
         </div>
-      </div>
+      </ThemeProvider>
     );
   }
 
   if (!state) return null;
 
   return (
-    <StudioStateContext.Provider value={{ state, refresh: refreshState }}>
-      <BrowserRouter>
-        {/* Onboarding drawer overlays the dashboard when no workspace exists */}
-        <OnboardingDrawer open={!state.workspace} onComplete={loadState} />
+    <ThemeProvider initialTheme={theme} onThemeChange={setTheme}>
+      <StudioStateContext.Provider value={{ state, refresh: refreshState }}>
+        <BrowserRouter>
+          {/* Onboarding drawer overlays the dashboard when no workspace exists */}
+          <OnboardingDrawer open={!state.workspace} onComplete={loadState} />
 
-        <Routes>
-          <Route element={<MainLayout />}>
-            <Route path="/"            element={<OverviewPage />} />
-            <Route path="/studio"      element={<StudioPage />} />
-            <Route path="/workspaces"  element={<WorkspacesPage />} />
-            <Route path="/agents"      element={<AgentListPage />} />
-            <Route path="/profiles"    element={<ProfilesPage />} />
-            <Route path="/diagnostics" element={<DiagnosticsPage />} />
-            <Route path="/sessions"    element={<SessionsPage />} />
-            <Route path="/routing"     element={<RoutingPage />} />
-            <Route path="/runs"        element={<RunsPage />} />
-            <Route path="/hooks"       element={<HooksPage />} />
-            <Route path="/versions"    element={<VersionsPage />} />
-            <Route path="/settings"    element={<SettingsPage />} />
-            <Route path="/commands"    element={<CommandsPage />} />
-            <Route path="/operations"  element={<OperationsPage />} />
-            <Route path="*"            element={<Navigate to="/" replace />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </StudioStateContext.Provider>
+          <Routes>
+            <Route element={<MainLayout />}>
+              <Route path="/"            element={<OverviewPage />} />
+              <Route path="/studio"      element={<StudioPage />} />
+              <Route path="/workspaces"  element={<WorkspacesPage />} />
+              <Route path="/agents"      element={<AgentListPage />} />
+              <Route path="/profiles"    element={<ProfilesPage />} />
+              <Route path="/diagnostics" element={<DiagnosticsPage />} />
+              <Route path="/sessions"    element={<SessionsPage />} />
+              <Route path="/routing"     element={<RoutingPage />} />
+              <Route path="/runs"        element={<RunsPage />} />
+              <Route path="/hooks"       element={<HooksPage />} />
+              <Route path="/versions"    element={<VersionsPage />} />
+              <Route path="/settings"    element={<SettingsPage />} />
+              <Route path="/commands"    element={<CommandsPage />} />
+              <Route path="/operations"  element={<OperationsPage />} />
+              <Route path="*"            element={<Navigate to="/" replace />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+      </StudioStateContext.Provider>
+    </ThemeProvider>
   );
 }
