@@ -30,6 +30,48 @@ type GatewayLike = Pick<
   | 'call'
 >;
 
+const asRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+};
+
+const toHealthSnapshot = (value: unknown): RuntimeSnapshot['health'] => {
+  const record = asRecord(value);
+  if (!record) {
+    return { ok: false, status: 'invalid_response' };
+  }
+
+  return {
+    ...record,
+    ok: typeof record.ok === 'boolean' ? record.ok : false,
+  };
+};
+
+const toDiagnosticsSnapshot = (value: unknown): RuntimeSnapshot['diagnostics'] => {
+  return asRecord(value) ?? { ok: false, diagnostics: null };
+};
+
+const toSessionsSnapshot = (value: unknown): RuntimeSnapshot['sessions'] => {
+  const record = asRecord(value);
+  if (!record) {
+    return { ok: false, payload: [] };
+  }
+
+  return {
+    ...record,
+    ok: typeof record.ok === 'boolean' ? record.ok : false,
+    payload: Array.isArray(record.payload) ? record.payload : [],
+  };
+};
+
+const isOkResult = (value: unknown): value is { ok: boolean } => {
+  const record = asRecord(value);
+  return Boolean(record && typeof record.ok === 'boolean' && record.ok);
+};
+
 export class OpenClawRuntimeAdapter implements RuntimeAdapter {
   readonly name = 'openclaw';
 
@@ -43,9 +85,9 @@ export class OpenClawRuntimeAdapter implements RuntimeAdapter {
     ]);
 
     return {
-      health,
-      diagnostics: diagnostics as Record<string, unknown>,
-      sessions: sessions as { ok: boolean; payload?: unknown[] },
+      health: toHealthSnapshot(health),
+      diagnostics: toDiagnosticsSnapshot(diagnostics),
+      sessions: toSessionsSnapshot(sessions),
     };
   }
 
@@ -100,7 +142,7 @@ export class OpenClawRuntimeAdapter implements RuntimeAdapter {
       metadata: payload.metadata,
     });
 
-    if (!(runtimeResult as { ok?: boolean }).ok) {
+    if (!isOkResult(runtimeResult)) {
       return topologyActionResultSchema.parse({
         action,
         status: 'rejected',
