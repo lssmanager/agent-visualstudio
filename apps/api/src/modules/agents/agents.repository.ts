@@ -1,26 +1,16 @@
-import path from 'node:path';
-
 import { AgentSpec } from '../../../../../packages/core-types/src';
-import { studioConfig } from '../../config';
-import { JsonFileStore } from '../../lib/file-store';
-
-const defaultAgents: AgentSpec[] = [];
+import { workspaceStore } from '../../config';
 
 export class AgentsRepository {
-  private readonly store = new JsonFileStore<AgentSpec[]>(
-    path.join(studioConfig.workspaceRoot, '.openclaw-studio', 'agents.spec.json'),
-    defaultAgents,
-  );
-
   list(): AgentSpec[] {
-    return this.store.read();
+    return workspaceStore.listAgents();
   }
 
   findById(id: string): AgentSpec | null {
-    return this.list().find((item) => item.id === id) ?? null;
+    return workspaceStore.getAgent(id);
   }
 
   saveAll(agents: AgentSpec[]): AgentSpec[] {
-    return this.store.write(agents);
+    return workspaceStore.saveAgents(agents);
   }
 }

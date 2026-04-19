@@ -15,6 +15,9 @@ export const gatewayMethods = {
   status: 'status',
   diagnostics: 'diagnostics',
   agentsList: 'agents.list',
+  agentsSpawn: 'agents.spawn',
+  agentsSend: 'agents.send',
+  agentsCancel: 'agents.cancel',
   sessionsList: 'sessions.list',
   usageCost: 'usage.cost',
 } as const;

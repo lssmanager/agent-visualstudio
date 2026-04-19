@@ -1,5 +1,18 @@
 export type AgentVisibility = 'private' | 'workspace' | 'public';
 export type AgentExecutionMode = 'direct' | 'orchestrated' | 'handoff';
+export type AgentKind = 'agent' | 'subagent' | 'orchestrator';
+
+export interface AgentTrigger {
+  type: 'event' | 'schedule' | 'manual' | 'webhook';
+  config?: Record<string, unknown>;
+}
+
+export interface AgentPermission {
+  tools?: string[];
+  channels?: string[];
+  models?: string[];
+  maxTokensPerTurn?: number;
+}
 
 export interface AgentHandoffRule {
   id: string;
@@ -33,6 +46,11 @@ export interface AgentSpec {
   tags: string[];
   visibility: AgentVisibility;
   executionMode: AgentExecutionMode;
+  kind?: AgentKind;
+  parentAgentId?: string;
+  context?: string[];
+  triggers?: AgentTrigger[];
+  permissions?: AgentPermission;
   handoffRules: AgentHandoffRule[];
   channelBindings: AgentChannelBinding[];
   policyBindings?: AgentPolicyBinding[];

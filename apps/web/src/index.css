@@ -2,9 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── UI Kit Design Tokens ─────────────────────────────────────── */
-:root,
-[data-theme="light"] {
+/* ── UI Kit Design Tokens (Light Theme) ──────────────────────── */
+:root {
   --bg-primary:   #FFFFFF;
   --bg-secondary: #FAFBFD;
   --bg-tertiary:  #F3F4F6;
@@ -66,38 +65,6 @@
   --font-mono:    'JetBrains Mono', 'Fira Code', monospace;
 
   --transition: 180ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-[data-theme="dark"] {
-  --bg-primary:    #0B1220;
-  --bg-secondary:  #111A2E;
-  --bg-tertiary:   #1A263D;
-  --bg-elevated:   #22304A;
-
-  --text-primary:   #E6EDF7;
-  --text-secondary: #A8B3C7;
-  --text-muted:     #6B7A99;
-  --text-inverse:   #0B1220;
-
-  --border-primary:   #22304A;
-  --border-secondary: #1A263D;
-  --border-focus:     #2259F2;
-
-  --card-bg:     #111A2E;
-  --card-border: #22304A;
-  --card-hover:  #1A263D;
-
-  --btn-secondary-bg:    #22304A;
-  --btn-secondary-hover: #2A3A5A;
-  --btn-secondary-text:  #E6EDF7;
-
-  --input-bg:    #111A2E;
-  --input-border: #22304A;
-  --input-text:   #E6EDF7;
-
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
 /* ── Base ─────────────────────────────────────────────────────── */

@@ -13,6 +13,11 @@ import {
   Search,
   Plus,
   Circle,
+  Play,
+  Webhook,
+  GitBranch,
+  Terminal,
+  BarChart3,
 } from 'lucide-react';
 import { useStudioState } from '../lib/StudioStateContext';
 import { StudioStateResponse } from '../lib/types';
@@ -24,9 +29,14 @@ const NAV = [
   { label: 'Workspaces',  path: '/workspaces',  Icon: Package },
   { label: 'Agents',      path: '/agents',      Icon: Users },
   { label: 'Profiles',    path: '/profiles',    Icon: BookOpen },
+  { label: 'Runs',        path: '/runs',        Icon: Play },
+  { label: 'Routing',     path: '/routing',     Icon: Landmark },
+  { label: 'Hooks',       path: '/hooks',       Icon: Webhook },
+  { label: 'Versions',    path: '/versions',    Icon: GitBranch },
+  { label: 'Commands',    path: '/commands',    Icon: Terminal },
+  { label: 'Operations',  path: '/operations',  Icon: BarChart3 },
   { label: 'Diagnostics', path: '/diagnostics', Icon: AlertCircle },
   { label: 'Sessions',    path: '/sessions',    Icon: MessageSquare },
-  { label: 'Routing',     path: '/routing',     Icon: Landmark },
 ] as const;
 
 /* ── Contextual panel ───────────────────────────────────────── */
@@ -205,6 +215,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             style={{ background: runtimeOk ? 'var(--color-success)' : 'var(--text-muted)' }}
           />
           <button
+            onClick={() => go('/settings')}
             className="w-11 h-11 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-200 transition-colors"
             style={{ background: 'transparent' }}
             onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.08)'; }}

@@ -18,27 +18,35 @@ export function Header({ onToggleSidebar }: HeaderProps) {
       <div className="flex items-center gap-3 min-w-0">
         <button
           onClick={onToggleSidebar}
-          className="p-2 hover:bg-slate-100 rounded-lg transition-colors flex-shrink-0"
+          className="p-2 rounded-lg transition-colors flex-shrink-0"
+          style={{
+            background: 'transparent',
+            ':hover': { background: 'var(--bg-tertiary)' },
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-tertiary)')}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
           title="Toggle sidebar"
         >
-          <Menu size={18} className="text-slate-500" />
+          <Menu size={18} style={{ color: 'var(--text-muted)' }} />
         </button>
 
         <div className="min-w-0">
           {workspace ? (
             <div className="flex items-center gap-2 min-w-0">
-              <span className="text-sm font-semibold text-slate-800 truncate">{workspace.name}</span>
+              <span className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                {workspace.name}
+              </span>
               {workspace.defaultModel && (
                 <>
-                  <span className="text-slate-300 flex-shrink-0">/</span>
-                  <span className="text-xs font-mono text-slate-500 truncate hidden sm:block">
+                  <span className="flex-shrink-0" style={{ color: 'var(--border-primary)' }}>/</span>
+                  <span className="text-xs font-mono truncate hidden sm:block" style={{ color: 'var(--text-muted)' }}>
                     {workspace.defaultModel}
                   </span>
                 </>
               )}
             </div>
           ) : (
-            <span className="text-sm text-slate-400 font-medium">No workspace</span>
+            <span className="text-sm font-medium" style={{ color: 'var(--text-muted)' }}>No workspace</span>
           )}
         </div>
       </div>
@@ -49,10 +57,15 @@ export function Header({ onToggleSidebar }: HeaderProps) {
 
         <button
           onClick={() => void refresh()}
-          className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+          className="p-2 rounded-lg transition-colors"
+          style={{
+            background: 'transparent',
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-tertiary)')}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
           title="Refresh state"
         >
-          <RotateCw size={16} className="text-slate-400" />
+          <RotateCw size={16} style={{ color: 'var(--text-muted)' }} />
         </button>
       </div>
     </div>

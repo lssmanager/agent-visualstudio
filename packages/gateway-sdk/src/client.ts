@@ -66,4 +66,16 @@ export class OpenClawClient {
   usageCost() {
     return this.transport.call<GatewayUsagePayload>(gatewayMethods.usageCost);
   }
+
+  spawnAgent(params: { agentId: string; input?: Record<string, unknown> }) {
+    return this.transport.call<{ sessionId: string }>(gatewayMethods.agentsSpawn, params);
+  }
+
+  sendToAgent(params: { sessionId: string; message: string; payload?: Record<string, unknown> }) {
+    return this.transport.call<{ ok: boolean }>(gatewayMethods.agentsSend, params);
+  }
+
+  cancelAgent(params: { sessionId: string }) {
+    return this.transport.call<{ ok: boolean }>(gatewayMethods.agentsCancel, params);
+  }
 }

@@ -7,21 +7,34 @@ interface ProfileSummaryCardProps {
 
 export function ProfileSummaryCard({ profile }: ProfileSummaryCardProps) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+    <div
+      className="rounded-xl border p-4 space-y-3"
+      style={{
+        borderColor: 'var(--border-primary)',
+        background: 'var(--bg-secondary)',
+      }}
+    >
       <div className="flex items-start gap-2">
-        <BookOpen size={16} className="text-blue-600 flex-shrink-0 mt-0.5" />
+        <BookOpen size={16} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--color-primary)' }} />
         <div>
-          <p className="text-xs font-semibold text-slate-800">{profile.name}</p>
+          <p className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>{profile.name}</p>
           {profile.description && (
-            <p className="text-xs text-slate-500 mt-0.5 leading-snug">{profile.description}</p>
+            <p className="text-xs mt-0.5 leading-snug" style={{ color: 'var(--text-muted)' }}>{profile.description}</p>
           )}
         </div>
       </div>
 
       {profile.defaultModel && (
         <div className="flex items-center gap-2 text-xs">
-          <span className="text-slate-500">Model:</span>
-          <span className="font-mono bg-white border border-slate-200 text-slate-700 rounded px-1.5 py-0.5 text-xs">
+          <span style={{ color: 'var(--text-muted)' }}>Model:</span>
+          <span
+            className="font-mono rounded px-1.5 py-0.5 text-xs border"
+            style={{
+              background: 'var(--input-bg)',
+              borderColor: 'var(--border-primary)',
+              color: 'var(--text-primary)',
+            }}
+          >
             {profile.defaultModel}
           </span>
         </div>
@@ -29,7 +42,7 @@ export function ProfileSummaryCard({ profile }: ProfileSummaryCardProps) {
 
       {profile.defaultSkills && profile.defaultSkills.length > 0 && (
         <div>
-          <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1.5">
+          <div className="flex items-center gap-1.5 text-xs mb-1.5" style={{ color: 'var(--text-muted)' }}>
             <Wrench size={12} />
             <span>Skills ({profile.defaultSkills.length})</span>
           </div>
@@ -37,7 +50,12 @@ export function ProfileSummaryCard({ profile }: ProfileSummaryCardProps) {
             {profile.defaultSkills.map((s) => (
               <span
                 key={s}
-                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-mono bg-white border border-slate-200 text-slate-600"
+                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-mono border"
+                style={{
+                  background: 'var(--input-bg)',
+                  borderColor: 'var(--border-primary)',
+                  color: 'var(--text-primary)',
+                }}
               >
                 {s}
               </span>
@@ -48,7 +66,7 @@ export function ProfileSummaryCard({ profile }: ProfileSummaryCardProps) {
 
       {profile.routines && profile.routines.length > 0 && (
         <div>
-          <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1.5">
+          <div className="flex items-center gap-1.5 text-xs mb-1.5" style={{ color: 'var(--text-muted)' }}>
             <Clock size={12} />
             <span>Routines ({profile.routines.length})</span>
           </div>
@@ -56,7 +74,12 @@ export function ProfileSummaryCard({ profile }: ProfileSummaryCardProps) {
             {profile.routines.map((r) => (
               <span
                 key={r}
-                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-mono bg-white border border-blue-200 text-blue-600"
+                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-mono border"
+                style={{
+                  background: 'var(--input-bg)',
+                  borderColor: 'var(--color-primary)',
+                  color: 'var(--color-primary)',
+                }}
               >
                 {r}
               </span>

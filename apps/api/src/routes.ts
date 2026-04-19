@@ -12,6 +12,15 @@ import { registerRoutingRoutes } from './modules/routing/routing.controller';
 import { registerSkillsRoutes } from './modules/skills/skills.controller';
 import { registerStudioRoutes } from './modules/studio/studio.controller';
 import { registerWorkspacesRoutes } from './modules/workspaces/workspaces.controller';
+import { registerConfigRoutes } from './modules/config/config.controller';
+import { registerCommandsRoutes } from './modules/commands/commands.controller';
+import { registerExportRoutes } from './modules/export/export.controller';
+import { registerRunsRoutes } from './modules/runs/runs.controller';
+import { registerHooksRoutes } from './modules/hooks/hooks.controller';
+import { registerAuditRoutes } from './modules/audit/audit.controller';
+import { registerBudgetsRoutes } from './modules/budgets/budgets.controller';
+import { registerMcpRoutes } from './modules/mcp/mcp.controller';
+import { registerVersionsRoutes } from './modules/versions/versions.controller';
 
 export function registerRoutes(app: Express) {
   const router = Router();
@@ -31,6 +40,15 @@ export function registerRoutes(app: Express) {
   registerRoutingRoutes(router);
   registerDeployRoutes(router);
   registerGatewayRoutes(router);
+  registerConfigRoutes(router);
+  registerCommandsRoutes(router);
+  registerExportRoutes(router);
+  registerRunsRoutes(router);
+  registerHooksRoutes(router);
+  registerAuditRoutes(router);
+  registerBudgetsRoutes(router);
+  registerMcpRoutes(router);
+  registerVersionsRoutes(router);
 
   app.use(studioConfig.apiPrefix, router);
 }

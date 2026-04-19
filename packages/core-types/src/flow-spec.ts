@@ -1,6 +1,14 @@
+export type FlowNodeType =
+  | 'trigger'
+  | 'agent'
+  | 'tool'
+  | 'condition'
+  | 'approval'
+  | 'end';
+
 export interface FlowNode {
   id: string;
-  type: string;
+  type: FlowNodeType | string;
   label?: string;
   config: Record<string, unknown>;
   position?: { x: number; y: number };

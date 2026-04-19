@@ -15,6 +15,12 @@ import ProfilesPage from './features/profiles/pages/ProfilesPage';
 import DiagnosticsPage from './features/diagnostics/pages/DiagnosticsPage';
 import SessionsPage from './features/sessions/pages/SessionsPage';
 import RoutingPage from './features/routing/pages/RoutingPage';
+import RunsPage from './features/runs/pages/RunsPage';
+import HooksPage from './features/hooks/pages/HooksPage';
+import VersionsPage from './features/versions/pages/VersionsPage';
+import SettingsPage from './features/settings/pages/SettingsPage';
+import { CommandsPage } from './features/commands/pages/CommandsPage';
+import OperationsPage from './features/operations/pages/OperationsPage';
 import { AlertTriangle } from 'lucide-react';
 
 export function App() {
@@ -91,6 +97,12 @@ export function App() {
             <Route path="/diagnostics" element={<DiagnosticsPage />} />
             <Route path="/sessions"    element={<SessionsPage />} />
             <Route path="/routing"     element={<RoutingPage />} />
+            <Route path="/runs"        element={<RunsPage />} />
+            <Route path="/hooks"       element={<HooksPage />} />
+            <Route path="/versions"    element={<VersionsPage />} />
+            <Route path="/settings"    element={<SettingsPage />} />
+            <Route path="/commands"    element={<CommandsPage />} />
+            <Route path="/operations"  element={<OperationsPage />} />
             <Route path="*"            element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

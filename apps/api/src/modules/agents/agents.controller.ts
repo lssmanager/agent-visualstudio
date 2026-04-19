@@ -5,8 +5,13 @@ import { AgentsService } from './agents.service';
 export function registerAgentsRoutes(router: Router) {
   const service = new AgentsService();
 
-  router.get('/agents', (_req, res) => {
-    res.json(service.findAll());
+  router.get('/agents', (req, res) => {
+    let agents = service.findAll();
+    const kind = req.query.kind as string | undefined;
+    if (kind) {
+      agents = agents.filter((a) => (a.kind ?? 'agent') === kind);
+    }
+    res.json(agents);
   });
 
   router.get('/agents/:id', (req, res) => {
