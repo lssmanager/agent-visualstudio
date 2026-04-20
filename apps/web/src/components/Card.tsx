@@ -10,10 +10,23 @@ interface CardProps {
 export function Card({ children, className = '', clickable = false, onClick }: CardProps) {
   return (
     <div
-      className={`bg-white rounded-lg border border-slate-200 p-6 ${
-        clickable ? 'cursor-pointer hover:shadow-md hover:border-blue-300 transition-all' : ''
+      className={`rounded-lg p-6 ${
+        clickable ? 'cursor-pointer transition-all' : ''
       } ${className}`}
+      style={{
+        background: 'var(--card-bg)',
+        border: '1px solid var(--card-border)',
+        ...(clickable ? {} : {}),
+      }}
       onClick={onClick}
+      onMouseEnter={clickable ? (e) => {
+        (e.currentTarget as HTMLElement).style.boxShadow = 'var(--shadow-md)';
+        (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-primary)';
+      } : undefined}
+      onMouseLeave={clickable ? (e) => {
+        (e.currentTarget as HTMLElement).style.boxShadow = '';
+        (e.currentTarget as HTMLElement).style.borderColor = 'var(--card-border)';
+      } : undefined}
     >
       {children}
     </div>

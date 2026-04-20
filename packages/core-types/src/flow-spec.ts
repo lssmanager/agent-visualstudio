@@ -1,8 +1,12 @@
 export type FlowNodeType =
   | 'trigger'
   | 'agent'
+  | 'subagent'
+  | 'skill'
   | 'tool'
   | 'condition'
+  | 'handoff'
+  | 'loop'
   | 'approval'
   | 'end';
 

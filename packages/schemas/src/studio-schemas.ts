@@ -36,8 +36,12 @@ export const skillSpecSchema = z.object({
 export const flowNodeTypeEnum = z.enum([
   'trigger',
   'agent',
+  'subagent',
+  'skill',
   'tool',
   'condition',
+  'handoff',
+  'loop',
   'approval',
   'end',
 ]);

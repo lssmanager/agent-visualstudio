@@ -9,11 +9,45 @@ export interface NodeTemplate {
 }
 
 export const NODE_TEMPLATES: NodeTemplate[] = [
-  { type: 'trigger', label: 'Trigger', icon: '⚡', color: '#2563eb', defaultConfig: { triggerType: 'manual' } },
-  { type: 'agent', label: 'Agent', icon: '🤖', color: '#16a34a', defaultConfig: { agentId: '', model: '' } },
-  { type: 'tool', label: 'Tool', icon: '🔧', color: '#7c3aed', defaultConfig: { skillId: '', functionName: '' } },
-  { type: 'condition', label: 'Condition', icon: '🔀', color: '#ca8a04', defaultConfig: { expression: '', branches: ['true', 'false'] } },
-  { type: 'approval', label: 'Approval', icon: '✅', color: '#d97706', defaultConfig: { approvers: [], timeout: 24 } },
+  { type: 'trigger', label: 'Root', icon: '⚡', color: '#2563eb', defaultConfig: { triggerType: 'manual' } },
+  {
+    type: 'agent',
+    label: 'Agent Node',
+    icon: '🤖',
+    color: '#16a34a',
+    defaultConfig: { agentId: '', name: '', purpose: '', skills: [], tools: [] },
+  },
+  {
+    type: 'subagent',
+    label: 'Subagent Node',
+    icon: '🧩',
+    color: '#0d9488',
+    defaultConfig: { agentId: '', name: '', purpose: '', skills: [], tools: [] },
+  },
+  { type: 'skill', label: 'Skill', icon: '⚙️', color: '#7c3aed', defaultConfig: { skillId: '' } },
+  { type: 'tool', label: 'Tool', icon: '🔧', color: '#9333ea', defaultConfig: { toolId: '', functionName: '' } },
+  {
+    type: 'condition',
+    label: 'Condition',
+    icon: '🔀',
+    color: '#ca8a04',
+    defaultConfig: { expression: '', branches: ['true', 'false'] },
+  },
+  { type: 'handoff', label: 'Handoff', icon: '↗️', color: '#ea580c', defaultConfig: { targetAgentId: '', reason: '' } },
+  {
+    type: 'loop',
+    label: 'Loop',
+    icon: '🔁',
+    color: '#0284c7',
+    defaultConfig: { maxIterations: 3, expression: '' },
+  },
+  {
+    type: 'approval',
+    label: 'Approval',
+    icon: '✅',
+    color: '#0f766e',
+    defaultConfig: { approvalRole: 'operator', timeoutMs: 300000 },
+  },
   { type: 'end', label: 'End', icon: '⏹', color: '#4b5563', defaultConfig: { outcome: 'completed' } },
 ];
 
@@ -25,5 +59,5 @@ export function generateNodeId(type: string): string {
 }
 
 export function getNodeTemplate(type: FlowNodeType): NodeTemplate | undefined {
-  return NODE_TEMPLATES.find((t) => t.type === type);
+  return NODE_TEMPLATES.find((template) => template.type === type);
 }

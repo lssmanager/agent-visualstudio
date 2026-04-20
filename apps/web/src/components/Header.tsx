@@ -1,8 +1,9 @@
-import { Menu, RotateCw, Sun, Moon, Plus } from 'lucide-react';
-import { useStudioState } from '../lib/StudioStateContext';
-import { RuntimeBadge } from './ui/RuntimeBadge';
-import { useTheme } from '../lib/ThemeProvider';
+import { Menu, Moon, Plus, RotateCw, Sun } from 'lucide-react';
+
 import { useOnboarding } from '../lib/OnboardingContext';
+import { useStudioState } from '../lib/StudioStateContext';
+import { useTheme } from '../lib/ThemeProvider';
+import { RuntimeBadge } from './ui/RuntimeBadge';
 
 interface HeaderProps {
   onToggleSidebar: () => void;
@@ -17,50 +18,59 @@ export function Header({ onToggleSidebar, showHamburger = false }: HeaderProps) 
   const workspace = state.workspace;
   const runtimeOk = state.runtime?.health?.ok ?? false;
 
-  const iconBtnStyle: React.CSSProperties = {
+  const iconButton: React.CSSProperties = {
     width: 36,
     height: 36,
-    borderRadius: 'var(--radius-md)',
-    border: '1px solid var(--border-primary)',
-    background: 'var(--bg-primary)',
+    borderRadius: 12,
+    border: '1px solid var(--shell-chip-border)',
+    background: 'var(--shell-chip-bg)',
     color: 'var(--text-muted)',
     display: 'grid',
     placeItems: 'center',
     cursor: 'pointer',
-    transition: 'background var(--transition), color var(--transition)',
+    transition: 'background var(--transition), color var(--transition), border-color var(--transition)',
   };
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 16 }}>
-      {/* Left: breadcrumb */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
         {showHamburger && (
-          <button onClick={onToggleSidebar} style={iconBtnStyle} title="Toggle sidebar">
+          <button onClick={onToggleSidebar} style={iconButton} title="Toggle sidebar">
             <Menu size={18} />
           </button>
         )}
 
-        <div style={{ minWidth: 0 }}>
+        <div style={{ minWidth: 0, display: 'grid', gap: 2 }}>
           {workspace ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+            <>
               <span
                 style={{
-                  fontSize: 'var(--text-sm)',
-                  fontWeight: 600,
-                  color: 'var(--text-primary)',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: 'var(--text-muted)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
                 }}
               >
-                {workspace.name}
+                Workspace
               </span>
-              {workspace.defaultModel && (
-                <>
-                  <span style={{ color: 'var(--text-muted)' }}>/</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                <span
+                  style={{
+                    fontSize: 18,
+                    fontWeight: 700,
+                    color: 'var(--text-primary)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {workspace.name}
+                </span>
+                {workspace.defaultModel && (
                   <span
                     style={{
-                      fontSize: 'var(--text-xs)',
+                      fontSize: 12,
                       fontFamily: 'var(--font-mono)',
                       color: 'var(--text-muted)',
                       overflow: 'hidden',
@@ -70,18 +80,15 @@ export function Header({ onToggleSidebar, showHamburger = false }: HeaderProps) 
                   >
                     {workspace.defaultModel}
                   </span>
-                </>
-              )}
-            </div>
+                )}
+              </div>
+            </>
           ) : (
-            <span style={{ fontSize: 'var(--text-sm)', fontWeight: 500, color: 'var(--text-muted)' }}>
-              No workspace
-            </span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)' }}>No workspace selected</span>
           )}
         </div>
       </div>
 
-      {/* Right: actions */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
         {!workspace && (
           <button
@@ -90,21 +97,19 @@ export function Header({ onToggleSidebar, showHamburger = false }: HeaderProps) 
               display: 'inline-flex',
               alignItems: 'center',
               gap: 6,
-              padding: '8px 14px',
-              borderRadius: 'var(--radius-md)',
-              border: 'none',
+              padding: '9px 13px',
+              borderRadius: 12,
+              border: '1px solid rgba(77,124,255,0.4)',
               background: 'var(--btn-primary-bg)',
               color: 'var(--btn-primary-text)',
-              fontSize: 'var(--text-sm)',
-              fontFamily: 'var(--font-heading)',
-              fontWeight: 500,
+              fontSize: 13,
+              fontWeight: 700,
               cursor: 'pointer',
-              transition: 'background var(--transition)',
+              boxShadow: 'var(--shadow-sm)',
             }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--btn-primary-hover)'; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--btn-primary-bg)'; }}
           >
-            <Plus size={14} /> New Workspace
+            <Plus size={14} />
+            New Workspace
           </button>
         )}
 
@@ -112,9 +117,17 @@ export function Header({ onToggleSidebar, showHamburger = false }: HeaderProps) 
 
         <button
           onClick={() => void refresh()}
-          style={iconBtnStyle}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-tertiary)'; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-primary)'; }}
+          style={iconButton}
+          onMouseEnter={(event) => {
+            const current = event.currentTarget as HTMLElement;
+            current.style.background = 'var(--card-hover)';
+            current.style.color = 'var(--text-primary)';
+          }}
+          onMouseLeave={(event) => {
+            const current = event.currentTarget as HTMLElement;
+            current.style.background = 'var(--shell-chip-bg)';
+            current.style.color = 'var(--text-muted)';
+          }}
           title="Refresh state"
         >
           <RotateCw size={15} />
@@ -122,9 +135,17 @@ export function Header({ onToggleSidebar, showHamburger = false }: HeaderProps) 
 
         <button
           onClick={toggleTheme}
-          style={iconBtnStyle}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-tertiary)'; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-primary)'; }}
+          style={iconButton}
+          onMouseEnter={(event) => {
+            const current = event.currentTarget as HTMLElement;
+            current.style.background = 'var(--card-hover)';
+            current.style.color = 'var(--text-primary)';
+          }}
+          onMouseLeave={(event) => {
+            const current = event.currentTarget as HTMLElement;
+            current.style.background = 'var(--shell-chip-bg)';
+            current.style.color = 'var(--text-muted)';
+          }}
           title={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
         >
           {theme === 'light' ? <Moon size={15} /> : <Sun size={15} />}

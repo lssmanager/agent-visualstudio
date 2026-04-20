@@ -21,7 +21,6 @@ export default function RoutingPage() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      {/* Page Header */}
       <PageHeader
         title="Routing & Channels"
         description="Configure how agents are routed to channels and manage channel bindings."
@@ -30,8 +29,8 @@ export default function RoutingPage() {
 
       {/* Flows */}
       <div>
-        <h2 className="text-base font-semibold text-slate-900 mb-3 flex items-center gap-2">
-          <GitBranch size={18} className="text-blue-600" />
+        <h2 className="text-base font-semibold mb-3 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+          <GitBranch size={18} style={{ color: 'var(--color-primary)' }} />
           Flows
         </h2>
         {flows.length === 0 ? (
@@ -45,15 +44,15 @@ export default function RoutingPage() {
             {flows.map((flow: any) => (
               <Card key={flow.id} className="p-4">
                 <div className="flex items-start justify-between mb-2 gap-2">
-                  <span className="text-sm font-semibold text-slate-900">{flow.name}</span>
+                  <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{flow.name}</span>
                   <Badge variant={flow.isEnabled ? 'success' : 'default'}>
                     {flow.isEnabled ? 'Enabled' : 'Disabled'}
                   </Badge>
                 </div>
                 {flow.description && (
-                  <p className="text-xs text-slate-500 mb-3 line-clamp-2">{flow.description}</p>
+                  <p className="text-xs mb-3 line-clamp-2" style={{ color: 'var(--text-muted)' }}>{flow.description}</p>
                 )}
-                <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
+                <div className="flex items-center gap-3 text-xs flex-wrap" style={{ color: 'var(--text-muted)' }}>
                   {flow.trigger && (
                     <Badge variant="default">{flow.trigger}</Badge>
                   )}
@@ -78,11 +77,14 @@ export default function RoutingPage() {
         {/* Left Panel: Channel Bindings */}
         <div className="lg:col-span-1">
           <Card className="sticky top-20">
-            <h3 className="text-lg font-semibold text-slate-900 mb-4">Channel Bindings</h3>
-            <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
+            <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Channel Bindings</h3>
+            <div
+              className="rounded-lg p-4"
+              style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-primary)' }}
+            >
               <ChannelBindingsTable agents={state.agents} />
             </div>
-            <p className="text-xs text-slate-500 mt-4">
+            <p className="text-xs mt-4" style={{ color: 'var(--text-muted)' }}>
               Shows which agents are bound to which channels for message delivery.
             </p>
           </Card>
@@ -91,7 +93,7 @@ export default function RoutingPage() {
         {/* Right Panel: Route Editor */}
         <div className="lg:col-span-2">
           <Card>
-            <h3 className="text-lg font-semibold text-slate-900 mb-4">Route Configuration</h3>
+            <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Route Configuration</h3>
             <div className="prose prose-sm max-w-none prose-table:w-full">
               <RouteEditor workspace={state.workspace} onSaved={(_ws) => { void refresh(); }} />
             </div>

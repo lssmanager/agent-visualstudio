@@ -44,10 +44,15 @@ const toHealthSnapshot = (value: unknown): RuntimeSnapshot['health'] => {
     return { ok: false, status: 'invalid_response' };
   }
 
-  return {
-    ...record,
+  const snapshot: RuntimeSnapshot['health'] = {
     ok: typeof record.ok === 'boolean' ? record.ok : false,
   };
+
+  for (const [key, entry] of Object.entries(record)) {
+    snapshot[key] = entry;
+  }
+
+  return snapshot;
 };
 
 const toDiagnosticsSnapshot = (value: unknown): RuntimeSnapshot['diagnostics'] => {

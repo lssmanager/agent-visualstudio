@@ -1,45 +1,46 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  LayoutDashboard,
-  Cpu,
+  AlertCircle,
+  BarChart3,
+  BookOpen,
   Building2,
+  Cpu,
+  GitBranch,
+  Landmark,
+  LayoutDashboard,
+  MessageSquare,
   Network,
   Package,
-  Users,
-  BookOpen,
-  AlertCircle,
-  MessageSquare,
-  Landmark,
-  Settings,
   Play,
-  Webhook,
-  GitBranch,
+  Settings,
   Terminal,
-  BarChart3,
+  Users,
+  Webhook,
 } from 'lucide-react';
+
 import { useStudioState } from '../lib/StudioStateContext';
 
 const NAV = [
-  { label: 'Overview',    path: '/',            Icon: LayoutDashboard },
-  { label: 'Agency Builder',  path: '/agency-builder',  Icon: Building2 },
+  { label: 'Overview', path: '/', Icon: LayoutDashboard },
+  { label: 'Agency Builder', path: '/agency-builder', Icon: Building2 },
   { label: 'Workspace Studio', path: '/workspace-studio', Icon: Cpu },
-  { label: 'Agency Topology',  path: '/agency-topology', Icon: Network },
-  { label: 'Workspaces',  path: '/workspaces',  Icon: Package },
-  { label: 'Agents',      path: '/agents',      Icon: Users },
-  { label: 'Profiles',    path: '/profiles',    Icon: BookOpen },
-  { label: 'Runs',        path: '/runs',        Icon: Play },
-  { label: 'Routing',     path: '/routing',     Icon: Landmark },
-  { label: 'Hooks',       path: '/hooks',       Icon: Webhook },
-  { label: 'Versions',    path: '/versions',    Icon: GitBranch },
-  { label: 'Commands',    path: '/commands',     Icon: Terminal },
-  { label: 'Operations',  path: '/operations',  Icon: BarChart3 },
+  { label: 'Agency Topology', path: '/agency-topology', Icon: Network },
+  { label: 'Workspaces', path: '/workspaces', Icon: Package },
+  { label: 'Agents', path: '/agents', Icon: Users },
+  { label: 'Profiles', path: '/profiles', Icon: BookOpen },
+  { label: 'Runs', path: '/runs', Icon: Play },
+  { label: 'Routing', path: '/routing', Icon: Landmark },
+  { label: 'Hooks', path: '/hooks', Icon: Webhook },
+  { label: 'Versions', path: '/versions', Icon: GitBranch },
+  { label: 'Commands', path: '/commands', Icon: Terminal },
+  { label: 'Operations', path: '/operations', Icon: BarChart3 },
   { label: 'Diagnostics', path: '/diagnostics', Icon: AlertCircle },
-  { label: 'Sessions',    path: '/sessions',    Icon: MessageSquare },
+  { label: 'Sessions', path: '/sessions', Icon: MessageSquare },
 ] as const;
 
 export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
-  const navigate  = useNavigate();
-  const location  = useLocation();
+  const navigate = useNavigate();
+  const location = useLocation();
   const { state } = useStudioState();
   const runtimeOk = state.runtime?.health?.ok ?? false;
 
@@ -52,47 +53,44 @@ export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
     <div
       style={{
         width: 64,
-        background: 'var(--bg-primary)',
-        borderRight: '1px solid var(--border-primary)',
+        background: 'var(--shell-rail-bg)',
+        borderRight: '1px solid var(--shell-rail-border)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        gap: 4,
-        padding: '14px 8px',
+        gap: 6,
+        padding: '12px 8px',
         height: '100%',
         overflowY: 'auto',
       }}
     >
-      {/* Brand logo */}
       <button
         onClick={() => go('/')}
         style={{
           width: 40,
           height: 40,
-          borderRadius: 'var(--radius-md)',
+          borderRadius: 12,
           background: 'var(--color-primary)',
-          color: '#FFFFFF',
+          color: '#ffffff',
           border: 'none',
           display: 'grid',
           placeItems: 'center',
           cursor: 'pointer',
           boxShadow: 'var(--shadow-sm)',
-          marginBottom: 10,
+          marginBottom: 8,
           flexShrink: 0,
+          fontWeight: 800,
+          fontSize: 12,
+          letterSpacing: '0.04em',
         }}
         title="OpenClaw Studio"
       >
-        <span style={{ fontSize: 16, lineHeight: 1 }}>🦞</span>
+        OC
       </button>
 
-      {/* Nav items */}
-      <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: '100%' }}>
+      <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, width: '100%' }}>
         {NAV.map(({ label, path, Icon }) => {
-          const isActive =
-            path === '/'
-              ? location.pathname === '/'
-              : location.pathname.startsWith(path);
-
+          const isActive = path === '/' ? location.pathname === '/' : location.pathname.startsWith(path);
           return (
             <button
               key={path}
@@ -101,26 +99,29 @@ export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
               style={{
                 width: 44,
                 height: 44,
-                borderRadius: 'var(--radius-md)',
-                border: isActive ? '1px solid rgba(34,89,242,0.25)' : '1px solid transparent',
-                background: isActive ? 'var(--color-primary-soft)' : 'transparent',
-                color: isActive ? 'var(--color-primary)' : 'var(--text-muted)',
-                boxShadow: isActive ? 'inset 2px 0 0 var(--color-primary)' : 'none',
+                borderRadius: 12,
+                border: isActive ? '1px solid rgba(77,124,255,0.34)' : '1px solid transparent',
+                background: isActive ? 'rgba(77,124,255,0.2)' : 'transparent',
+                color: isActive ? '#f2f7ff' : 'var(--shell-rail-text)',
+                opacity: isActive ? 1 : 0.86,
+                boxShadow: isActive ? 'inset 0 0 0 1px rgba(255,255,255,0.05)' : 'none',
                 display: 'grid',
                 placeItems: 'center',
                 cursor: 'pointer',
-                transition: 'background var(--transition), color var(--transition)',
+                transition: 'background var(--transition), border-color var(--transition), opacity var(--transition)',
               }}
-              onMouseEnter={(e) => {
+              onMouseEnter={(event) => {
                 if (!isActive) {
-                  (e.currentTarget as HTMLElement).style.background = 'var(--bg-tertiary)';
-                  (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)';
+                  const current = event.currentTarget as HTMLElement;
+                  current.style.background = 'rgba(255,255,255,0.06)';
+                  current.style.opacity = '1';
                 }
               }}
-              onMouseLeave={(e) => {
+              onMouseLeave={(event) => {
                 if (!isActive) {
-                  (e.currentTarget as HTMLElement).style.background = 'transparent';
-                  (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)';
+                  const current = event.currentTarget as HTMLElement;
+                  current.style.background = 'transparent';
+                  current.style.opacity = '0.86';
                 }
               }}
             >
@@ -130,8 +131,7 @@ export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
         })}
       </nav>
 
-      {/* Bottom: runtime dot + settings */}
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, paddingTop: 8, flexShrink: 0 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, paddingTop: 8, flexShrink: 0 }}>
         <div
           title={runtimeOk ? 'Runtime online' : 'Runtime offline'}
           style={{
@@ -139,6 +139,7 @@ export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
             height: 8,
             borderRadius: 'var(--radius-full)',
             background: runtimeOk ? 'var(--color-success)' : 'var(--text-muted)',
+            boxShadow: runtimeOk ? '0 0 0 4px rgba(51,196,129,0.14)' : 'none',
           }}
         />
         <button
@@ -147,22 +148,25 @@ export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
           style={{
             width: 44,
             height: 44,
-            borderRadius: 'var(--radius-md)',
+            borderRadius: 12,
             border: '1px solid transparent',
             background: 'transparent',
-            color: 'var(--text-muted)',
+            color: 'var(--shell-rail-text)',
             display: 'grid',
             placeItems: 'center',
             cursor: 'pointer',
-            transition: 'background var(--transition), color var(--transition)',
+            opacity: 0.86,
+            transition: 'background var(--transition), opacity var(--transition)',
           }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLElement).style.background = 'var(--bg-tertiary)';
-            (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)';
+          onMouseEnter={(event) => {
+            const current = event.currentTarget as HTMLElement;
+            current.style.background = 'rgba(255,255,255,0.06)';
+            current.style.opacity = '1';
           }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLElement).style.background = 'transparent';
-            (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)';
+          onMouseLeave={(event) => {
+            const current = event.currentTarget as HTMLElement;
+            current.style.background = 'transparent';
+            current.style.opacity = '0.86';
           }}
         >
           <Settings size={17} />

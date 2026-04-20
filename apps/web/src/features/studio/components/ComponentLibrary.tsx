@@ -1,125 +1,130 @@
-import { DragEvent } from 'react';
+import { type DragEvent } from 'react';
+
 import { NODE_TEMPLATES } from '../../canvas/lib/canvas-utils';
 import type { FlowNodeType } from '../../../lib/types';
 
-export function ComponentLibrary() {
-  function handleDragStart(e: DragEvent<HTMLDivElement>, type: FlowNodeType) {
-    e.dataTransfer.setData('application/reactflow-type', type);
-    e.dataTransfer.effectAllowed = 'move';
-  }
+const CATEGORY_GROUPS: Array<{ name: string; types: FlowNodeType[] }> = [
+  { name: 'Structure', types: ['trigger', 'agent', 'subagent'] },
+  { name: 'Catalog', types: ['skill', 'tool'] },
+  { name: 'Logic', types: ['condition', 'handoff', 'loop', 'approval'] },
+  { name: 'End', types: ['end'] },
+];
 
-  const categories: Record<string, typeof NODE_TEMPLATES> = {};
-  for (const tmpl of NODE_TEMPLATES) {
-    const cat =
-      tmpl.type === 'trigger' ? 'Triggers' :
-      tmpl.type === 'agent' ? 'Agents' :
-      tmpl.type === 'condition' ? 'Logic' :
-      tmpl.type === 'tool' ? 'Tools' :
-      'End';
-    (categories[cat] ??= []).push(tmpl);
+export function ComponentLibrary() {
+  function handleDragStart(event: DragEvent<HTMLDivElement>, type: FlowNodeType) {
+    event.dataTransfer.setData('application/reactflow-type', type);
+    event.dataTransfer.effectAllowed = 'move';
   }
 
   return (
     <div
       style={{
         height: '100%',
-        background: 'var(--bg-secondary)',
-        borderRight: '1px solid var(--border-primary)',
+        background: 'var(--shell-panel-bg)',
+        borderRight: '1px solid var(--shell-panel-border)',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
       }}
     >
-      {/* Header */}
-      <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid var(--border-primary)' }}>
+      <div style={{ padding: '14px 14px 12px', borderBottom: '1px solid var(--shell-panel-border)' }}>
         <div
           style={{
             fontSize: 11,
-            fontWeight: 700,
+            fontWeight: 800,
             textTransform: 'uppercase',
             letterSpacing: '0.08em',
             color: 'var(--text-muted)',
-            marginBottom: 4,
+            marginBottom: 5,
           }}
         >
           Components
         </div>
-        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', margin: 0, lineHeight: 1.4 }}>
-          Drag nodes onto the canvas
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.4 }}>
+          Drag nodes into canvas lanes
         </p>
       </div>
 
-      {/* Categories */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: 16, display: 'grid', gap: 16 }}>
-        {Object.entries(categories).map(([cat, items]) => (
-          <div key={cat}>
-            <div
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                letterSpacing: '0.06em',
-                color: 'var(--text-muted)',
-                marginBottom: 8,
-              }}
-            >
-              {cat}
-            </div>
-            <div style={{ display: 'grid', gap: 4 }}>
-              {items.map((tmpl) => (
-                <div
-                  key={tmpl.type}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, tmpl.type)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    padding: '8px 10px',
-                    borderRadius: 'var(--radius-md)',
-                    background: 'var(--bg-primary)',
-                    border: '1px solid var(--border-secondary)',
-                    cursor: 'grab',
-                    transition: 'border-color var(--transition), box-shadow var(--transition)',
-                  }}
-                  onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-primary)';
-                    (e.currentTarget as HTMLElement).style.boxShadow = 'var(--shadow-sm)';
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLElement).style.borderColor = 'var(--border-secondary)';
-                    (e.currentTarget as HTMLElement).style.boxShadow = 'none';
-                  }}
-                >
+      <div style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'grid', gap: 14 }}>
+        {CATEGORY_GROUPS.map((group) => {
+          const items = NODE_TEMPLATES.filter((template) => group.types.includes(template.type));
+          if (items.length === 0) return null;
+
+          return (
+            <div key={group.name}>
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: 800,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  color: 'var(--text-muted)',
+                  marginBottom: 8,
+                }}
+              >
+                {group.name}
+              </div>
+
+              <div style={{ display: 'grid', gap: 6 }}>
+                {items.map((template) => (
                   <div
+                    key={template.type}
+                    draggable
+                    onDragStart={(event) => handleDragStart(event, template.type)}
                     style={{
-                      width: 28,
-                      height: 28,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      padding: '9px 10px',
                       borderRadius: 'var(--radius-md)',
-                      background: tmpl.color + '18',
-                      color: tmpl.color,
-                      display: 'grid',
-                      placeItems: 'center',
-                      fontSize: 14,
-                      flexShrink: 0,
+                      background: 'var(--shell-chip-bg)',
+                      border: '1px solid var(--shell-chip-border)',
+                      cursor: 'grab',
+                      transition: 'border-color var(--transition), box-shadow var(--transition), transform var(--transition)',
+                    }}
+                    onMouseEnter={(event) => {
+                      const current = event.currentTarget as HTMLElement;
+                      current.style.borderColor = 'var(--color-primary)';
+                      current.style.boxShadow = 'var(--shadow-sm)';
+                      current.style.transform = 'translateY(-1px)';
+                    }}
+                    onMouseLeave={(event) => {
+                      const current = event.currentTarget as HTMLElement;
+                      current.style.borderColor = 'var(--shell-chip-border)';
+                      current.style.boxShadow = 'none';
+                      current.style.transform = 'none';
                     }}
                   >
-                    {tmpl.icon}
+                    <div
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: 10,
+                        background: `color-mix(in srgb, ${template.color} 18%, transparent)`,
+                        color: template.color,
+                        display: 'grid',
+                        placeItems: 'center',
+                        fontSize: 14,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {template.icon}
+                    </div>
+                    <span
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: 'var(--text-primary)',
+                      }}
+                    >
+                      {template.label}
+                    </span>
                   </div>
-                  <span
-                    style={{
-                      fontSize: 'var(--text-sm)',
-                      fontWeight: 500,
-                      color: 'var(--text-primary)',
-                    }}
-                  >
-                    {tmpl.label}
-                  </span>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

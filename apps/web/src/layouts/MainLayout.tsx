@@ -1,104 +1,101 @@
 import { useEffect, useState } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
+
 import { NavRail } from '../components/NavRail';
 import { ContextPanel } from '../components/ContextPanel';
 import { Header } from '../components/Header';
 
 function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(() =>
-    typeof window !== 'undefined' ? window.matchMedia(query).matches : true
+    typeof window !== 'undefined' ? window.matchMedia(query).matches : true,
   );
+
   useEffect(() => {
     const mql = window.matchMedia(query);
-    const handler = (e: MediaQueryListEvent) => setMatches(e.matches);
+    const handler = (event: MediaQueryListEvent) => setMatches(event.matches);
     mql.addEventListener('change', handler);
     return () => mql.removeEventListener('change', handler);
   }, [query]);
+
   return matches;
 }
 
 export function MainLayout() {
+  const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const isDesktop = useMediaQuery('(min-width: 1101px)');
-  const isMobile  = !useMediaQuery('(min-width: 769px)');
 
+  const isDesktop = useMediaQuery('(min-width: 1120px)');
+  const isMobile = !useMediaQuery('(min-width: 769px)');
   const showContext = isDesktop;
+  const isStudioSurface = ['/workspace-studio', '/agency-builder', '/agency-topology'].some((route) =>
+    location.pathname.startsWith(route),
+  );
+
+  const contentColumn = isMobile ? '1' : showContext ? '3' : '2';
+  const mainPadding = isStudioSurface ? '14px 14px 18px' : '20px 22px 28px';
 
   return (
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: isMobile ? '1fr' : showContext ? '64px 260px 1fr' : '64px 1fr',
+        gridTemplateColumns: isMobile ? '1fr' : showContext ? '64px 280px 1fr' : '64px 1fr',
         gridTemplateRows: '72px 1fr',
-        height: '100vh',
+        minHeight: '100vh',
         background: 'var(--bg-secondary)',
       }}
     >
-      {/* NavRail — col 1, spans all rows */}
       {!isMobile && (
-        <div style={{ gridColumn: '1', gridRow: '1 / -1', zIndex: 10 }}>
+        <div style={{ gridColumn: '1', gridRow: '1 / -1', zIndex: 30 }}>
           <NavRail />
         </div>
       )}
 
-      {/* ContextPanel — col 2, spans all rows (desktop only) */}
       {showContext && (
         <div style={{ gridColumn: '2', gridRow: '1 / -1', overflow: 'hidden' }}>
           <ContextPanel />
         </div>
       )}
 
-      {/* Header — last column, row 1 */}
       <header
         style={{
-          gridColumn: isMobile ? '1' : showContext ? '3' : '2',
+          gridColumn: contentColumn,
           gridRow: '1',
           position: 'sticky',
           top: 0,
-          zIndex: 30,
+          zIndex: 40,
           height: 72,
           display: 'flex',
           alignItems: 'center',
-          padding: '0 24px',
-          background: 'rgba(255,255,255,0.88)',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
-          borderBottom: '1px solid var(--border-primary)',
+          padding: '0 18px',
+          background: 'var(--shell-topbar-bg)',
+          backdropFilter: 'blur(14px)',
+          WebkitBackdropFilter: 'blur(14px)',
+          borderBottom: '1px solid var(--shell-panel-border)',
         }}
       >
-        <Header
-          onToggleSidebar={() => setMobileOpen((o) => !o)}
-          showHamburger={isMobile}
-        />
+        <Header onToggleSidebar={() => setMobileOpen((open) => !open)} showHamburger={isMobile} />
       </header>
 
-      {/* Main content — last column, row 2 */}
       <main
         style={{
-          gridColumn: isMobile ? '1' : showContext ? '3' : '2',
+          gridColumn: contentColumn,
           gridRow: '2',
           overflow: 'auto',
-          padding: '20px 24px 28px',
-          background: 'var(--bg-secondary)',
+          padding: mainPadding,
+          background: 'var(--shell-content-bg)',
           minWidth: 0,
         }}
       >
         <Outlet />
       </main>
 
-      {/* Mobile rail overlay */}
       {isMobile && mobileOpen && (
         <>
           <div
-            style={{
-              position: 'fixed',
-              inset: 0,
-              background: 'rgba(0,0,0,0.4)',
-              zIndex: 39,
-            }}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(2,8,23,0.55)', zIndex: 49 }}
             onClick={() => setMobileOpen(false)}
           />
-          <div style={{ position: 'fixed', left: 0, top: 0, bottom: 0, zIndex: 40 }}>
+          <div style={{ position: 'fixed', left: 0, top: 0, bottom: 0, zIndex: 50 }}>
             <NavRail onNavigate={() => setMobileOpen(false)} />
           </div>
         </>
