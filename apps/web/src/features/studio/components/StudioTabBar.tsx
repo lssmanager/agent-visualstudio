@@ -20,10 +20,11 @@ export function StudioTabBar({ active, onChange, tabs = DEFAULT_TABS }: StudioTa
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 2,
-        padding: '0 16px',
-        borderBottom: '1px solid var(--border-primary)',
-        background: 'var(--bg-primary)',
+        gap: 6,
+        padding: '10px 14px',
+        borderBottom: '1px solid var(--shell-panel-border)',
+        background: 'var(--shell-panel-bg)',
+        flexWrap: 'wrap',
       }}
     >
       {tabs.map((tab) => {
@@ -33,17 +34,16 @@ export function StudioTabBar({ active, onChange, tabs = DEFAULT_TABS }: StudioTa
             key={tab.id}
             onClick={() => onChange(tab.id)}
             style={{
-              padding: '10px 16px',
-              fontSize: 'var(--text-sm)',
-              fontWeight: isActive ? 600 : 400,
+              padding: '8px 12px',
+              fontSize: 12,
+              fontWeight: 700,
               fontFamily: 'var(--font-heading)',
               color: isActive ? 'var(--color-primary)' : 'var(--text-muted)',
-              background: isActive ? 'var(--color-primary-soft)' : 'transparent',
-              border: 'none',
-              borderBottom: isActive ? '2px solid var(--color-primary)' : '2px solid transparent',
+              background: isActive ? 'var(--color-primary-soft)' : 'var(--shell-chip-bg)',
+              border: `1px solid ${isActive ? 'color-mix(in srgb, var(--color-primary) 32%, var(--shell-chip-border))' : 'var(--shell-chip-border)'}`,
+              borderRadius: 'var(--radius-full)',
               cursor: 'pointer',
-              transition: 'color var(--transition), background var(--transition)',
-              marginBottom: -1,
+              transition: 'color var(--transition), background var(--transition), border-color var(--transition)',
             }}
           >
             {tab.label}

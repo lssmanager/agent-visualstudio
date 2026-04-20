@@ -15,7 +15,7 @@ import {
 import { useStudioState } from '../../../lib/StudioStateContext';
 import { usePreferences } from '../../../lib/usePreferences';
 import { applyCoreFiles, generateBuilderAgentFunction, previewCoreFiles } from '../../../lib/api';
-import type { AgentSpec, BuilderAgentFunctionOutput, DeployPreview } from '../../../lib/types';
+import type { BuilderAgentFunctionOutput, DeployPreview } from '../../../lib/types';
 import { StudioCanvas } from '../components/StudioCanvas';
 import { ComponentLibrary } from '../components/ComponentLibrary';
 import { PropertiesPanel } from '../components/PropertiesPanel';
@@ -48,7 +48,12 @@ export default function WorkspaceStudioPage() {
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const [agentId, setAgentId] = useState<string | null>(selectedAgentId || state.agents[0]?.id || null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const selectedAgent = state.agents.find((agent) => agent.id === agentId) || state.agents[0];
+  const selectedNode = useMemo(
+    () => state.flows[0]?.nodes.find((node) => node.id === selectedNodeId) ?? null,
+    [state.flows, selectedNodeId],
+  );
 
   const workspaceId = state.workspace?.id;
   const runtimeOk = state.runtime?.health?.ok ?? false;
@@ -57,6 +62,7 @@ export default function WorkspaceStudioPage() {
 
   useEffect(() => {
     if (agentId) setSelectedAgentId(agentId);
+    setSelectedNodeId(null);
   }, [agentId, setSelectedAgentId]);
 
   async function handleRefresh() {
@@ -241,54 +247,99 @@ export default function WorkspaceStudioPage() {
           className="studio-builder-surface"
           style={{
             borderRadius: 'var(--radius-xl)',
-            border: '1px solid var(--card-border)',
-            background: 'var(--card-bg)',
+            border: '1px solid var(--shell-panel-border)',
+            background: 'var(--shell-panel-bg)',
             overflow: 'hidden',
             display: 'grid',
-            gridTemplateColumns: '290px minmax(0, 1fr) 330px',
-            minHeight: 640,
+            gridTemplateColumns: '280px minmax(0, 1fr) 340px',
+            minHeight: 720,
           }}
         >
-          <div style={{ borderRight: '1px solid var(--border-primary)', background: 'var(--bg-secondary)' }}>
+          <div style={{ borderRight: '1px solid var(--shell-panel-border)', background: 'var(--shell-panel-bg)' }}>
             <ComponentLibrary />
           </div>
 
-          <div style={{ minHeight: 0, position: 'relative', background: 'var(--bg-secondary)' }}>
+          <div style={{ minHeight: 0, position: 'relative', background: 'var(--canvas-surface-bg)' }}>
             <div
               style={{
                 position: 'absolute',
-                inset: 12,
-                border: '1px solid var(--border-primary)',
-                borderRadius: 'var(--radius-lg)',
-                background:
-                  'radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--border-primary) 90%, transparent) 1px, transparent 0)',
-                backgroundSize: '22px 22px',
+                inset: 10,
+                border: '1px solid var(--shell-panel-border)',
+                borderRadius: 'var(--radius-xl)',
+                background: 'var(--canvas-surface-bg)',
                 overflow: 'hidden',
               }}
             >
-              {selectedAgent ? (
-                <StudioCanvas
-                  workspaceId={workspaceId}
-                  agents={[selectedAgent]}
-                  flows={state.flows}
-                  skills={state.skills}
-                  onAgentSaved={(_agent: AgentSpec) => {
-                    void refresh();
-                  }}
-                />
-              ) : (
-                <div style={{ height: '100%', display: 'grid', placeItems: 'center' }}>
-                  <StudioEmptyState
-                    title="Select an agent"
-                    description="Choose a builder target to load nodes on the workspace canvas."
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  pointerEvents: 'none',
+                  zIndex: 2,
+                  display: 'grid',
+                  gridTemplateRows: 'repeat(4, minmax(0, 1fr))',
+                }}
+              >
+                {['Orchestration lane', 'Agent lane', 'Logic lane', 'Execution lane'].map((label, index) => (
+                  <div
+                    key={label}
+                    style={{
+                      borderBottom: index === 3 ? 'none' : '1px dashed var(--shell-chip-border)',
+                      position: 'relative',
+                    }}
+                  >
+                    <span
+                      style={{
+                        position: 'absolute',
+                        left: 14,
+                        top: 10,
+                        fontSize: 10,
+                        fontWeight: 800,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.08em',
+                        color: 'var(--text-muted)',
+                        background: 'var(--shell-chip-bg)',
+                        border: '1px solid var(--shell-chip-border)',
+                        borderRadius: 'var(--radius-full)',
+                        padding: '3px 8px',
+                      }}
+                    >
+                      {label}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ position: 'absolute', inset: 0, zIndex: 3 }}>
+                {selectedAgent ? (
+                  <StudioCanvas
+                    agents={[selectedAgent]}
+                    flows={state.flows}
+                    skills={state.skills}
+                    onNodeSelect={setSelectedNodeId}
                   />
-                </div>
-              )}
+                ) : (
+                  <div style={{ height: '100%', display: 'grid', placeItems: 'center' }}>
+                    <StudioEmptyState
+                      title="Select an agent"
+                      description="Choose a builder target to load nodes on the workspace canvas."
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
-          <div style={{ borderLeft: '1px solid var(--border-primary)', background: 'var(--bg-secondary)' }}>
-            <PropertiesPanel diagnostics={diagnostics} deployPreview={preview} sessions={sessions} />
+          <div style={{ borderLeft: '1px solid var(--shell-panel-border)', background: 'var(--shell-panel-bg)' }}>
+            <PropertiesPanel
+              diagnostics={diagnostics}
+              deployPreview={preview}
+              sessions={sessions}
+              selectedNodeId={selectedNodeId}
+              selectedNode={selectedNode}
+              agents={state.agents}
+              skills={state.skills}
+            />
           </div>
         </section>
       )}

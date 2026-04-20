@@ -1,4 +1,4 @@
-import { RefreshCw, Eye, Rocket, Cpu } from 'lucide-react';
+import { Cpu, Eye, RefreshCw, Rocket } from 'lucide-react';
 
 interface StudioToolbarProps {
   onRefresh: () => void;
@@ -12,28 +12,28 @@ export function StudioToolbar({ onRefresh, onPreview, onApply, isBusy }: StudioT
     display: 'inline-flex',
     alignItems: 'center',
     gap: 6,
-    padding: '8px 14px',
+    padding: '8px 12px',
     borderRadius: 'var(--radius-md)',
-    border: '1px solid var(--border-primary)',
-    background: 'var(--bg-primary)',
+    border: '1px solid var(--shell-chip-border)',
+    background: 'var(--shell-chip-bg)',
     color: 'var(--text-primary)',
-    fontSize: 'var(--text-sm)',
-    fontWeight: 500,
+    fontSize: 12,
+    fontWeight: 700,
     cursor: isBusy ? 'not-allowed' : 'pointer',
-    opacity: isBusy ? 0.5 : 1,
-    transition: 'background var(--transition)',
+    opacity: isBusy ? 0.55 : 1,
+    transition: 'background var(--transition), border-color var(--transition)',
   };
 
   const softBtn: React.CSSProperties = {
     ...ghostBtn,
-    border: '1px solid var(--color-primary)',
+    border: '1px solid color-mix(in srgb, var(--color-primary) 38%, var(--shell-chip-border))',
     background: 'var(--color-primary-soft)',
     color: 'var(--color-primary)',
   };
 
   const primaryBtn: React.CSSProperties = {
     ...ghostBtn,
-    border: 'none',
+    border: '1px solid color-mix(in srgb, var(--color-primary) 38%, transparent)',
     background: 'var(--btn-primary-bg)',
     color: 'var(--btn-primary-text)',
   };
@@ -44,30 +44,31 @@ export function StudioToolbar({ onRefresh, onPreview, onApply, isBusy }: StudioT
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '12px 16px',
-        borderBottom: '1px solid var(--border-primary)',
-        background: 'var(--bg-primary)',
+        padding: '12px 14px',
+        borderBottom: '1px solid var(--shell-panel-border)',
+        background: 'var(--shell-panel-bg)',
       }}
     >
-      {/* Brand */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div
           style={{
-            width: 32,
-            height: 32,
+            width: 34,
+            height: 34,
             borderRadius: 'var(--radius-md)',
-            background: 'var(--color-primary)',
+            background: 'var(--color-primary-soft)',
+            border: '1px solid color-mix(in srgb, var(--color-primary) 35%, transparent)',
             display: 'grid',
             placeItems: 'center',
+            color: 'var(--color-primary)',
           }}
         >
-          <Cpu size={16} style={{ color: '#fff' }} />
+          <Cpu size={16} />
         </div>
         <div>
           <h1
             style={{
-              fontSize: 'var(--text-sm)',
-              fontWeight: 600,
+              fontSize: 13,
+              fontWeight: 700,
               fontFamily: 'var(--font-heading)',
               color: 'var(--text-primary)',
               margin: 0,
@@ -76,13 +77,10 @@ export function StudioToolbar({ onRefresh, onPreview, onApply, isBusy }: StudioT
           >
             OpenClaw Studio
           </h1>
-          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
-            Authoring · Compile · Deploy
-          </p>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>Authoring - Compile - Deploy</p>
         </div>
       </div>
 
-      {/* Actions */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <button onClick={onRefresh} disabled={isBusy} style={ghostBtn}>
           <RefreshCw size={14} className={isBusy ? 'animate-spin' : ''} />
@@ -96,8 +94,14 @@ export function StudioToolbar({ onRefresh, onPreview, onApply, isBusy }: StudioT
           onClick={onApply}
           disabled={isBusy}
           style={primaryBtn}
-          onMouseEnter={(e) => { if (!isBusy) (e.currentTarget as HTMLElement).style.background = 'var(--btn-primary-hover)'; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--btn-primary-bg)'; }}
+          onMouseEnter={(event) => {
+            if (!isBusy) {
+              (event.currentTarget as HTMLElement).style.background = 'var(--btn-primary-hover)';
+            }
+          }}
+          onMouseLeave={(event) => {
+            (event.currentTarget as HTMLElement).style.background = 'var(--btn-primary-bg)';
+          }}
         >
           <Rocket size={14} />
           Deploy

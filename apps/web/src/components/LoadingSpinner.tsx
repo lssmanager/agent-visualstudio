@@ -12,8 +12,16 @@ const sizeClasses = {
 export function LoadingSpinner({ size = 'md', label }: LoadingSpinnerProps) {
   return (
     <div className="flex flex-col items-center justify-center gap-3">
-      <div className={`${sizeClasses[size]} border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin`} />
-      {label && <p className="text-sm text-slate-600">{label}</p>}
+      <div
+        className={`${sizeClasses[size]} rounded-full animate-spin`}
+        style={{
+          borderWidth: '4px',
+          borderStyle: 'solid',
+          borderColor: 'var(--border-primary)',
+          borderTopColor: 'var(--color-primary)',
+        }}
+      />
+      {label && <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{label}</p>}
     </div>
   );
 }

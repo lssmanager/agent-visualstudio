@@ -8,17 +8,45 @@ interface BadgeProps {
   className?: string;
 }
 
-const variantStyles: Record<BadgeVariant, string> = {
-  success: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  error: 'bg-red-50 text-red-700 border-red-200',
-  warning: 'bg-amber-50 text-amber-700 border-amber-200',
-  info: 'bg-blue-50 text-blue-700 border-blue-200',
-  default: 'bg-slate-50 text-slate-700 border-slate-200',
+const variantStyles: Record<BadgeVariant, { bg: string; color: string; border: string }> = {
+  success: {
+    bg: 'var(--tone-success-bg)',
+    color: 'var(--color-success)',
+    border: 'var(--tone-success-border)',
+  },
+  error: {
+    bg: 'var(--tone-danger-bg)',
+    color: 'var(--color-error)',
+    border: 'var(--tone-danger-border)',
+  },
+  warning: {
+    bg: 'var(--tone-warning-bg)',
+    color: 'var(--color-warning)',
+    border: 'var(--tone-warning-border)',
+  },
+  info: {
+    bg: 'var(--color-primary-soft)',
+    color: 'var(--color-primary)',
+    border: 'var(--color-primary-soft)',
+  },
+  default: {
+    bg: 'var(--bg-tertiary)',
+    color: 'var(--text-muted)',
+    border: 'var(--border-primary)',
+  },
 };
 
 export function Badge({ children, variant = 'default', className = '' }: BadgeProps) {
+  const s = variantStyles[variant];
   return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${variantStyles[variant]} ${className}`}>
+    <span
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${className}`}
+      style={{
+        background: s.bg,
+        color: s.color,
+        border: `1px solid ${s.border}`,
+      }}
+    >
       {children}
     </span>
   );

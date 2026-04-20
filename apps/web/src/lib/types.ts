@@ -1,4 +1,4 @@
-// ── Agent ───────────────────────────────────────────────────────────────
+// â”€â”€ Agent â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export type AgentKind = 'agent' | 'subagent' | 'orchestrator';
 
@@ -24,7 +24,7 @@ export interface AgentSpec {
   isEnabled: boolean;
 }
 
-// ── Workspace ──────────────────────────────────────────────────────────
+// â”€â”€ Workspace â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface WorkspaceSpec {
   id: string;
@@ -45,7 +45,7 @@ export interface WorkspaceSpec {
   updatedAt: string;
 }
 
-// ── Skill ──────────────────────────────────────────────────────────────
+// â”€â”€ Skill â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface SkillSpec {
   id: string;
@@ -57,20 +57,37 @@ export interface SkillSpec {
   functions: Array<{ name: string; description: string }>;
 }
 
-// ── Flow ───────────────────────────────────────────────────────────────
+// â”€â”€ Flow â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-export type FlowNodeType = 'trigger' | 'agent' | 'tool' | 'condition' | 'approval' | 'end';
+export type FlowNodeType =
+  | 'trigger'
+  | 'agent'
+  | 'subagent'
+  | 'skill'
+  | 'tool'
+  | 'condition'
+  | 'handoff'
+  | 'loop'
+  | 'end'
+  | 'approval';
+
+export interface FlowNode {
+  id: string;
+  type: FlowNodeType | string;
+  config: Record<string, unknown>;
+  position?: { x: number; y: number };
+}
 
 export interface FlowSpec {
   id: string;
   name: string;
   trigger: string;
   isEnabled: boolean;
-  nodes: Array<{ id: string; type: FlowNodeType | string; config: Record<string, unknown>; position?: { x: number; y: number } }>;
+  nodes: FlowNode[];
   edges: Array<{ from: string; to: string; condition?: string }>;
 }
 
-// ── Profile ────────────────────────────────────────────────────────────
+// â”€â”€ Profile â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface ProfileSpec {
   id: string;
@@ -83,7 +100,7 @@ export interface ProfileSpec {
   tags?: string[];
 }
 
-// ── Run ────────────────────────────────────────────────────────────────
+// â”€â”€ Run â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export type RunStatus = 'queued' | 'running' | 'waiting_approval' | 'completed' | 'failed' | 'cancelled';
 export type StepStatus = 'queued' | 'running' | 'waiting_approval' | 'completed' | 'failed' | 'skipped';
@@ -118,7 +135,7 @@ export interface RunSpec {
   metadata?: Record<string, unknown>;
 }
 
-// ── Hook ───────────────────────────────────────────────────────────────
+// â”€â”€ Hook â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export type HookEvent = 'before:run' | 'after:run' | 'before:step' | 'after:step' | 'on:error' | 'on:approval' | 'before:deploy' | 'after:deploy';
 export type HookAction = 'log' | 'approval' | 'webhook' | 'notify' | 'block';
@@ -132,7 +149,7 @@ export interface HookSpec {
   priority?: number;
 }
 
-// ── Effective Config ───────────────────────────────────────────────────
+// â”€â”€ Effective Config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface EffectiveConfig {
   workspaceId: string;
@@ -148,7 +165,7 @@ export interface EffectiveConfig {
   };
 }
 
-// ── Version Snapshot ───────────────────────────────────────────────────
+// â”€â”€ Version Snapshot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface VersionSnapshot {
   id: string;
@@ -159,7 +176,7 @@ export interface VersionSnapshot {
   hash: string;
 }
 
-// ── Deploy ─────────────────────────────────────────────────────────────
+// â”€â”€ Deploy â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface DeployPreview {
   artifacts: Array<{ id: string; name: string; path: string; type: string; content: string; sourceHash?: string }>;
@@ -167,7 +184,7 @@ export interface DeployPreview {
   diff: Array<{ path: string; status: 'added' | 'updated' | 'deleted' | 'unchanged'; before?: string; after?: string }>;
 }
 
-// ── Studio State ───────────────────────────────────────────────────────
+// â”€â”€ Studio State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface StudioStateResponse {
   workspace: WorkspaceSpec | null;

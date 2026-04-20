@@ -1,17 +1,16 @@
-import { useCallback, useMemo, useRef, useState, DragEvent } from 'react';
+import { useCallback, useMemo, useRef, useState, type DragEvent } from 'react';
 import ReactFlow, {
   Background,
   Controls,
   MiniMap,
-  Connection,
-  Edge,
-  Node,
-  NodeChange,
-  EdgeChange,
-  addEdge,
+  type Connection,
+  type Edge,
+  type Node,
+  type NodeChange,
+  type EdgeChange,
   applyNodeChanges,
   applyEdgeChanges,
-  ReactFlowInstance,
+  type ReactFlowInstance,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
@@ -27,8 +26,12 @@ import { generateNodeId, getNodeTemplate } from '../lib/canvas-utils';
 const NODE_TYPES = {
   trigger: TriggerNode,
   agent: AgentNode,
+  subagent: AgentNode,
+  skill: ToolNode,
   tool: ToolNode,
   condition: ConditionNode,
+  handoff: ConditionNode,
+  loop: ConditionNode,
   approval: ApprovalNode,
   end: EndNode,
 };
@@ -55,7 +58,7 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
 
-  // Build step status map from active run
+  // Build step status map from active run.
   const stepStatusMap = useMemo(() => {
     if (!activeRun) return new Map<string, string>();
     const map = new Map<string, string>();
@@ -65,7 +68,7 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
     return map;
   }, [activeRun]);
 
-  // Convert FlowSpec nodes → ReactFlow nodes
+  // Convert FlowSpec nodes -> ReactFlow nodes.
   const rfNodes = useMemo<Node[]>(
     () =>
       flow.nodes.map((node) => {
@@ -81,7 +84,7 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
     [flow.nodes, stepStatusMap],
   );
 
-  // Convert FlowSpec edges → ReactFlow edges
+  // Convert FlowSpec edges -> ReactFlow edges.
   const rfEdges = useMemo<Edge[]>(
     () =>
       flow.edges.map((edge, i) => ({
@@ -95,19 +98,17 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
     [flow.edges, stepStatusMap],
   );
 
-  // Handle node changes (drag, select, remove)
+  // Handle node changes (drag, select, remove).
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
       const updated = applyNodeChanges(changes, rfNodes);
 
-      // Check for selection changes
+      // Check for selection changes.
       const selectedNode = updated.find((n) => n.selected);
       onNodeSelect?.(selectedNode?.id ?? null);
 
-      // Sync positions and removals back to FlowSpec
-      const removedIds = new Set(
-        changes.filter((c) => c.type === 'remove').map((c) => c.id),
-      );
+      // Sync positions and removals back to FlowSpec.
+      const removedIds = new Set(changes.filter((c) => c.type === 'remove').map((c) => c.id));
 
       const newNodes = flow.nodes
         .filter((n) => !removedIds.has(n.id))
@@ -120,16 +121,14 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
         });
 
       if (removedIds.size > 0 || changes.some((c) => c.type === 'position' && c.dragging === false)) {
-        const newEdges = flow.edges.filter(
-          (e) => !removedIds.has(e.from) && !removedIds.has(e.to),
-        );
+        const newEdges = flow.edges.filter((e) => !removedIds.has(e.from) && !removedIds.has(e.to));
         onChange({ ...flow, nodes: newNodes, edges: newEdges });
       }
     },
     [rfNodes, flow, onChange, onNodeSelect],
   );
 
-  // Handle edge changes (remove)
+  // Handle edge changes (remove).
   const onEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
       const updated = applyEdgeChanges(changes, rfEdges);
@@ -144,7 +143,7 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
     [rfEdges, flow, onChange],
   );
 
-  // Handle new connections
+  // Handle new connections.
   const onConnect = useCallback(
     (connection: Connection) => {
       if (!connection.source || !connection.target) return;
@@ -159,17 +158,17 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
     [flow, onChange],
   );
 
-  // Handle drop from palette
-  const onDragOver = useCallback((e: DragEvent) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
+  // Handle drop from palette.
+  const onDragOver = useCallback((event: DragEvent) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
   }, []);
 
   const onDrop = useCallback(
-    (e: DragEvent) => {
-      e.preventDefault();
+    (event: DragEvent) => {
+      event.preventDefault();
 
-      const type = e.dataTransfer.getData('application/reactflow-type') as FlowNodeType;
+      const type = event.dataTransfer.getData('application/reactflow-type') as FlowNodeType;
       if (!type) return;
 
       const template = getNodeTemplate(type);
@@ -179,8 +178,8 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
       if (!bounds || !rfInstance) return;
 
       const position = rfInstance.project({
-        x: e.clientX - bounds.left,
-        y: e.clientY - bounds.top,
+        x: event.clientX - bounds.left,
+        y: event.clientY - bounds.top,
       });
 
       const newNode = {
@@ -198,8 +197,13 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
   return (
     <div
       ref={reactFlowWrapper}
-      className="h-[520px] overflow-hidden rounded-lg border bg-white"
-      style={{ borderColor: 'var(--border-primary)' }}
+      className="overflow-hidden rounded-lg border"
+      style={{
+        height: '100%',
+        flex: 1,
+        borderColor: 'var(--shell-panel-border)',
+        background: 'var(--canvas-surface-bg)',
+      }}
     >
       <ReactFlow
         nodes={rfNodes}
@@ -216,13 +220,16 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
         snapToGrid
         snapGrid={[15, 15]}
       >
-        <Background gap={15} size={1} />
+        <Background color="var(--canvas-grid-color)" gap={22} size={1} />
         <Controls />
         <MiniMap
           nodeStrokeWidth={3}
           zoomable
           pannable
-          style={{ background: '#f8fafc' }}
+          style={{
+            background: 'var(--shell-chip-bg)',
+            border: '1px solid var(--shell-chip-border)',
+          }}
         />
       </ReactFlow>
     </div>
