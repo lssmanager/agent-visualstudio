@@ -23,6 +23,7 @@ import {
   StudioEmptyState,
   StudioHeroSection,
   StudioInspectorCard,
+  StudioKpiCard,
   StudioMetricRow,
   StudioPageShell,
   StudioSectionCard,
@@ -176,6 +177,42 @@ export default function AgencyTopologyPage() {
         }
       />
 
+      <section
+        className="studio-responsive-four-col"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+          gap: 10,
+        }}
+      >
+        <StudioKpiCard
+          label="Connections"
+          value={canonical?.topology.connections.length ?? 0}
+          helper="Graph links"
+          icon={<Network size={16} />}
+        />
+        <StudioKpiCard
+          label="Supported Actions"
+          value={canonical?.topology.supportedActions.length ?? 0}
+          helper="Runtime capabilities"
+          icon={<PlugZap size={16} />}
+          tone={(canonical?.topology.supportedActions.length ?? 0) > 0 ? 'success' : 'warning'}
+        />
+        <StudioKpiCard
+          label="Fail Closed"
+          value={canonical?.topology.failClosed ? 'On' : 'Off'}
+          helper="Topology safety contract"
+          tone={canonical?.topology.failClosed ? 'success' : 'warning'}
+          icon={<PauseCircle size={16} />}
+        />
+        <StudioKpiCard
+          label="Runtime Sessions"
+          value={canonical?.runtimeControl.sessions.length ?? 0}
+          helper="Current activity"
+          icon={<Activity size={16} />}
+        />
+      </section>
+
       <section className="studio-responsive-two-col" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(350px, 1fr)', gap: 14 }}>
         <StudioSectionCard
           title="Topology Surface"
@@ -315,6 +352,21 @@ export default function AgencyTopologyPage() {
                     );
                   })}
                 </div>
+              </StudioInspectorCard>
+
+              <StudioInspectorCard title="Last Action Result">
+                {!result ? (
+                  <StudioEmptyState
+                    title="No actions yet"
+                    description="Execute a topology action to inspect fail-closed runtime response."
+                  />
+                ) : (
+                  <>
+                    <StudioMetricRow label="Action" value={result.action} />
+                    <StudioMetricRow label="Status" value={result.status} />
+                    <StudioMetricRow label="Message" value={result.message} />
+                  </>
+                )}
               </StudioInspectorCard>
             </div>
           ) : (
