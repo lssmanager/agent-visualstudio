@@ -12,8 +12,8 @@ import {
   Sparkles,
   Wrench,
 } from 'lucide-react';
+import { useHierarchy } from '../../../lib/HierarchyContext';
 import { useStudioState } from '../../../lib/StudioStateContext';
-import { usePreferences } from '../../../lib/usePreferences';
 import { applyCoreFiles, getBuilderAgentFunction, previewCoreFiles } from '../../../lib/api';
 import type { BuilderAgentFunctionOutput, DeployPreview } from '../../../lib/types';
 import { StudioCanvas } from '../components/StudioCanvas';
@@ -35,7 +35,7 @@ import {
 
 export default function WorkspaceStudioPage() {
   const { state, refresh } = useStudioState();
-  const { selectedAgentId, setSelectedAgentId } = usePreferences();
+  const { scope, selectByEntity } = useHierarchy();
   const navigate = useNavigate();
 
   const [activeTab, setActiveTab] = useState<StudioTab>('builder');
@@ -47,7 +47,7 @@ export default function WorkspaceStudioPage() {
   const [diffModalOpen, setDiffModalOpen] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  const [agentId, setAgentId] = useState<string | null>(selectedAgentId || state.agents[0]?.id || null);
+  const [agentId, setAgentId] = useState<string | null>(state.agents[0]?.id || null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const selectedAgent = state.agents.find((agent) => agent.id === agentId) || state.agents[0];
   const selectedNode = useMemo(
@@ -61,9 +61,27 @@ export default function WorkspaceStudioPage() {
   const sessions = state.runtime?.sessions?.payload ?? [];
 
   useEffect(() => {
-    if (agentId) setSelectedAgentId(agentId);
     setSelectedNodeId(null);
-  }, [agentId, setSelectedAgentId]);
+  }, [agentId]);
+
+  useEffect(() => {
+    if (scope.subagentId && state.agents.some((agent) => agent.id === scope.subagentId)) {
+      setAgentId(scope.subagentId);
+      return;
+    }
+
+    if (scope.agentId && state.agents.some((agent) => agent.id === scope.agentId)) {
+      setAgentId(scope.agentId);
+      return;
+    }
+
+    if (scope.workspaceId) {
+      const nextAgent = state.agents.find((agent) => agent.workspaceId === scope.workspaceId);
+      if (nextAgent) {
+        setAgentId(nextAgent.id);
+      }
+    }
+  }, [scope.agentId, scope.subagentId, scope.workspaceId, state.agents]);
 
   async function handleRefresh() {
     setBusy(true);
@@ -219,7 +237,18 @@ export default function WorkspaceStudioPage() {
           </span>
           <select
             value={agentId || ''}
-            onChange={(event) => setAgentId(event.target.value)}
+            onChange={(event) => {
+              const next = event.target.value;
+              setAgentId(next);
+              if (next) {
+                const agent = state.agents.find((entry) => entry.id === next);
+                if (agent?.kind === 'subagent') {
+                  selectByEntity('subagent', next);
+                } else {
+                  selectByEntity('agent', next);
+                }
+              }
+            }}
             style={{
               minWidth: 240,
               borderRadius: 'var(--radius-md)',

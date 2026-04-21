@@ -1,5 +1,6 @@
 import { Menu, Moon, Plus, RotateCw, Sun } from 'lucide-react';
 
+import { useHierarchy } from '../lib/HierarchyContext';
 import { useOnboarding } from '../lib/OnboardingContext';
 import { useStudioState } from '../lib/StudioStateContext';
 import { useTheme } from '../lib/ThemeProvider';
@@ -12,6 +13,7 @@ interface HeaderProps {
 
 export function Header({ onToggleSidebar, showHamburger = false }: HeaderProps) {
   const { state, refresh } = useStudioState();
+  const { selectedNode, selectedLineage } = useHierarchy();
   const { theme, toggleTheme } = useTheme();
   const { openOnboarding } = useOnboarding();
 
@@ -82,6 +84,21 @@ export function Header({ onToggleSidebar, showHamburger = false }: HeaderProps) 
                   </span>
                 )}
               </div>
+              {selectedNode && (
+                <span
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--text-muted)',
+                    fontFamily: 'var(--font-mono)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    maxWidth: 440,
+                  }}
+                >
+                  {selectedLineage.map((node) => node.label).join(' / ')}
+                </span>
+              )}
             </>
           ) : (
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)' }}>No workspace selected</span>

@@ -1,5 +1,6 @@
-﻿import { type CSSProperties, useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, useEffect, useMemo, useState } from 'react';
 import { getCanonicalStudioState, triggerTopologyAction } from '../../../lib/api';
+import { useHierarchy } from '../../../lib/HierarchyContext';
 import type {
   CanonicalStudioStateResponse,
   TopologyActionResult,
@@ -18,6 +19,7 @@ const ACTIONS: TopologyRuntimeAction[] = [
 ];
 
 export default function AgencyTopologyPage() {
+  const { scope, selectedLineage, selectByEntity, selectNode, tree } = useHierarchy();
   const [canonical, setCanonical] = useState<CanonicalStudioStateResponse | null>(null);
   const [fromNode, setFromNode] = useState<string>('');
   const [toNode, setToNode] = useState<string>('');
@@ -38,6 +40,23 @@ export default function AgencyTopologyPage() {
     }));
     return [...agencyNodes, ...departmentNodes, ...workspaceNodes];
   }, [canonical]);
+
+  const activeContextSourceNode = useMemo(() => {
+    if (scope.workspaceId) return `workspace:${scope.workspaceId}`;
+    if (scope.departmentId) return `department:${scope.departmentId}`;
+    if (scope.agencyId) return `agency:${scope.agencyId}`;
+
+    const workspaceNode = [...selectedLineage].reverse().find((node) => node.level === 'workspace');
+    if (workspaceNode) return `workspace:${workspaceNode.id}`;
+    const departmentNode = [...selectedLineage].reverse().find((node) => node.level === 'department');
+    if (departmentNode) return `department:${departmentNode.id}`;
+    const agencyNode = [...selectedLineage].reverse().find((node) => node.level === 'agency');
+    if (agencyNode) return `agency:${agencyNode.id}`;
+    return null;
+  }, [scope.agencyId, scope.departmentId, scope.workspaceId, selectedLineage]);
+
+  const contextLabel = selectedLineage.map((node) => node.label).join(' / ');
+  const hasScopedFilter = Boolean(scope.departmentId || scope.workspaceId || scope.agentId || scope.subagentId);
 
   function parseRef(value: string): TopologyNodeRef {
     const [level, id] = value.split(':');
@@ -95,8 +114,67 @@ export default function AgencyTopologyPage() {
     void loadCanonical();
   }, []);
 
+  useEffect(() => {
+    if (!activeContextSourceNode) return;
+    if (!nodeOptions.some((node) => node.key === activeContextSourceNode)) return;
+    setFromNode((current) => current || activeContextSourceNode);
+  }, [activeContextSourceNode, nodeOptions]);
+
   return (
     <div style={{ maxWidth: 1400, margin: '0 auto', display: 'grid', gap: 16 }}>
+      {hasScopedFilter && (
+        <section
+          style={{
+            borderRadius: 'var(--radius-lg)',
+            border: '1px solid var(--border-primary)',
+            background: 'var(--bg-primary)',
+            padding: 14,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700 }}>
+              Active Context
+            </div>
+            <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {contextLabel}
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => {
+                if (activeContextSourceNode && nodeOptions.some((node) => node.key === activeContextSourceNode)) {
+                  setFromNode(activeContextSourceNode);
+                }
+              }}
+              style={actionBtnStyle()}
+            >
+              Use Context as Source
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (scope.agencyId) {
+                  selectByEntity('agency', scope.agencyId);
+                  return;
+                }
+                if (tree.rootKey) {
+                  selectNode(tree.rootKey);
+                }
+              }}
+              style={actionBtnStyle()}
+            >
+              Clear Context
+            </button>
+          </div>
+        </section>
+      )}
+
       <section
         style={{
           borderRadius: 'var(--radius-lg)',
@@ -148,26 +226,26 @@ export default function AgencyTopologyPage() {
           {ACTIONS.map((action) => {
             const supported = canonical?.topology.supportedActions.includes(action) ?? false;
             return (
-            <button
-              key={action}
-              onClick={() => void runAction(action)}
-              disabled={busyAction !== null || !supported}
-              title={supported ? `Execute ${action}` : 'Unsupported by runtime (fail-closed)'}
-              style={{
-                borderRadius: 'var(--radius-md)',
-                border: '1px solid var(--border-primary)',
-                background: !supported
-                  ? 'var(--bg-tertiary)'
-                  : busyAction === action
-                    ? 'var(--color-primary-soft)'
-                    : 'var(--bg-secondary)',
-                color: supported ? 'var(--text-primary)' : 'var(--text-muted)',
-                padding: '8px 12px',
-                cursor: busyAction !== null || !supported ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {action}
-            </button>
+              <button
+                key={action}
+                onClick={() => void runAction(action)}
+                disabled={busyAction !== null || !supported}
+                title={supported ? `Execute ${action}` : 'Unsupported by runtime (fail-closed)'}
+                style={{
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-primary)',
+                  background: !supported
+                    ? 'var(--bg-tertiary)'
+                    : busyAction === action
+                      ? 'var(--color-primary-soft)'
+                      : 'var(--bg-secondary)',
+                  color: supported ? 'var(--text-primary)' : 'var(--text-muted)',
+                  padding: '8px 12px',
+                  cursor: busyAction !== null || !supported ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {action}
+              </button>
             );
           })}
         </div>
@@ -262,4 +340,15 @@ const tdStyle: CSSProperties = {
   color: 'var(--text-primary)',
 };
 
-
+function actionBtnStyle(): CSSProperties {
+  return {
+    borderRadius: 'var(--radius-md)',
+    border: '1px solid var(--border-primary)',
+    background: 'var(--bg-secondary)',
+    color: 'var(--text-primary)',
+    padding: '8px 10px',
+    fontSize: 'var(--text-xs)',
+    fontWeight: 600,
+    cursor: 'pointer',
+  };
+}

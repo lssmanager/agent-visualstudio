@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStudioState } from '../../../lib/StudioStateContext';
+import { useHierarchy } from '../../../lib/HierarchyContext';
 import { Search, Plus, Users } from 'lucide-react';
 import { PageHeader } from '../../../components';
 import { AgentCard } from '../../../components/ui/AgentCard';
@@ -8,15 +9,48 @@ import { EmptySection } from '../../../components/ui/EmptySection';
 
 export default function AgentListPage() {
   const { state } = useStudioState();
+  const { scope, selectedLineage, tree, selectByEntity, selectNode, canonical } = useHierarchy();
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
 
   const agents = state.agents || [];
 
+  const departmentWorkspaceIds = useMemo(() => {
+    if (!scope.departmentId || !canonical) return null;
+    return new Set(
+      canonical.workspaces
+        .filter((workspace) => workspace.departmentId === scope.departmentId)
+        .map((workspace) => workspace.id),
+    );
+  }, [canonical, scope.departmentId]);
+
+  const scopedAgents = useMemo(() => {
+    if (scope.subagentId) {
+      return agents.filter((agent) => agent.id === scope.subagentId);
+    }
+
+    if (scope.agentId) {
+      return agents.filter((agent) => agent.id === scope.agentId || agent.parentAgentId === scope.agentId);
+    }
+
+    if (scope.workspaceId) {
+      return agents.filter((agent) => agent.workspaceId === scope.workspaceId);
+    }
+
+    if (scope.departmentId && departmentWorkspaceIds && departmentWorkspaceIds.size > 0) {
+      return agents.filter((agent) => departmentWorkspaceIds.has(agent.workspaceId));
+    }
+
+    return agents;
+  }, [agents, departmentWorkspaceIds, scope.agentId, scope.departmentId, scope.subagentId, scope.workspaceId]);
+
   const filteredAgents = useMemo(
-    () => agents.filter((a) => a.name?.toLowerCase().includes(searchQuery.toLowerCase())),
-    [agents, searchQuery],
+    () => scopedAgents.filter((a) => a.name?.toLowerCase().includes(searchQuery.toLowerCase())),
+    [scopedAgents, searchQuery],
   );
+
+  const hasScopedFilter = Boolean(scope.subagentId || scope.agentId || scope.workspaceId || scope.departmentId);
+  const contextLabel = selectedLineage.map((node) => node.label).join(' / ');
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -25,6 +59,55 @@ export default function AgentListPage() {
         description="Browse, search, and edit your workspace agents."
         icon={Users}
       />
+
+      {hasScopedFilter && (
+        <div
+          style={{
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--shell-chip-border)',
+            background: 'var(--shell-chip-bg)',
+            padding: '10px 12px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700 }}>
+              Active Context
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {contextLabel}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (scope.agencyId) {
+                selectByEntity('agency', scope.agencyId);
+                return;
+              }
+              if (tree.rootKey) {
+                selectNode(tree.rootKey);
+              }
+            }}
+            style={{
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--shell-chip-border)',
+              background: 'transparent',
+              color: 'var(--text-muted)',
+              fontSize: 11,
+              fontWeight: 700,
+              padding: '6px 8px',
+              cursor: 'pointer',
+            }}
+          >
+            Clear Context
+          </button>
+        </div>
+      )}
 
       {agents.length === 0 ? (
         <EmptySection
@@ -116,7 +199,14 @@ export default function AgentListPage() {
                 <AgentCard
                   key={agent.id}
                   agent={agent}
-                  onClick={() => navigate(`/agents/${agent.id}`)}
+                  onClick={() => {
+                    if (agent.kind === 'subagent') {
+                      selectByEntity('subagent', agent.id);
+                    } else {
+                      selectByEntity('agent', agent.id);
+                    }
+                    navigate(`/agents/${agent.id}`);
+                  }}
                 />
               ))}
             </div>

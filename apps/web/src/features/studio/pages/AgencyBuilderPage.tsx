@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   applyCoreFiles,
   getBuilderAgentFunction,
@@ -10,12 +10,15 @@ import {
 import type {
   BuilderAgentFunctionOutput,
   CanonicalStudioStateResponse,
+  CanonicalNodeLevel,
   CoreFilesPreviewResponse,
   VersionSnapshot,
 } from '../../../lib/types';
 import { AlertTriangle, Building2, RefreshCw, RotateCcw, Wand2 } from 'lucide-react';
+import { useHierarchy } from '../../../lib/HierarchyContext';
 
 export default function AgencyBuilderPage() {
+  const { selectedNode, selectedLineage, scope, selectByEntity, selectNode, tree } = useHierarchy();
   const [canonical, setCanonical] = useState<CanonicalStudioStateResponse | null>(null);
   const [builderOutput, setBuilderOutput] = useState<BuilderAgentFunctionOutput | null>(null);
   const [preview, setPreview] = useState<CoreFilesPreviewResponse | null>(null);
@@ -25,39 +28,100 @@ export default function AgencyBuilderPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const counts = useMemo(() => ({
-    departments: canonical?.departments.length ?? 0,
-    workspaces: canonical?.workspaces.length ?? 0,
-    agents: canonical?.agents.length ?? 0,
-    subagents: canonical?.subagents.length ?? 0,
-    skills: canonical?.catalog.skills.length ?? 0,
-    tools: canonical?.catalog.tools.length ?? 0,
-  }), [canonical]);
+  const contextLabel = selectedLineage.map((node) => node.label).join(' / ');
 
-  async function load() {
+  const scopedCounts = useMemo(() => {
+    if (!canonical) {
+      return {
+        departments: 0,
+        workspaces: 0,
+        agents: 0,
+        subagents: 0,
+        skills: 0,
+        tools: 0,
+      };
+    }
+
+    const allAgents = [...canonical.agents, ...canonical.subagents];
+    const selectedEntityId = scope.subagentId ?? scope.agentId;
+    const selectedEntity = selectedEntityId ? allAgents.find((agent) => agent.id === selectedEntityId) ?? null : null;
+
+    const scopedWorkspaces = canonical.workspaces.filter((workspace) => {
+      if (scope.workspaceId) return workspace.id === scope.workspaceId;
+      if (scope.departmentId) return workspace.departmentId === scope.departmentId;
+      if (selectedEntity) return workspace.id === selectedEntity.workspaceId;
+      return true;
+    });
+
+    const workspaceIds = new Set(scopedWorkspaces.map((workspace) => workspace.id));
+    const scopedDepartments = canonical.departments.filter((department) =>
+      scopedWorkspaces.some((workspace) => workspace.departmentId === department.id),
+    );
+
+    const scopedAgents = canonical.agents.filter((agent) => {
+      if (scope.agentId) return agent.id === scope.agentId;
+      if (scope.subagentId) return false;
+      return workspaceIds.has(agent.workspaceId);
+    });
+
+    const scopedSubagents = canonical.subagents.filter((subagent) => {
+      if (scope.subagentId) return subagent.id === scope.subagentId;
+      if (scope.agentId) return subagent.parentAgentId === scope.agentId;
+      return workspaceIds.has(subagent.workspaceId);
+    });
+
+    return {
+      departments: scopedDepartments.length,
+      workspaces: scopedWorkspaces.length,
+      agents: scopedAgents.length,
+      subagents: scopedSubagents.length,
+      skills: canonical.catalog.skills.length,
+      tools: canonical.catalog.tools.length,
+    };
+  }, [canonical, scope.agentId, scope.departmentId, scope.subagentId, scope.workspaceId]);
+
+  const builderTarget = useMemo(() => {
+    if (!selectedNode) return null;
+    if (!['agency', 'department', 'workspace', 'agent', 'subagent'].includes(selectedNode.level)) {
+      return null;
+    }
+    return {
+      level: selectedNode.level as CanonicalNodeLevel,
+      id: selectedNode.id,
+    };
+  }, [selectedNode]);
+
+  const load = useCallback(async () => {
     setBusy(true);
     setError(null);
     try {
       const canonicalState = await getCanonicalStudioState();
       setCanonical(canonicalState);
+      const targetLevel: CanonicalNodeLevel = builderTarget?.level ?? 'agency';
+      const targetId = builderTarget?.id ?? canonicalState.agency.id;
 
-      const [builder, corePreview, snapshots] = await Promise.all([
-        getBuilderAgentFunction('agency', canonicalState.agency.id),
+      let builder: BuilderAgentFunctionOutput;
+      try {
+        builder = await getBuilderAgentFunction(targetLevel, targetId);
+      } catch {
+        builder = await getBuilderAgentFunction('agency', canonicalState.agency.id);
+      }
+
+      const [corePreview, snapshots] = await Promise.all([
         previewCoreFiles(),
         getVersions(),
       ]);
+
       setBuilderOutput(builder);
       setPreview(corePreview);
       setVersions(snapshots);
-      if (!selectedSnapshotId && snapshots[0]?.id) {
-        setSelectedSnapshotId(snapshots[0].id);
-      }
+      setSelectedSnapshotId((current) => current || snapshots[0]?.id || '');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load Agency Builder');
     } finally {
       setBusy(false);
     }
-  }
+  }, [builderTarget]);
 
   async function applyChanges() {
     setBusy(true);
@@ -102,10 +166,50 @@ export default function AgencyBuilderPage() {
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
 
   return (
     <div style={{ maxWidth: 1400, margin: '0 auto', display: 'grid', gap: 16 }}>
+      {(scope.departmentId || scope.workspaceId || scope.agentId || scope.subagentId) && (
+        <section
+          style={{
+            borderRadius: 'var(--radius-lg)',
+            border: '1px solid var(--border-primary)',
+            background: 'var(--bg-primary)',
+            padding: 14,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700 }}>
+              Active Context
+            </div>
+            <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {contextLabel}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (scope.agencyId) {
+                selectByEntity('agency', scope.agencyId);
+                return;
+              }
+              if (tree.rootKey) {
+                selectNode(tree.rootKey);
+              }
+            }}
+            style={actionBtnStyle()}
+          >
+            Clear Context
+          </button>
+        </section>
+      )}
+
       <section
         style={{
           borderRadius: 'var(--radius-lg)',
@@ -146,12 +250,12 @@ export default function AgencyBuilderPage() {
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 10 }}>
-          <Stat label="Departments" value={counts.departments} />
-          <Stat label="Workspaces" value={counts.workspaces} />
-          <Stat label="Agents" value={counts.agents} />
-          <Stat label="Subagents" value={counts.subagents} />
-          <Stat label="Skills" value={counts.skills} />
-          <Stat label="Tools" value={counts.tools} />
+          <Stat label="Departments" value={scopedCounts.departments} />
+          <Stat label="Workspaces" value={scopedCounts.workspaces} />
+          <Stat label="Agents" value={scopedCounts.agents} />
+          <Stat label="Subagents" value={scopedCounts.subagents} />
+          <Stat label="Skills" value={scopedCounts.skills} />
+          <Stat label="Tools" value={scopedCounts.tools} />
         </div>
       </section>
 
@@ -167,7 +271,7 @@ export default function AgencyBuilderPage() {
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Wand2 size={16} />
-          <h2 style={{ margin: 0, fontSize: 'var(--text-lg)' }}>Builder Agent Function</h2>
+          <h2 style={{ margin: 0, fontSize: 'var(--text-lg)' }}>Builder Agent Function {builderTarget ? `(context: ${builderTarget.level})` : ''}</h2>
         </div>
         {builderOutput ? (
           <div style={{ display: 'grid', gap: 10 }}>

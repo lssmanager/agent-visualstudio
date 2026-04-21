@@ -6,6 +6,7 @@ import { StudioStateResponse } from './lib/types';
 import { StudioStateContext } from './lib/StudioStateContext';
 import { ThemeProvider } from './lib/ThemeProvider';
 import { OnboardingProvider } from './lib/OnboardingContext';
+import { HierarchyProvider } from './lib/HierarchyContext';
 import { usePreferences } from './lib/usePreferences';
 import { MainLayout } from './layouts/MainLayout';
 import { LoadingState } from './components/ui/LoadingState';
@@ -156,44 +157,46 @@ export function App() {
   return (
     <ThemeProvider initialTheme={theme} onThemeChange={setTheme}>
       <StudioStateContext.Provider value={{ state, refresh: refreshState }}>
-        <OnboardingProvider value={{ openOnboarding: () => setOnboardingOpen(true) }}>
-          <BrowserRouter>
-            {/* Onboarding drawer overlays the dashboard */}
-            <OnboardingDrawer
-              open={shouldShowOnboarding}
-              onComplete={async () => {
-                setOnboardingOpen(false);
-                await loadState();
-              }}
-              onClose={() => setOnboardingOpen(false)}
-            />
+        <HierarchyProvider>
+          <OnboardingProvider value={{ openOnboarding: () => setOnboardingOpen(true) }}>
+            <BrowserRouter>
+              {/* Onboarding drawer overlays the dashboard */}
+              <OnboardingDrawer
+                open={shouldShowOnboarding}
+                onComplete={async () => {
+                  setOnboardingOpen(false);
+                  await loadState();
+                }}
+                onClose={() => setOnboardingOpen(false)}
+              />
 
-            <Routes>
-              <Route element={<MainLayout />}>
-                <Route path="/"            element={<OverviewPage />} />
-                <Route path="/agency-builder" element={<AgencyBuilderPage />} />
-                <Route path="/workspace-studio" element={<WorkspaceStudioPage />} />
-                <Route path="/agency-topology" element={<AgencyTopologyPage />} />
-                <Route path="/studio"      element={<Navigate to="/workspace-studio" replace />} />
-                <Route path="/workspaces"  element={<WorkspacesPage />} />
-                <Route path="/agents/new"  element={<AgentEditorPage />} />
-                <Route path="/agents/:id" element={<AgentEditorPage />} />
-                <Route path="/agents"      element={<AgentListPage />} />
-                <Route path="/profiles"    element={<ProfilesPage />} />
-                <Route path="/diagnostics" element={<DiagnosticsPage />} />
-                <Route path="/sessions"    element={<SessionsPage />} />
-                <Route path="/routing"     element={<RoutingPage />} />
-                <Route path="/runs"        element={<RunsPage />} />
-                <Route path="/hooks"       element={<HooksPage />} />
-                <Route path="/versions"    element={<VersionsPage />} />
-                <Route path="/settings"    element={<SettingsPage />} />
-                <Route path="/commands"    element={<CommandsPage />} />
-                <Route path="/operations"  element={<OperationsPage />} />
-                <Route path="*"            element={<Navigate to="/" replace />} />
-              </Route>
-            </Routes>
-          </BrowserRouter>
-        </OnboardingProvider>
+              <Routes>
+                <Route element={<MainLayout />}>
+                  <Route path="/"            element={<OverviewPage />} />
+                  <Route path="/agency-builder" element={<AgencyBuilderPage />} />
+                  <Route path="/workspace-studio" element={<WorkspaceStudioPage />} />
+                  <Route path="/agency-topology" element={<AgencyTopologyPage />} />
+                  <Route path="/studio"      element={<Navigate to="/workspace-studio" replace />} />
+                  <Route path="/workspaces"  element={<WorkspacesPage />} />
+                  <Route path="/agents/new"  element={<AgentEditorPage />} />
+                  <Route path="/agents/:id" element={<AgentEditorPage />} />
+                  <Route path="/agents"      element={<AgentListPage />} />
+                  <Route path="/profiles"    element={<ProfilesPage />} />
+                  <Route path="/diagnostics" element={<DiagnosticsPage />} />
+                  <Route path="/sessions"    element={<SessionsPage />} />
+                  <Route path="/routing"     element={<RoutingPage />} />
+                  <Route path="/runs"        element={<RunsPage />} />
+                  <Route path="/hooks"       element={<HooksPage />} />
+                  <Route path="/versions"    element={<VersionsPage />} />
+                  <Route path="/settings"    element={<SettingsPage />} />
+                  <Route path="/commands"    element={<CommandsPage />} />
+                  <Route path="/operations"  element={<OperationsPage />} />
+                  <Route path="*"            element={<Navigate to="/" replace />} />
+                </Route>
+              </Routes>
+            </BrowserRouter>
+          </OnboardingProvider>
+        </HierarchyProvider>
       </StudioStateContext.Provider>
     </ThemeProvider>
   );

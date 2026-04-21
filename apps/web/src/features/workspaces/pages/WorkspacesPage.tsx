@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Plus, Trash2, Package } from 'lucide-react';
 
 import { applyDeploy, getDeployPreview } from '../../../lib/api';
+import { useHierarchy } from '../../../lib/HierarchyContext';
 import { useStudioState } from '../../../lib/StudioStateContext';
 import { DeployPreview, WorkspaceSpec } from '../../../lib/types';
 import { WorkspaceDeployPanel } from '../components/WorkspaceDeployPanel';
@@ -12,6 +13,7 @@ import { PageHeader, Card, Toast } from '../../../components';
 
 export default function WorkspacesPage() {
   const { state, refresh } = useStudioState();
+  const { scope, selectedLineage, canonical, selectByEntity, selectNode, tree } = useHierarchy();
   const [preview, setPreview] = useState<DeployPreview | null>(null);
   const [showEditor, setShowEditor] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
@@ -36,7 +38,54 @@ export default function WorkspacesPage() {
     }
   }
 
-  const workspaces: WorkspaceSpec[] = state.workspace ? [state.workspace] : [];
+  const workspaceDepartmentById = useMemo(() => {
+    const entries = canonical?.workspaces.map((workspace) => [workspace.id, workspace.departmentId] as const) ?? [];
+    return new Map(entries);
+  }, [canonical?.workspaces]);
+
+  const departmentLabelById = useMemo(() => {
+    const entries = canonical?.departments.map((department) => [department.id, department.name] as const) ?? [];
+    return new Map(entries);
+  }, [canonical?.departments]);
+
+  const workspaceList = useMemo<WorkspaceSpec[]>(() => {
+    if (canonical?.workspaces.length) {
+      return canonical.workspaces;
+    }
+    return state.workspace ? [state.workspace] : [];
+  }, [canonical?.workspaces, state.workspace]);
+
+  const scopedWorkspaces = useMemo(() => {
+    if (scope.workspaceId) {
+      return workspaceList.filter((workspace) => workspace.id === scope.workspaceId);
+    }
+
+    if (scope.agentId || scope.subagentId) {
+      const scopedAgentId = scope.subagentId ?? scope.agentId;
+      const scopedAgent = scopedAgentId ? state.agents.find((agent) => agent.id === scopedAgentId) : null;
+      if (scopedAgent) {
+        return workspaceList.filter((workspace) => workspace.id === scopedAgent.workspaceId);
+      }
+      return workspaceList;
+    }
+
+    if (scope.departmentId) {
+      return workspaceList.filter((workspace) => workspaceDepartmentById.get(workspace.id) === scope.departmentId);
+    }
+
+    return workspaceList;
+  }, [
+    scope.workspaceId,
+    scope.agentId,
+    scope.subagentId,
+    scope.departmentId,
+    state.agents,
+    workspaceDepartmentById,
+    workspaceList,
+  ]);
+
+  const contextLabel = selectedLineage.map((node) => node.label).join(' / ');
+  const hasScopedFilter = Boolean(scope.departmentId || scope.workspaceId || scope.agentId || scope.subagentId);
 
   function handleDeleteClick() {
     setToast({ type: 'info', message: 'Workspace deletion is not available in this version.' });
@@ -50,17 +99,67 @@ export default function WorkspacesPage() {
         description="Create and manage workspaces. Each workspace is an independent configuration of agents, skills, and flows."
       />
 
+      {hasScopedFilter && (
+        <Card>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700 }}>
+                Active Context
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {contextLabel}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (scope.agencyId) {
+                  selectByEntity('agency', scope.agencyId);
+                  return;
+                }
+                if (tree.rootKey) {
+                  selectNode(tree.rootKey);
+                }
+              }}
+              style={{
+                borderRadius: 'var(--radius-sm)',
+                border: '1px solid var(--border-primary)',
+                background: 'var(--bg-secondary)',
+                color: 'var(--text-muted)',
+                fontSize: 11,
+                fontWeight: 700,
+                padding: '6px 8px',
+                cursor: 'pointer',
+              }}
+            >
+              Clear Context
+            </button>
+          </div>
+        </Card>
+      )}
+
       {/* Workspaces Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {workspaces.length > 0 && workspaces.map((ws) => (
-          <Card key={ws.id} className="transition-shadow" clickable>
+        {scopedWorkspaces.length > 0 && scopedWorkspaces.map((ws) => (
+          <Card
+            key={ws.id}
+            className="transition-shadow"
+            clickable
+            onClick={() => {
+              selectByEntity('workspace', ws.id);
+            }}
+          >
             <div className="flex items-start justify-between mb-4">
               <div>
                 <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>{ws.name}</h3>
                 <p className="text-xs font-mono mt-1" style={{ color: 'var(--text-muted)' }}>{ws.slug}</p>
               </div>
               <button
-                onClick={handleDeleteClick}
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  handleDeleteClick();
+                }}
                 className="p-2 rounded-lg transition-colors"
                 style={{ color: 'var(--text-muted)' }}
                 onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--tone-danger-bg)'; (e.currentTarget as HTMLElement).style.color = 'var(--color-error)'; }}
@@ -79,9 +178,19 @@ export default function WorkspacesPage() {
                   <span className="font-mono text-xs" style={{ color: 'var(--text-primary)' }}>{ws.defaultModel}</span>
                 </div>
               )}
+              {workspaceDepartmentById.get(ws.id) && (
+                <div className="flex justify-between">
+                  <span style={{ color: 'var(--text-muted)' }}>Department:</span>
+                  <span className="font-medium" style={{ color: 'var(--text-primary)' }}>
+                    {departmentLabelById.get(workspaceDepartmentById.get(ws.id) as string) ?? 'Unknown'}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span style={{ color: 'var(--text-muted)' }}>Agents:</span>
-                <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{state.agents?.length ?? 0}</span>
+                <span className="font-medium" style={{ color: 'var(--text-primary)' }}>
+                  {state.agents.filter((agent) => agent.workspaceId === ws.id).length}
+                </span>
               </div>
               <div className="flex justify-between">
                 <span style={{ color: 'var(--text-muted)' }}>Skills:</span>
@@ -96,13 +205,27 @@ export default function WorkspacesPage() {
             {/* Active indicator */}
             <div
               className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium"
-              style={{ background: 'var(--tone-success-bg)', color: 'var(--color-success)' }}
+              style={{
+                background: ws.id === state.workspace?.id ? 'var(--tone-success-bg)' : 'var(--shell-chip-bg)',
+                color: ws.id === state.workspace?.id ? 'var(--color-success)' : 'var(--text-muted)',
+              }}
             >
-              <div className="w-2 h-2 rounded-full" style={{ background: 'var(--color-success)' }} />
-              Active
+              <div
+                className="w-2 h-2 rounded-full"
+                style={{ background: ws.id === state.workspace?.id ? 'var(--color-success)' : 'var(--text-muted)' }}
+              />
+              {ws.id === state.workspace?.id ? 'Active runtime' : 'Available'}
             </div>
           </Card>
         ))}
+
+        {scopedWorkspaces.length === 0 && hasScopedFilter && (
+          <Card>
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              No workspaces match the current hierarchy context.
+            </p>
+          </Card>
+        )}
 
         {/* New Workspace Card */}
         <button
