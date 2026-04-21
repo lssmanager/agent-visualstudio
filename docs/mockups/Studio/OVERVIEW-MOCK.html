@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenClaw Studio Overview Mockup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --panel: #ffffff;
+      --panel-2: #fbfcff;
+      --line: #e7ebf3;
+      --line-2: #d9dfec;
+      --text: #111827;
+      --muted: #6b7280;
+      --muted-2: #94a3b8;
+      --primary: #3b82f6;
+      --primary-soft: rgba(59,130,246,.12);
+      --success: #16a34a;
+      --warning: #d97706;
+      --danger: #dc2626;
+      --purple: #7c3aed;
+      --teal: #0f766e;
+      --cyan: #0891b2;
+      --shadow: 0 8px 30px rgba(15, 23, 42, 0.06);
+      --radius: 18px;
+      --radius-sm: 12px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .app {
+      display: grid;
+      grid-template-columns: 248px 1fr 320px;
+      min-height: 100vh;
+    }
+    .sidebar {
+      background: #fff;
+      border-right: 1px solid var(--line);
+      padding: 18px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+    .brand-badge {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      background: linear-gradient(135deg,#4f46e5,#2563eb);
+      display: grid;
+      place-items: center;
+      color: white;
+      font-weight: 800;
+      box-shadow: var(--shadow);
+    }
+    .brand h1 {
+      font-size: 18px;
+      margin: 0;
+      line-height: 1.1;
+    }
+    .brand small { color: var(--muted); }
+    .nav-group-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--muted-2);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      padding: 0 10px;
+      margin-bottom: 4px;
+    }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 12px;
+      border-radius: 12px;
+      color: #334155;
+      font-weight: 600;
+      text-decoration: none;
+      margin: 2px 0;
+    }
+    .nav-item.active {
+      background: #eef4ff;
+      color: #1d4ed8;
+      box-shadow: inset 0 0 0 1px #dbeafe;
+    }
+    .nav-icon {
+      width: 18px;
+      text-align: center;
+      color: inherit;
+    }
+    .main {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .topbar {
+      height: 74px;
+      background: rgba(255,255,255,.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .topbar-left, .topbar-right { display: flex; align-items: center; gap: 14px; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #fff;
+      border: 1px solid var(--line);
+      padding: 10px 12px;
+      border-radius: 12px;
+      font-size: 13px;
+      color: #475569;
+      font-weight: 600;
+    }
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: var(--success);
+      box-shadow: 0 0 0 4px rgba(22,163,74,.12);
+    }
+    .btn {
+      border: 0;
+      padding: 11px 14px;
+      border-radius: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .btn.primary { background: #2563eb; color: #fff; }
+    .btn.secondary { background: #fff; color: #1e293b; border: 1px solid var(--line); }
+    .content {
+      padding: 26px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .hero {
+      background: linear-gradient(180deg,#ffffff 0%,#f9fbff 100%);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 24px;
+      box-shadow: var(--shadow);
+      display: grid;
+      grid-template-columns: 1.5fr 1fr;
+      gap: 18px;
+    }
+    .hero h2 {
+      margin: 0 0 8px;
+      font-size: 32px;
+      line-height: 1.05;
+    }
+    .hero p {
+      margin: 0;
+      color: var(--muted);
+      max-width: 780px;
+      line-height: 1.6;
+    }
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    .hero-meta .pill {
+      background: #f8fafc;
+      border: 1px solid var(--line);
+      padding: 9px 11px;
+      border-radius: 999px;
+      font-size: 12px;
+      color: #475569;
+      font-weight: 700;
+    }
+    .hero-side {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      align-content: start;
+    }
+    .mini-stat {
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px;
+    }
+    .mini-stat .label { color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+    .mini-stat .value { font-size: 24px; font-weight: 800; margin-top: 8px; }
+    .mini-stat .delta { margin-top: 6px; font-size: 13px; font-weight: 700; }
+    .good { color: var(--success); }
+    .warn { color: var(--warning); }
+    .bad { color: var(--danger); }
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: repeat(12,1fr);
+      gap: 18px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .card-header {
+      padding: 18px 18px 12px;
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .card-header h3 {
+      margin: 0;
+      font-size: 18px;
+    }
+    .card-header p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .card-body { padding: 0 18px 18px; }
+    .span-12 { grid-column: span 12; }
+    .span-8 { grid-column: span 8; }
+    .span-7 { grid-column: span 7; }
+    .span-6 { grid-column: span 6; }
+    .span-5 { grid-column: span 5; }
+    .span-4 { grid-column: span 4; }
+    .span-3 { grid-column: span 3; }
+    .metrics-row {
+      display: grid;
+      grid-template-columns: repeat(6,1fr);
+      gap: 14px;
+    }
+    .metric {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+      min-height: 118px;
+      position: relative;
+    }
+    .metric .title {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    .metric .num {
+      margin-top: 12px;
+      font-size: 30px;
+      font-weight: 800;
+      letter-spacing: -.03em;
+    }
+    .metric .sub {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .metric .corner {
+      position: absolute;
+      right: 14px;
+      top: 14px;
+      font-size: 20px;
+      opacity: .75;
+    }
+    .widget-toolbar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .widget-chip {
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 999px;
+      padding: 7px 10px;
+      font-size: 12px;
+      color: #475569;
+      font-weight: 700;
+    }
+    .canvas-grid {
+      height: 330px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(to right, rgba(148,163,184,.12) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(148,163,184,.12) 1px, transparent 1px),
+        linear-gradient(180deg,#fcfdff,#f7f9fd);
+      background-size: 24px 24px, 24px 24px, 100% 100%;
+      position: relative;
+      overflow: hidden;
+    }
+    .widget-node {
+      position: absolute;
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: 0 10px 24px rgba(37,99,235,.08);
+      padding: 12px 14px;
+      min-width: 180px;
+    }
+    .widget-node h4 { margin: 0; font-size: 14px; }
+    .widget-node small { color: var(--muted); display: block; margin-top: 4px; }
+    .node-tag {
+      display: inline-block;
+      margin-top: 10px;
+      font-size: 11px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      font-weight: 700;
+      padding: 5px 8px;
+      border-radius: 999px;
+    }
+    svg.links {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    .list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .list-item {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fff;
+    }
+    .list-item strong { font-size: 14px; }
+    .list-item small { display: block; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+    .tag-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    .tag {
+      background: #f8fafc;
+      border: 1px solid var(--line);
+      color: #475569;
+      border-radius: 999px;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .bars { display: flex; flex-direction: column; gap: 12px; }
+    .bar-row { display: grid; grid-template-columns: 140px 1fr 52px; gap: 12px; align-items: center; }
+    .bar-track {
+      height: 12px;
+      background: #eef2f7;
+      border-radius: 999px;
+      overflow: hidden;
+      border: 1px solid #e5eaf2;
+    }
+    .bar-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg,#60a5fa,#2563eb);
+    }
+    .split-stats {
+      display: grid;
+      grid-template-columns: repeat(2,1fr);
+      gap: 12px;
+    }
+    .tiny-panel {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px;
+      background: #fff;
+    }
+    .tiny-panel .k { font-size: 11px; color: var(--muted); text-transform: uppercase; font-weight: 800; letter-spacing: .05em; }
+    .tiny-panel .v { font-size: 22px; font-weight: 800; margin-top: 8px; }
+    .rightbar {
+      background: #fff;
+      border-left: 1px solid var(--line);
+      padding: 18px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #fff;
+      overflow: hidden;
+    }
+    .panel .title {
+      padding: 14px 14px 10px;
+      font-weight: 800;
+      font-size: 15px;
+    }
+    .panel .inner { padding: 0 14px 14px; }
+    .filters { display: flex; flex-direction: column; gap: 10px; }
+    .select {
+      border: 1px solid var(--line);
+      background: #f8fafc;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 13px;
+      color: #334155;
+      font-weight: 600;
+    }
+    .kpi-stack { display: flex; flex-direction: column; gap: 10px; }
+    .kpi-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fbfcff;
+      font-size: 13px;
+    }
+    .activity {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .activity-item {
+      border-left: 3px solid #60a5fa;
+      padding: 2px 0 2px 12px;
+    }
+    .activity-item strong { font-size: 13px; }
+    .activity-item small { display: block; color: var(--muted); margin-top: 3px; line-height: 1.45; }
+    .legend { display: flex; gap: 10px; flex-wrap: wrap; }
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .legend i {
+      width: 10px; height: 10px; border-radius: 999px; display: inline-block;
+    }
+    .footer-note {
+      border: 1px dashed var(--line-2);
+      background: #f8fbff;
+      color: #475569;
+      border-radius: 16px;
+      padding: 14px;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    @media (max-width: 1460px) {
+      .app { grid-template-columns: 220px 1fr; }
+      .rightbar { display: none; }
+      .metrics-row { grid-template-columns: repeat(3,1fr); }
+    }
+    @media (max-width: 1080px) {
+      .app { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .hero, .metrics-row { grid-template-columns: 1fr; }
+      .span-8,.span-7,.span-6,.span-5,.span-4,.span-3 { grid-column: span 12; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-badge">OC</div>
+        <div>
+          <h1>OpenClaw Studio</h1>
+          <small>Overview / Control Plane</small>
+        </div>
+      </div>
+
+      <div>
+        <div class="nav-group-title">Navigation</div>
+        <a class="nav-item active" href="#"><span class="nav-icon">▣</span>Overview</a>
+        <a class="nav-item" href="#"><span class="nav-icon">◫</span>Workspace Studio</a>
+        <a class="nav-item" href="#"><span class="nav-icon">◎</span>Agency Topology</a>
+        <a class="nav-item" href="#"><span class="nav-icon">⚙</span>Builder Agent</a>
+        <a class="nav-item" href="#"><span class="nav-icon">↺</span>Replay & Debug</a>
+        <a class="nav-item" href="#"><span class="nav-icon">☰</span>Core Files Diff</a>
+      </div>
+
+      <div>
+        <div class="nav-group-title">Observability</div>
+        <a class="nav-item" href="#"><span class="nav-icon">◌</span>Runs</a>
+        <a class="nav-item" href="#"><span class="nav-icon">⌁</span>Traces</a>
+        <a class="nav-item" href="#"><span class="nav-icon">⇄</span>Handoffs</a>
+        <a class="nav-item" href="#"><span class="nav-icon">⚠</span>Diagnostics</a>
+        <a class="nav-item" href="#"><span class="nav-icon">⌘</span>Sessions</a>
+      </div>
+
+      <div>
+        <div class="nav-group-title">Catalog</div>
+        <a class="nav-item" href="#"><span class="nav-icon">A</span>Agencies</a>
+        <a class="nav-item" href="#"><span class="nav-icon">D</span>Departments</a>
+        <a class="nav-item" href="#"><span class="nav-icon">W</span>Workspaces</a>
+        <a class="nav-item" href="#"><span class="nav-icon">G</span>Agents</a>
+        <a class="nav-item" href="#"><span class="nav-icon">S</span>Skills / Tools</a>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="topbar">
+        <div class="topbar-left">
+          <div class="chip"><span class="status-dot"></span>OpenClaw source connected</div>
+          <div class="chip">Last sync: 18:12</div>
+          <div class="chip">Runtime mode: OpenClaw + Compat Adapter</div>
+        </div>
+        <div class="topbar-right">
+          <button class="btn secondary">Reorganize widgets</button>
+          <button class="btn secondary">Saved views</button>
+          <button class="btn primary">Refresh real data</button>
+        </div>
+      </div>
+
+      <div class="content">
+        <section class="hero">
+          <div>
+            <h2>Overview debe ser un control plane real, no un mock de tarjetas.</h2>
+            <p>
+              Este mockup propone un panel tipo Flowise para OpenClaw Studio donde la fuente de verdad es OpenClaw: agencias, departamentos, workspaces, agentes, subagentes, runs, costos, tokens, modelos, caché, tool calls, sesiones, handoffs, webhooks, flows, conexiones, interconexiones, diagnósticos y errores. La vista está pensada como dashboard redistribuible por widgets, con filtros por entidad, costo, modelo, estado, actividad y salud de runtime.
+            </p>
+            <div class="hero-meta">
+              <span class="pill">Widgets drag & resize</span>
+              <span class="pill">Realtime OpenClaw metrics</span>
+              <span class="pill">Agency / Department / Workspace rollups</span>
+              <span class="pill">Costs / tokens / cache / model usage</span>
+              <span class="pill">Fail-closed runtime status</span>
+            </div>
+          </div>
+          <div class="hero-side">
+            <div class="mini-stat">
+              <div class="label">Agencies online</div>
+              <div class="value">12</div>
+              <div class="delta good">+2 connected</div>
+            </div>
+            <div class="mini-stat">
+              <div class="label">Departments</div>
+              <div class="value">37</div>
+              <div class="delta good">34 active / 3 paused</div>
+            </div>
+            <div class="mini-stat">
+              <div class="label">Workspaces</div>
+              <div class="value">86</div>
+              <div class="delta warn">9 with warnings</div>
+            </div>
+            <div class="mini-stat">
+              <div class="label">Agents / Subagents</div>
+              <div class="value">412</div>
+              <div class="delta bad">11 errored / 26 paused</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card span-12">
+          <div class="card-header">
+            <div>
+              <h3>Global filters y vistas guardadas</h3>
+              <p>El overview debe permitir operar con datos reales de OpenClaw, no solo ver KPIs estáticos. Estos filtros gobiernan todos los widgets del dashboard.</p>
+            </div>
+            <div class="widget-toolbar">
+              <span class="widget-chip">Agency: All</span>
+              <span class="widget-chip">Department: Product + Ops</span>
+              <span class="widget-chip">Workspace: 8 selected</span>
+              <span class="widget-chip">Status: Active / Paused / Error</span>
+              <span class="widget-chip">Models: GPT / Claude / Gemini / OSS</span>
+              <span class="widget-chip">Costs > $10</span>
+              <span class="widget-chip">Runs: last 24h</span>
+              <span class="widget-chip">View: Executive Ops</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="metrics-row">
+              <div class="metric"><div class="corner">🏢</div><div class="title">Agencies</div><div class="num">12</div><div class="sub">Conectadas a OpenClaw. 2 nuevas sincronizadas hoy.</div></div>
+              <div class="metric"><div class="corner">🧩</div><div class="title">Departments</div><div class="num">37</div><div class="sub">14 ejecución intensiva, 12 análisis, 11 soporte.</div></div>
+              <div class="metric"><div class="corner">🗂</div><div class="title">Workspaces activos</div><div class="num">74</div><div class="sub">12 paused. 9 con drift entre config y runtime.</div></div>
+              <div class="metric"><div class="corner">🤖</div><div class="title">Agents online</div><div class="num">386</div><div class="sub">26 paused, 11 error, 17 waiting handoff.</div></div>
+              <div class="metric"><div class="corner">💸</div><div class="title">Spend 24h</div><div class="num">$1,842</div><div class="sub">62% modelos frontier, 21% OSS, 17% tools.</div></div>
+              <div class="metric"><div class="corner">🧠</div><div class="title">Tokens 24h</div><div class="num">48.2M</div><div class="sub">Cache hit 38%, prompt 19.6M, completion 28.6M.</div></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="dashboard-grid">
+          <article class="card span-8">
+            <div class="card-header">
+              <div>
+                <h3>Widget layout / panel redistribuible</h3>
+                <p>El overview debe permitir mover, ocultar, redimensionar y guardar widgets por vista, como un dashboard operativo real.</p>
+              </div>
+              <div class="widget-toolbar">
+                <span class="widget-chip">Drag mode</span>
+                <span class="widget-chip">Snap grid</span>
+                <span class="widget-chip">Resize handles</span>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="canvas-grid">
+                <svg class="links" viewBox="0 0 900 330" preserveAspectRatio="none">
+                  <path d="M210 70 C280 70, 280 70, 340 70" fill="none" stroke="#93c5fd" stroke-width="3" stroke-dasharray="8 6"/>
+                  <path d="M530 96 C620 96, 620 150, 710 150" fill="none" stroke="#c4b5fd" stroke-width="3"/>
+                  <path d="M190 224 C300 224, 300 228, 414 228" fill="none" stroke="#67e8f9" stroke-width="3"/>
+                </svg>
+                <div class="widget-node" style="left:22px; top:28px; width:190px;">
+                  <h4>Agencies / Departments</h4>
+                  <small>Hierarchy rollup + live counts</small>
+                  <span class="node-tag">Core widget</span>
+                </div>
+                <div class="widget-node" style="left:340px; top:34px; width:190px;">
+                  <h4>Costs / Tokens / Cache</h4>
+                  <small>Model cost, token burn, cache hit ratio</small>
+                  <span class="node-tag">Finance ops</span>
+                </div>
+                <div class="widget-node" style="left:705px; top:112px; width:170px;">
+                  <h4>Models usage</h4>
+                  <small>Most used / least used</small>
+                  <span class="node-tag">LLM mix</span>
+                </div>
+                <div class="widget-node" style="left:28px; top:184px; width:160px;">
+                  <h4>Errors / stuck jobs</h4>
+                  <small>Paused, errored, interrupted</small>
+                  <span class="node-tag">Critical</span>
+                </div>
+                <div class="widget-node" style="left:414px; top:188px; width:220px;">
+                  <h4>Runs / Sessions / Handoffs</h4>
+                  <small>Replay-ready execution telemetry</small>
+                  <span class="node-tag">Observability</span>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="card span-4">
+            <div class="card-header">
+              <div>
+                <h3>Runtime health</h3>
+                <p>Estado operativo agregado por runtime y gateway.</p>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="split-stats">
+                <div class="tiny-panel"><div class="k">Gateway</div><div class="v good">Healthy</div></div>
+                <div class="tiny-panel"><div class="k">Topology API</div><div class="v warn">Partial</div></div>
+                <div class="tiny-panel"><div class="k">Builder sync</div><div class="v good">Aligned</div></div>
+                <div class="tiny-panel"><div class="k">Replay store</div><div class="v bad">Lagging</div></div>
+              </div>
+              <div style="height:14px"></div>
+              <div class="footer-note">
+                Si OpenClaw o el gateway no soportan una acción de topología, la UI debe marcarla explícitamente como <strong>unsupported by runtime</strong>, no simular éxito ni mutar estado local como si hubiera funcionado.
+              </div>
+            </div>
+          </article>
+
+          <article class="card span-7">
+            <div class="card-header">
+              <div>
+                <h3>Modelos más usados y menos usados</h3>
+                <p>Uso real por tokens, runs y costo para detectar dependencia, over-spend y oportunidades de optimización.</p>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="bars">
+                <div class="bar-row"><strong>Claude Sonnet</strong><div class="bar-track"><div class="bar-fill" style="width: 88%"></div></div><span>88%</span></div>
+                <div class="bar-row"><strong>GPT-4.1</strong><div class="bar-track"><div class="bar-fill" style="width: 71%"></div></div><span>71%</span></div>
+                <div class="bar-row"><strong>Gemini 2.5</strong><div class="bar-track"><div class="bar-fill" style="width: 49%"></div></div><span>49%</span></div>
+                <div class="bar-row"><strong>Llama OSS</strong><div class="bar-track"><div class="bar-fill" style="width: 23%"></div></div><span>23%</span></div>
+                <div class="bar-row"><strong>Mistral small</strong><div class="bar-track"><div class="bar-fill" style="width: 11%"></div></div><span>11%</span></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="card span-5">
+            <div class="card-header">
+              <div>
+                <h3>Costos y consumo</h3>
+                <p>Resumen financiero real por período, útil para equipos de producto y operaciones.</p>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="list">
+                <div class="list-item"><div><strong>Total cost (24h)</strong><small>Incluye modelos, tools externas, embeddings, ejecuciones fallidas y retries.</small></div><div><strong>$1,842</strong></div></div>
+                <div class="list-item"><div><strong>Cache hit ratio</strong><small>Debe segmentarse por workspace, modelo y tipo de tarea.</small></div><div><strong>38%</strong></div></div>
+                <div class="list-item"><div><strong>Stuck spend</strong><small>Costo de runs que quedaron a mitad, en error o esperando continue/redirect.</small></div><div><strong>$96</strong></div></div>
+                <div class="list-item"><div><strong>Top expensive workspace</strong><small>workspace: agency-research-ops / alto uso de traces y analysis loops.</small></div><div><strong>$322</strong></div></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="card span-6">
+            <div class="card-header">
+              <div>
+                <h3>Actividad reciente / runs / errores / handoffs</h3>
+                <p>Feed operacional para detectar ejecuciones vivas, interrupciones, handoffs y errores sin ir a páginas secundarias.</p>
+              </div>
+            </div>
+            <div class="card-body activity">
+              <div class="activity-item"><strong>Run #run_98231 redirected to workspace:curriculum-ops</strong><small>Agency LSS · Redirect aplicado por saturación del agente planner · hace 2 min</small></div>
+              <div class="activity-item" style="border-left-color:#f59e0b"><strong>Topology action pause unsupported by runtime</strong><small>Department: marketing-ops · Gateway devolvió unsupported_by_runtime · hace 5 min</small></div>
+              <div class="activity-item" style="border-left-color:#ef4444"><strong>Agent history-synthesizer quedó stuck after tool call</strong><small>Tool: web-search enrichment · 1,242 input tokens · requires replay checkpoint · hace 9 min</small></div>
+              <div class="activity-item" style="border-left-color:#22c55e"><strong>Core-file apply completed from Workspace Studio</strong><small>BOOTSTRAP + IDENTITY actualizados con rollback point generado · hace 12 min</small></div>
+            </div>
+          </article>
+
+          <article class="card span-6">
+            <div class="card-header">
+              <div>
+                <h3>Conexiones, flows e interconexiones</h3>
+                <p>Debe mostrar relaciones reales entre workspaces, agents, subagents, webhooks, tools y handoffs.</p>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="list">
+                <div class="list-item">
+                  <div>
+                    <strong>agency-core / research-dept / ws-policy-lab</strong>
+                    <small>12 agents activos, 3 subagent chains, 21 handoffs en 24h.</small>
+                    <div class="tag-row"><span class="tag">Flows: 8</span><span class="tag">Webhooks: 3</span><span class="tag">Connections: 14</span></div>
+                  </div>
+                  <div><strong class="good">Connected</strong></div>
+                </div>
+                <div class="list-item">
+                  <div>
+                    <strong>agency-media / content-dept / ws-editorial</strong>
+                    <small>Herramientas externas degradadas; 2 redirects, 1 continue pendiente.</small>
+                    <div class="tag-row"><span class="tag">Flows: 5</span><span class="tag">Webhooks: 1</span><span class="tag">Connections: 9</span></div>
+                  </div>
+                  <div><strong class="warn">Partial</strong></div>
+                </div>
+                <div class="list-item">
+                  <div>
+                    <strong>agency-growth / analytics-dept / ws-forecasting</strong>
+                    <small>Replay store atrasado; 4 traces incompletos y 1 checkpoint faltante.</small>
+                    <div class="tag-row"><span class="tag">Flows: 11</span><span class="tag">Webhooks: 4</span><span class="tag">Connections: 17</span></div>
+                  </div>
+                  <div><strong class="bad">Attention</strong></div>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="card span-4">
+            <div class="card-header">
+              <div>
+                <h3>Qué debe incluir el overview</h3>
+                <p>Resumen funcional del panel desde lógica de producto.</p>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="list">
+                <div class="list-item"><div><strong>Inventario vivo</strong><small>Agencies, departments, workspaces, agents, subagents conectados realmente.</small></div><div>✓</div></div>
+                <div class="list-item"><div><strong>FinOps</strong><small>Costos, tokens, modelos, cache, retries, stuck spend, tool consumption.</small></div><div>✓</div></div>
+                <div class="list-item"><div><strong>Ops</strong><small>Runs, sessions, handoffs, redirects, continues, pauses, errors, drift.</small></div><div>✓</div></div>
+                <div class="list-item"><div><strong>Topology</strong><small>Flows, interconnections, webhooks, versions, diagnostics y salud runtime.</small></div><div>✓</div></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="card span-8">
+            <div class="card-header">
+              <div>
+                <h3>Diagnóstico ejecutivo por dimensión</h3>
+                <p>Vista resumida para saber dónde actuar primero sin abrir submódulos.</p>
+              </div>
+              <div class="legend">
+                <span><i style="background:#22c55e"></i>Healthy</span>
+                <span><i style="background:#f59e0b"></i>Warning</span>
+                <span><i style="background:#ef4444"></i>Error</span>
+                <span><i style="background:#60a5fa"></i>Needs review</span>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="metrics-row" style="grid-template-columns:repeat(4,1fr)">
+                <div class="metric" style="min-height:unset"><div class="title">Topology</div><div class="num">82%</div><div class="sub">Conexiones válidas, 6 edges con soporte parcial.</div></div>
+                <div class="metric" style="min-height:unset"><div class="title">Replay readiness</div><div class="num">74%</div><div class="sub">Faltan checkpoints en 3 workspaces críticos.</div></div>
+                <div class="metric" style="min-height:unset"><div class="title">Observability</div><div class="num">91%</div><div class="sub">Traces completas en la mayoría de runs productivas.</div></div>
+                <div class="metric" style="min-height:unset"><div class="title">Config / runtime drift</div><div class="num">9</div><div class="sub">Nueve workspaces con diferencias detectadas.</div></div>
+              </div>
+            </div>
+          </article>
+        </section>
+      </div>
+    </main>
+
+    <aside class="rightbar">
+      <div class="panel">
+        <div class="title">Filters</div>
+        <div class="inner filters">
+          <div class="select">Agency ▾ All agencies</div>
+          <div class="select">Department ▾ All departments</div>
+          <div class="select">Workspace ▾ High activity only</div>
+          <div class="select">Status ▾ Active + Error + Paused</div>
+          <div class="select">Model ▾ Claude / GPT / Gemini</div>
+          <div class="select">Period ▾ Last 24 hours</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="title">Quick KPIs</div>
+        <div class="inner kpi-stack">
+          <div class="kpi-line"><span>Errored agents</span><strong class="bad">11</strong></div>
+          <div class="kpi-line"><span>Paused workspaces</span><strong class="warn">12</strong></div>
+          <div class="kpi-line"><span>Stuck runs</span><strong class="bad">7</strong></div>
+          <div class="kpi-line"><span>Continue pending</span><strong>5</strong></div>
+          <div class="kpi-line"><span>Redirect actions</span><strong>14</strong></div>
+          <div class="kpi-line"><span>Webhook failures</span><strong class="warn">3</strong></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="title">Saved widgets</div>
+        <div class="inner activity">
+          <div class="activity-item"><strong>Executive ops view</strong><small>Cost, health, top workspaces, diagnostics</small></div>
+          <div class="activity-item"><strong>FinOps view</strong><small>Model cost, token burn, cache, retries, stuck cost</small></div>
+          <div class="activity-item"><strong>Runtime view</strong><small>Sessions, handoffs, topology health, unsupported actions</small></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="title">OpenClaw source contract</div>
+        <div class="inner footer-note">
+          Este mockup asume que el overview consume datos reales de OpenClaw mediante una capa backend de agregación. No debe mostrar datos hardcodeados en producción; cada widget debe leer métricas reales, soportar filtros globales y exponer drill-down hacia Workspace Studio, Agency Topology, Observability y Replay.
+        </div>
+      </div>
+    </aside>
+  </div>
+</body>
+</html>

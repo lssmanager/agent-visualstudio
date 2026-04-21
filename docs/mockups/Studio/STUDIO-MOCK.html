@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Workspace Studio Flowise Mockup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b1020;
+      --bg-soft: #11182d;
+      --surface: #121a31;
+      --surface-2: #18223d;
+      --surface-3: #1f2a4a;
+      --surface-4: #263353;
+      --border: rgba(154, 173, 214, 0.14);
+      --border-strong: rgba(154, 173, 214, 0.26);
+      --text: #e8eefc;
+      --muted: #94a3c5;
+      --faint: #6f7d9d;
+      --primary: #4d7cff;
+      --primary-soft: rgba(77, 124, 255, 0.16);
+      --success: #33c481;
+      --warning: #f6ba45;
+      --danger: #ff6b7a;
+      --shadow: 0 20px 60px rgba(2, 8, 23, 0.42);
+      --radius: 18px;
+      --radius-sm: 12px;
+      --radius-xs: 10px;
+      --nav: 58px;
+      --context: 250px;
+      --right: 290px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; min-height: 100%; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(77, 124, 255, 0.18), transparent 28%),
+        radial-gradient(circle at top right, rgba(51, 196, 129, 0.08), transparent 22%),
+        linear-gradient(180deg, #09101f 0%, #0b1020 100%);
+      color: var(--text);
+    }
+
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: var(--nav) var(--context) 1fr;
+    }
+
+    .rail {
+      background: rgba(8, 13, 26, 0.92);
+      border-right: 1px solid var(--border);
+      padding: 12px 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      backdrop-filter: blur(12px);
+    }
+
+    .rail .logo,
+    .rail .icon {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      color: var(--muted);
+      border: 1px solid transparent;
+      background: transparent;
+    }
+
+    .rail .logo {
+      background: linear-gradient(135deg, #4d7cff, #7c5cff);
+      color: white;
+      font-weight: 800;
+      margin-bottom: 8px;
+      box-shadow: 0 10px 24px rgba(77,124,255,.35);
+    }
+
+    .rail .icon.active {
+      color: white;
+      border-color: rgba(77,124,255,.4);
+      background: linear-gradient(180deg, rgba(77,124,255,.26), rgba(77,124,255,.12));
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.03);
+    }
+
+    .rail .spacer { flex: 1; }
+
+    .context {
+      background: rgba(12, 18, 33, 0.82);
+      border-right: 1px solid var(--border);
+      padding: 22px 16px 18px;
+      backdrop-filter: blur(14px);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .eyebrow {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--faint);
+    }
+
+    .context-header {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .context-title h1 {
+      margin: 0;
+      font-size: 30px;
+      line-height: 1.05;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+    }
+
+    .context-title p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .plus {
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-radius: 12px;
+      background: linear-gradient(180deg, var(--primary), #3b63db);
+      color: white;
+      font-size: 22px;
+      line-height: 1;
+      box-shadow: 0 12px 24px rgba(77,124,255,.25);
+    }
+
+    .search {
+      background: rgba(255,255,255,.03);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px 14px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .workspace-list {
+      flex: 1;
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,.015));
+      border-radius: 20px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
+    }
+
+    .workspace-card {
+      border-radius: 16px;
+      border: 1px solid rgba(77,124,255,.22);
+      background: linear-gradient(180deg, rgba(77,124,255,.14), rgba(77,124,255,.06));
+      padding: 14px 12px;
+    }
+
+    .workspace-card .name {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-weight: 700;
+      font-size: 14px;
+    }
+
+    .workspace-card .meta {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 8px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--success);
+      box-shadow: 0 0 0 4px rgba(51,196,129,.12);
+    }
+
+    .main {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .topbar {
+      height: 72px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 22px;
+      background: rgba(10, 16, 31, 0.78);
+      backdrop-filter: blur(14px);
+    }
+
+    .crumbs {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .crumbs strong {
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .statusbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--warning);
+      font-weight: 600;
+    }
+
+    .ghost-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.02);
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+    }
+
+    .studio-wrap {
+      padding: 18px 18px 20px;
+      min-height: calc(100vh - 72px);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .studio-hero {
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.015));
+      border-radius: 22px;
+      padding: 18px 18px 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .hero-top {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .hero-title {
+      display: flex;
+      gap: 14px;
+      align-items: start;
+    }
+
+    .hero-badge {
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, rgba(77,124,255,.9), rgba(124,92,255,.85));
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      box-shadow: 0 14px 28px rgba(77,124,255,.24);
+    }
+
+    .hero-copy h2 {
+      margin: 0;
+      font-size: 21px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }
+
+    .hero-copy p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.03);
+      color: var(--text);
+      height: 40px;
+      padding: 0 14px;
+      border-radius: 12px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn.primary {
+      background: linear-gradient(180deg, #4d7cff, #3a67f0);
+      border-color: rgba(77,124,255,.65);
+      box-shadow: 0 16px 32px rgba(77,124,255,.26);
+    }
+
+    .btn.soft {
+      background: rgba(77,124,255,.08);
+      border-color: rgba(77,124,255,.22);
+      color: #b6c8ff;
+    }
+
+    .hero-controls {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: 220px 1fr 240px;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .select, .input {
+      height: 42px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.03);
+      color: var(--text);
+      padding: 0 14px;
+      display: flex;
+      align-items: center;
+      font-size: 14px;
+    }
+
+    .hero-hint {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .pill-group {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+
+    .pill {
+      padding: 8px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.04);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .pill.active {
+      color: #d8e2ff;
+      background: rgba(77,124,255,.14);
+      border-color: rgba(77,124,255,.25);
+    }
+
+    .tabs {
+      display: flex;
+      gap: 6px;
+      padding: 4px;
+      border-radius: 14px;
+      background: rgba(255,255,255,.03);
+      border: 1px solid var(--border);
+      width: fit-content;
+    }
+
+    .tab {
+      height: 36px;
+      padding: 0 14px;
+      display: inline-flex;
+      align-items: center;
+      border-radius: 10px;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 13px;
+    }
+
+    .tab.active {
+      background: rgba(77,124,255,.14);
+      color: #dce6ff;
+      box-shadow: inset 0 0 0 1px rgba(77,124,255,.18);
+    }
+
+    .studio-grid {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 250px 1fr var(--right);
+      gap: 14px;
+    }
+
+    .panel {
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.015));
+      border-radius: 22px;
+      min-height: 0;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+
+    .panel-scroll {
+      height: 100%;
+      overflow: auto;
+      padding: 16px;
+    }
+
+    .panel-head {
+      padding: 16px 16px 0;
+    }
+
+    .panel-title {
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--faint);
+      margin-bottom: 8px;
+    }
+
+    .panel-sub {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+      margin-bottom: 12px;
+    }
+
+    .palette-section {
+      margin-top: 16px;
+    }
+
+    .palette-label {
+      font-size: 11px;
+      color: var(--faint);
+      font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    .node {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 12px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.025);
+      margin-bottom: 10px;
+    }
+
+    .node-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      font-size: 14px;
+      color: white;
+    }
+
+    .i-trigger { background: linear-gradient(135deg, #ff9b5a, #ff6f61); }
+    .i-agent { background: linear-gradient(135deg, #7c5cff, #4d7cff); }
+    .i-tool { background: linear-gradient(135deg, #7b8aa6, #5b6d8d); }
+    .i-logic { background: linear-gradient(135deg, #53b7ff, #2f8fff); }
+    .i-end { background: linear-gradient(135deg, #3ddc97, #2ebd7f); }
+
+    .node strong { display: block; font-size: 14px; }
+    .node span { color: var(--muted); font-size: 12px; }
+
+    .canvas {
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      min-height: 0;
+    }
+
+    .canvas-toolbar {
+      padding: 16px 16px 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .toolbar-group {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .mini-btn {
+      height: 34px;
+      padding: 0 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.03);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .mini-btn.active {
+      color: #dbe5ff;
+      background: rgba(77,124,255,.15);
+      border-color: rgba(77,124,255,.24);
+    }
+
+    .canvas-stage {
+      margin: 14px 16px 16px;
+      border-radius: 20px;
+      border: 1px dashed rgba(154,173,214,.16);
+      position: relative;
+      overflow: hidden;
+      background:
+        linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px),
+        radial-gradient(circle at center, rgba(77,124,255,.08), transparent 45%),
+        linear-gradient(180deg, rgba(15, 22, 42, 0.95), rgba(11, 17, 33, 0.98));
+      background-size: 24px 24px, 24px 24px, auto, auto;
+      min-height: 560px;
+    }
+
+    .canvas-node {
+      position: absolute;
+      width: 250px;
+      border-radius: 18px;
+      border: 1px solid rgba(154,173,214,.16);
+      background: linear-gradient(180deg, rgba(24,34,61,.96), rgba(18,26,49,.98));
+      box-shadow: 0 24px 50px rgba(3,8,20,.4);
+      overflow: hidden;
+    }
+
+    .canvas-node .head {
+      padding: 14px 14px 10px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid rgba(154,173,214,.08);
+    }
+
+    .canvas-node .head .meta { min-width: 0; }
+    .canvas-node .head strong { display: block; font-size: 14px; }
+    .canvas-node .head span { display: block; color: var(--muted); font-size: 12px; }
+    .canvas-node .body {
+      padding: 12px 14px 14px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .canvas-node.selected {
+      box-shadow: 0 0 0 1px rgba(77,124,255,.42), 0 24px 50px rgba(3,8,20,.46);
+    }
+
+    .port {
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      background: #0d1324;
+      border: 2px solid #5d84ff;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+
+    .port.left { left: -6px; }
+    .port.right { right: -6px; }
+
+    .edge {
+      position: absolute;
+      border-top: 2px solid rgba(93,132,255,.72);
+      transform-origin: left center;
+      box-shadow: 0 0 14px rgba(77,124,255,.15);
+    }
+
+    .edge-label {
+      position: absolute;
+      padding: 6px 8px;
+      font-size: 11px;
+      color: #d9e4ff;
+      border-radius: 999px;
+      background: rgba(77,124,255,.14);
+      border: 1px solid rgba(77,124,255,.22);
+      backdrop-filter: blur(8px);
+    }
+
+    .snap-note {
+      position: absolute;
+      left: 50%;
+      top: 24px;
+      transform: translateX(-50%);
+      font-size: 12px;
+      color: #c6d4ff;
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(77,124,255,.12);
+      border: 1px solid rgba(77,124,255,.22);
+    }
+
+    .right-stack {
+      display: grid;
+      gap: 14px;
+      grid-template-rows: 1.2fr 1fr .9fr;
+      min-height: 0;
+    }
+
+    .card-block {
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: rgba(255,255,255,.025);
+      overflow: hidden;
+    }
+
+    .card-block .inner-head {
+      padding: 14px 14px 10px;
+      border-bottom: 1px solid rgba(154,173,214,.08);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .card-block .inner-head strong { font-size: 14px; }
+    .card-block .inner-body { padding: 14px; }
+
+    .status-card {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(51,196,129,.16);
+      background: rgba(51,196,129,.08);
+      color: #b5f1d1;
+    }
+
+    .metric-row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .metric {
+      border-radius: 14px;
+      background: rgba(255,255,255,.03);
+      border: 1px solid var(--border);
+      padding: 12px;
+    }
+
+    .metric .label {
+      color: var(--faint);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+    }
+
+    .metric .value {
+      margin-top: 8px;
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+    }
+
+    .metric .sub {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .diff-list, .session-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .diff-item, .session-item {
+      border-radius: 14px;
+      padding: 12px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.03);
+    }
+
+    .diff-item strong, .session-item strong {
+      display: block;
+      font-size: 13px;
+    }
+
+    .diff-item p, .session-item p {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .tag {
+      font-size: 11px;
+      color: #dce6ff;
+      background: rgba(77,124,255,.12);
+      border: 1px solid rgba(77,124,255,.18);
+      padding: 6px 8px;
+      border-radius: 999px;
+      font-weight: 700;
+    }
+
+    @media (max-width: 1380px) {
+      .studio-grid { grid-template-columns: 220px 1fr 270px; }
+      .hero-controls { grid-template-columns: 1fr; }
+      .pill-group { justify-content: start; }
+    }
+
+    @media (max-width: 1180px) {
+      .app { grid-template-columns: 58px 1fr; }
+      .context { display: none; }
+      .studio-grid { grid-template-columns: 1fr; }
+      .right-stack { grid-template-rows: none; }
+    }
+
+    @media (max-width: 860px) {
+      .hero-top, .canvas-toolbar, .topbar { flex-direction: column; align-items: stretch; }
+      .actions { width: 100%; }
+      .actions .btn { flex: 1; justify-content: center; }
+      .tabs { width: 100%; overflow: auto; }
+      .canvas-stage { min-height: 700px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="rail">
+      <div class="logo">H</div>
+      <div class="icon">⌂</div>
+      <div class="icon">☰</div>
+      <div class="icon">⛁</div>
+      <div class="icon active">⚙</div>
+      <div class="icon">⇄</div>
+      <div class="icon">⌬</div>
+      <div class="icon">▷</div>
+      <div class="icon">☷</div>
+      <div class="spacer"></div>
+      <div class="icon">•</div>
+      <div class="icon">⚙</div>
+    </aside>
+
+    <aside class="context">
+      <div class="eyebrow">Context Panel</div>
+      <div class="context-header">
+        <div class="context-title">
+          <h1>Workspace Studio</h1>
+          <p>Chief of Staff · openai/gpt-5.4-mini<br>Build, validate and deploy the operational workspace.</p>
+        </div>
+        <button class="plus">+</button>
+      </div>
+      <div class="search">⌕ Search workspaces, packs, agents...</div>
+      <div class="workspace-list">
+        <div class="workspace-card">
+          <div class="name">Operations Coordinator <span class="dot"></span></div>
+          <div class="meta">Active workspace · coordinator · runtime attached</div>
+        </div>
+        <div class="meta" style="font-size:12px;color:var(--faint);">coordinator</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="topbar">
+        <div class="crumbs">
+          <strong>Chief of Staff</strong>
+          <span>/</span>
+          <span>openai/gpt-5.4-mini</span>
+          <span>/</span>
+          <span>workspace-studio</span>
+        </div>
+        <div class="statusbar">
+          <span>Offline</span>
+          <div class="ghost-icon">↻</div>
+          <div class="ghost-icon">☾</div>
+        </div>
+      </div>
+
+      <div class="studio-wrap">
+        <section class="studio-hero">
+          <div class="hero-top">
+            <div class="hero-title">
+              <div class="hero-badge">✦</div>
+              <div class="hero-copy">
+                <h2>OpenClaw Studio</h2>
+                <p>Authoring · Compile · Validate · Diff · Deploy — builder-grade workspace orchestration with Flowise-style composition UX.</p>
+              </div>
+            </div>
+            <div class="actions">
+              <button class="btn">↻ Refresh</button>
+              <button class="btn soft">◎ Preview Diff</button>
+              <button class="btn primary">⚡ Deploy</button>
+            </div>
+          </div>
+
+          <div class="hero-controls">
+            <div class="select">Agent: Operations Coordinator ▾</div>
+            <div class="hero-hint">Coordinates operational tasks, follow-ups, routing decisions and executive summaries for the chief-of-staff workspace.</div>
+            <div class="pill-group">
+              <div class="pill active">Draft Synced</div>
+              <div class="pill">3 Diffs</div>
+              <div class="pill">Runtime Detached</div>
+            </div>
+          </div>
+        </section>
+
+        <div class="tabs">
+          <div class="tab active">Canvas</div>
+          <div class="tab">Agents</div>
+          <div class="tab">Chat</div>
+          <div class="tab">Diff</div>
+          <div class="tab">Validate</div>
+          <div class="tab">Replay</div>
+        </div>
+
+        <section class="studio-grid">
+          <aside class="panel">
+            <div class="panel-head">
+              <div class="panel-title">Node Catalog</div>
+              <div class="panel-sub">Drag nodes to the canvas. Presets, snapping and subflow duplication should extend from this palette.</div>
+            </div>
+            <div class="panel-scroll">
+              <div class="palette-section">
+                <div class="palette-label">Triggers</div>
+                <div class="node">
+                  <div class="node-icon i-trigger">⚡</div>
+                  <div><strong>Trigger</strong><span>Start a workflow from event or message</span></div>
+                </div>
+              </div>
+              <div class="palette-section">
+                <div class="palette-label">Agents</div>
+                <div class="node">
+                  <div class="node-icon i-agent">🤖</div>
+                  <div><strong>Agent</strong><span>Role-based operational executor</span></div>
+                </div>
+                <div class="node">
+                  <div class="node-icon i-agent">🧭</div>
+                  <div><strong>Supervisor</strong><span>Routes work and coordinates handoffs</span></div>
+                </div>
+              </div>
+              <div class="palette-section">
+                <div class="palette-label">Tools</div>
+                <div class="node">
+                  <div class="node-icon i-tool">🛠</div>
+                  <div><strong>Tool</strong><span>External capability call</span></div>
+                </div>
+                <div class="node">
+                  <div class="node-icon i-tool">📚</div>
+                  <div><strong>Knowledge</strong><span>Workspace memory and context retrieval</span></div>
+                </div>
+              </div>
+              <div class="palette-section">
+                <div class="palette-label">Logic</div>
+                <div class="node">
+                  <div class="node-icon i-logic">◇</div>
+                  <div><strong>Condition</strong><span>Branch execution with traceable evaluation</span></div>
+                </div>
+                <div class="node">
+                  <div class="node-icon i-logic">↪</div>
+                  <div><strong>Redirect</strong><span>Route to another runtime target</span></div>
+                </div>
+              </div>
+              <div class="palette-section">
+                <div class="palette-label">End</div>
+                <div class="node">
+                  <div class="node-icon i-end">✓</div>
+                  <div><strong>Approval</strong><span>Human-in-the-loop confirmation</span></div>
+                </div>
+                <div class="node">
+                  <div class="node-icon i-end">■</div>
+                  <div><strong>End</strong><span>Finalize run and emit completion</span></div>
+                </div>
+              </div>
+            </div>
+          </aside>
+
+          <section class="panel canvas">
+            <div class="canvas-toolbar">
+              <div>
+                <div class="panel-title" style="margin-bottom:6px;">Flow Canvas</div>
+                <div class="panel-sub" style="margin:0;">Visual authoring with validation, presets, JSON import/export and runtime-safe topology actions.</div>
+              </div>
+              <div class="toolbar-group">
+                <button class="mini-btn active">Select</button>
+                <button class="mini-btn">Pan</button>
+                <button class="mini-btn">Snap On</button>
+                <button class="mini-btn">Validate</button>
+                <button class="mini-btn">Duplicate Subflow</button>
+                <button class="mini-btn">Export JSON</button>
+              </div>
+            </div>
+
+            <div class="canvas-stage">
+              <div class="snap-note">Snap guides active · visual validation ready · replay checkpoints supported</div>
+
+              <div class="edge" style="left: 270px; top: 181px; width: 220px;"></div>
+              <div class="edge" style="left: 535px; top: 181px; width: 210px;"></div>
+              <div class="edge" style="left: 535px; top: 391px; width: 210px;"></div>
+              <div class="edge-label" style="left: 382px; top: 156px;">start</div>
+              <div class="edge-label" style="left: 636px; top: 156px;">approved</div>
+              <div class="edge-label" style="left: 636px; top: 368px;">needs review</div>
+
+              <div class="canvas-node" style="left: 40px; top: 120px;">
+                <div class="port right"></div>
+                <div class="head">
+                  <div class="node-icon i-trigger">⚡</div>
+                  <div class="meta">
+                    <strong>Trigger</strong>
+                    <span>Message Entry</span>
+                  </div>
+                </div>
+                <div class="body">Receives direct messages from Workspace, Department or Agency entrypoints.</div>
+              </div>
+
+              <div class="canvas-node selected" style="left: 290px; top: 120px; width: 260px;">
+                <div class="port left"></div>
+                <div class="port right"></div>
+                <div class="head">
+                  <div class="node-icon i-agent">🤖</div>
+                  <div class="meta">
+                    <strong>Operations Coordinator</strong>
+                    <span>Sub-agent Orchestrator</span>
+                  </div>
+                </div>
+                <div class="body">Coordinates operational tasks, delegates work, captures notes and produces executive summaries. Skills: Status Reader, Task Manager, Notes Capture.</div>
+              </div>
+
+              <div class="canvas-node" style="left: 565px; top: 120px; width: 250px;">
+                <div class="port left"></div>
+                <div class="head">
+                  <div class="node-icon i-logic">◇</div>
+                  <div class="meta">
+                    <strong>Condition</strong>
+                    <span>Request Complete?</span>
+                  </div>
+                </div>
+                <div class="body">Evaluates handoff result, trace condition reasoning and branch confidence.</div>
+              </div>
+
+              <div class="canvas-node" style="left: 840px; top: 60px; width: 230px;">
+                <div class="port left"></div>
+                <div class="head">
+                  <div class="node-icon i-end">✓</div>
+                  <div class="meta">
+                    <strong>Approval</strong>
+                    <span>Human Review</span>
+                  </div>
+                </div>
+                <div class="body">Requests confirmation before deployment or external execution.</div>
+              </div>
+
+              <div class="canvas-node" style="left: 840px; top: 270px; width: 230px;">
+                <div class="port left"></div>
+                <div class="head">
+                  <div class="node-icon i-tool">🛠</div>
+                  <div class="meta">
+                    <strong>Tool Call</strong>
+                    <span>Task Sync</span>
+                  </div>
+                </div>
+                <div class="body">Uses external runtime adapter to sync tasks and follow-ups without coupling Studio to one backend.</div>
+              </div>
+            </div>
+          </section>
+
+          <aside class="right-stack">
+            <section class="panel">
+              <div class="panel-head">
+                <div class="panel-title">Properties</div>
+                <div class="panel-sub">Selected node configuration, compiler health and builder-agent output.</div>
+              </div>
+              <div class="panel-scroll" style="padding-top:8px;">
+                <div class="card-block">
+                  <div class="inner-head"><strong>Compiler Diagnostics</strong><span style="color:var(--success);font-size:12px;font-weight:700;">Healthy</span></div>
+                  <div class="inner-body">
+                    <div class="status-card">
+                      <div>✓</div>
+                      <div>
+                        <strong style="display:block;color:#d8ffe8;font-size:13px;">No issues found</strong>
+                        <div style="margin-top:6px;font-size:12px;color:#b5f1d1;">Ports, topology rules and runtime contracts validated for the selected workspace draft.</div>
+                      </div>
+                    </div>
+                    <div class="metric-row">
+                      <div class="metric"><div class="label">Inputs</div><div class="value">3</div><div class="sub">message, files, memory</div></div>
+                      <div class="metric"><div class="label">Outputs</div><div class="value">2</div><div class="sub">summary, task plan</div></div>
+                    </div>
+                    <div class="tag-row">
+                      <div class="tag">Status Reader</div>
+                      <div class="tag">Task Manager</div>
+                      <div class="tag">Notes Capture</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div class="panel-title">Deploy Diff</div>
+                <div class="panel-sub">Preview generated core-file diffs before apply or rollback.</div>
+              </div>
+              <div class="panel-scroll" style="padding-top:8px;">
+                <div class="diff-list">
+                  <div class="diff-item">
+                    <strong>AGENTS.md</strong>
+                    <p>Updates coordinator identity, mission, operational scope and expected handoff semantics.</p>
+                  </div>
+                  <div class="diff-item">
+                    <strong>TOOLS</strong>
+                    <p>Adds task sync integration and scopes allowed tool calls for runtime-safe execution.</p>
+                  </div>
+                  <div class="diff-item">
+                    <strong>MEMORY</strong>
+                    <p>Extends workspace memory profile with executive summary persistence and follow-up notes.</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div class="panel-title">Runtime Sessions</div>
+                <div class="panel-sub">Observability-ready status and recent execution context.</div>
+              </div>
+              <div class="panel-scroll" style="padding-top:8px;">
+                <div class="session-list">
+                  <div class="session-item">
+                    <strong>No active sessions</strong>
+                    <p>Run or replay this flow to populate runtime health, latency, handoffs and state transitions.</p>
+                  </div>
+                  <div class="session-item">
+                    <strong>Replay-ready metadata</strong>
+                    <p>Checkpoints, condition evaluations and topology events will appear here once traces exist.</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </aside>
+        </section>
+      </div>
+    </main>
+  </div>
+</body>
+</html>
