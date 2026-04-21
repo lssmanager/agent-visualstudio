@@ -150,6 +150,19 @@ export default function WorkspaceStudioPage() {
     [runtimeOk, diagnostics.length, sessions.length, selectedAgent?.name, selectedAgent?.model],
   );
 
+  if (!scope.agencyId) {
+    return (
+      <StudioPageShell>
+        <StudioSectionCard title="Workspace Studio" description="No agency selected">
+          <StudioEmptyState
+            title="No agency selected"
+            description="Create or connect an agency to open Workspace Studio."
+          />
+        </StudioSectionCard>
+      </StudioPageShell>
+    );
+  }
+
   if (!workspaceId) {
     return (
       <StudioPageShell>
@@ -172,7 +185,7 @@ export default function WorkspaceStudioPage() {
             description="Create your first agent so the builder can generate editable graph surfaces."
             actionLabel="Go to Agents"
             onAction={() => {
-              navigate('/agents');
+              navigate('/entity-editor');
             }}
           />
         </StudioSectionCard>
@@ -487,7 +500,7 @@ export default function WorkspaceStudioPage() {
           </div>
 
           <div style={{ marginTop: 12 }}>
-            <button type="button" style={toolButton()} onClick={() => navigate('/agency-topology')}>
+            <button type="button" style={toolButton()} onClick={() => navigate('/agency-builder?tab=topology')}>
               Open Agency Topology
             </button>
           </div>

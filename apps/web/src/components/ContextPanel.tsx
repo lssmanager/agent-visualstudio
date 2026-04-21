@@ -21,16 +21,16 @@ const LEVEL_COLOR: Record<HierarchyLevel, string> = {
 };
 
 function routeForNode(node: HierarchyNode): string {
-  if (node.level === 'agency') return '/agency-builder';
-  if (node.level === 'department') return '/agency-topology';
   if (node.level === 'workspace') return '/workspace-studio';
-  return `/agents/${node.id}`;
+  if (node.level === 'agent' || node.level === 'subagent') return '/entity-editor';
+  return '/agency-builder?tab=overview';
 }
 
 export function ContextPanel({ onNavigate }: { onNavigate?: () => void }) {
   const navigate = useNavigate();
   const {
     tree,
+    agencies,
     selectedKey,
     selectedNode,
     selectedLineage,
@@ -138,6 +138,36 @@ export function ContextPanel({ onNavigate }: { onNavigate?: () => void }) {
         </div>
 
         <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
+          <select
+            value={selectedLineage[0]?.id ?? ''}
+            onChange={(event) => {
+              const nextAgency = agencies.find((agency) => agency.id === event.target.value);
+              if (!nextAgency) return;
+              selectNode(`agency:${nextAgency.id}`);
+              go('/agency-builder?tab=overview');
+            }}
+            style={{
+              width: '100%',
+              padding: '9px 11px',
+              fontSize: 12,
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--shell-chip-border)',
+              background: 'var(--shell-chip-bg)',
+              color: 'var(--text-primary)',
+              outline: 'none',
+            }}
+          >
+            {agencies.length === 0 ? (
+              <option value="">No agency selected</option>
+            ) : (
+              agencies.map((agency) => (
+                <option key={agency.id} value={agency.id}>
+                  {agency.name}
+                </option>
+              ))
+            )}
+          </select>
+
           <div style={{ position: 'relative' }}>
             <Search
               size={14}

@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 
 import { getCanonicalStudioState } from './api';
 import { useStudioState } from './StudioStateContext';
-import type { CanonicalStudioStateResponse, StudioStateResponse } from './types';
+import type { AgencyBuilderTab, CanonicalStudioStateResponse, StudioStateResponse, SurfaceId } from './types';
 
 export type HierarchyLevel = 'agency' | 'department' | 'workspace' | 'agent' | 'subagent';
 
@@ -32,11 +32,16 @@ interface HierarchyTree {
 interface HierarchyContextValue {
   tree: HierarchyTree;
   canonical: CanonicalStudioStateResponse | null;
+  agencies: Array<{ id: string; name: string }>;
   loading: boolean;
   selectedKey: string | null;
   selectedNode: HierarchyNode | null;
   selectedLineage: HierarchyNode[];
   scope: HierarchyScope;
+  selectedSurface: SurfaceId;
+  selectedBuilderTab: AgencyBuilderTab;
+  setSurface: (surface: SurfaceId) => void;
+  setBuilderTab: (tab: AgencyBuilderTab) => void;
   expandedKeys: string[];
   isExpanded: (key: string) => boolean;
   toggleExpanded: (key: string) => void;
@@ -47,6 +52,8 @@ interface HierarchyContextValue {
 
 const SELECTED_STORAGE_KEY = 'studio-hierarchy-selected';
 const EXPANDED_STORAGE_KEY = 'studio-hierarchy-expanded';
+const SELECTED_SURFACE_KEY = 'studio-selected-surface';
+const SELECTED_BUILDER_TAB_KEY = 'studio-selected-builder-tab';
 
 const HierarchyContext = createContext<HierarchyContextValue | null>(null);
 
@@ -103,6 +110,10 @@ function sortChildren(nodes: Record<string, HierarchyNode>) {
 }
 
 function buildHierarchyTree(state: StudioStateResponse, canonical: CanonicalStudioStateResponse | null): HierarchyTree {
+  if (!canonical?.agency && !state.workspace) {
+    return { nodes: {}, rootKey: null };
+  }
+
   const nodes: Record<string, HierarchyNode> = {};
 
   const agencyId = canonical?.agency.id ?? state.workspace?.id ?? 'agency';
@@ -311,6 +322,36 @@ export function HierarchyProvider({ children }: { children: ReactNode }) {
 
   const [selectedKey, setSelectedKey] = useState<string | null>(() => readStorageString(SELECTED_STORAGE_KEY));
   const [expandedKeys, setExpandedKeys] = useState<string[]>(() => readStorageStringArray(EXPANDED_STORAGE_KEY));
+  const [selectedSurface, setSelectedSurface] = useState<SurfaceId>(() => {
+    const value = readStorageString(SELECTED_SURFACE_KEY);
+    if (
+      value === 'agency-builder' ||
+      value === 'workspace-studio' ||
+      value === 'entity-editor' ||
+      value === 'profiles' ||
+      value === 'runs' ||
+      value === 'sessions' ||
+      value === 'settings'
+    ) {
+      return value;
+    }
+    return 'agency-builder';
+  });
+  const [selectedBuilderTab, setSelectedBuilderTab] = useState<AgencyBuilderTab>(() => {
+    const value = readStorageString(SELECTED_BUILDER_TAB_KEY);
+    if (
+      value === 'overview' ||
+      value === 'topology' ||
+      value === 'structure' ||
+      value === 'routing' ||
+      value === 'hooks' ||
+      value === 'versions' ||
+      value === 'operations'
+    ) {
+      return value;
+    }
+    return 'overview';
+  });
 
   const tree = useMemo(() => buildHierarchyTree(state, canonical), [state, canonical]);
 
@@ -329,18 +370,6 @@ export function HierarchyProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refreshHierarchy();
   }, [state.workspace?.id]);
-
-  useEffect(() => {
-    if (!selectedKey || !tree.nodes[selectedKey]) {
-      const fallback =
-        readStorageString(SELECTED_STORAGE_KEY) && tree.nodes[readStorageString(SELECTED_STORAGE_KEY) as string]
-          ? (readStorageString(SELECTED_STORAGE_KEY) as string)
-          : state.workspace
-            ? nodeKey('workspace', state.workspace.id)
-            : tree.rootKey;
-      setSelectedKey(fallback ?? null);
-    }
-  }, [selectedKey, tree, state.workspace]);
 
   useEffect(() => {
     if (expandedKeys.length === 0) {
@@ -364,18 +393,62 @@ export function HierarchyProvider({ children }: { children: ReactNode }) {
     writeStorage(EXPANDED_STORAGE_KEY, JSON.stringify(expandedKeys));
   }, [expandedKeys]);
 
+  useEffect(() => {
+    writeStorage(SELECTED_SURFACE_KEY, selectedSurface);
+  }, [selectedSurface]);
+
+  useEffect(() => {
+    writeStorage(SELECTED_BUILDER_TAB_KEY, selectedBuilderTab);
+  }, [selectedBuilderTab]);
+
   const selectedNode = selectedKey ? tree.nodes[selectedKey] ?? null : null;
   const selectedLineage = useMemo(() => resolveLineage(selectedKey, tree.nodes), [selectedKey, tree.nodes]);
   const scope = useMemo(() => resolveScope(selectedKey, tree.nodes), [selectedKey, tree.nodes]);
+  const agencies = useMemo(() => {
+    if (canonical?.agency) {
+      return [{ id: canonical.agency.id, name: canonical.agency.name }];
+    }
+    if (!tree.rootKey) return [];
+    const root = tree.nodes[tree.rootKey];
+    if (!root) return [];
+    return [{ id: root.id, name: root.label }];
+  }, [canonical, tree.nodes, tree.rootKey]);
+
+  useEffect(() => {
+    if (!tree.rootKey) {
+      setSelectedKey(null);
+      return;
+    }
+
+    const rootNode = tree.nodes[tree.rootKey];
+    if (!rootNode) {
+      setSelectedKey(null);
+      return;
+    }
+
+    if (!selectedKey) {
+      setSelectedKey(tree.rootKey);
+      return;
+    }
+
+    if (!tree.nodes[selectedKey]) {
+      setSelectedKey(tree.rootKey);
+    }
+  }, [selectedKey, tree.nodes, tree.rootKey]);
 
   const value: HierarchyContextValue = {
     tree,
     canonical,
+    agencies,
     loading,
     selectedKey,
     selectedNode,
     selectedLineage,
     scope,
+    selectedSurface,
+    selectedBuilderTab,
+    setSurface: (surface: SurfaceId) => setSelectedSurface(surface),
+    setBuilderTab: (tab: AgencyBuilderTab) => setSelectedBuilderTab(tab),
     expandedKeys,
     isExpanded: (key: string) => expandedKeys.includes(key),
     toggleExpanded: (key: string) => {

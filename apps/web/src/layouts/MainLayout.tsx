@@ -4,6 +4,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import { NavRail } from '../components/NavRail';
 import { ContextPanel } from '../components/ContextPanel';
 import { Header } from '../components/Header';
+import { useHierarchy } from '../lib/HierarchyContext';
 
 function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(() =>
@@ -23,16 +24,27 @@ function useMediaQuery(query: string): boolean {
 export function MainLayout() {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { setSurface } = useHierarchy();
 
   const isDesktop = useMediaQuery('(min-width: 1120px)');
   const isMobile = !useMediaQuery('(min-width: 769px)');
   const showContext = isDesktop;
-  const isStudioSurface = ['/workspace-studio', '/agency-builder', '/agency-topology'].some((route) =>
+  const isStudioSurface = ['/workspace-studio', '/agency-builder', '/entity-editor', '/runs', '/sessions', '/settings'].some((route) =>
     location.pathname.startsWith(route),
   );
 
   const contentColumn = isMobile ? '1' : showContext ? '3' : '2';
   const mainPadding = isStudioSurface ? '14px 14px 18px' : '20px 22px 28px';
+
+  useEffect(() => {
+    if (location.pathname.startsWith('/agency-builder')) setSurface('agency-builder');
+    else if (location.pathname.startsWith('/workspace-studio')) setSurface('workspace-studio');
+    else if (location.pathname.startsWith('/entity-editor')) setSurface('entity-editor');
+    else if (location.pathname.startsWith('/profiles')) setSurface('profiles');
+    else if (location.pathname.startsWith('/runs')) setSurface('runs');
+    else if (location.pathname.startsWith('/sessions')) setSurface('sessions');
+    else if (location.pathname.startsWith('/settings')) setSurface('settings');
+  }, [location.pathname, setSurface]);
 
   return (
     <div

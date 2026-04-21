@@ -1,40 +1,23 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  AlertCircle,
-  BarChart3,
   BookOpen,
   Building2,
   Cpu,
-  GitBranch,
-  Landmark,
-  LayoutDashboard,
   MessageSquare,
-  Network,
-  Package,
   Play,
   Settings,
-  Terminal,
-  Users,
-  Webhook,
+  SquarePen,
 } from 'lucide-react';
 
 import { useStudioState } from '../lib/StudioStateContext';
+import { useHierarchy } from '../lib/HierarchyContext';
 
 const NAV = [
-  { label: 'Overview', path: '/', Icon: LayoutDashboard },
   { label: 'Agency Builder', path: '/agency-builder', Icon: Building2 },
   { label: 'Workspace Studio', path: '/workspace-studio', Icon: Cpu },
-  { label: 'Agency Topology', path: '/agency-topology', Icon: Network },
-  { label: 'Workspaces', path: '/workspaces', Icon: Package },
-  { label: 'Agents', path: '/agents', Icon: Users },
+  { label: 'Entity Editor', path: '/entity-editor', Icon: SquarePen },
   { label: 'Profiles', path: '/profiles', Icon: BookOpen },
   { label: 'Runs', path: '/runs', Icon: Play },
-  { label: 'Routing', path: '/routing', Icon: Landmark },
-  { label: 'Hooks', path: '/hooks', Icon: Webhook },
-  { label: 'Versions', path: '/versions', Icon: GitBranch },
-  { label: 'Commands', path: '/commands', Icon: Terminal },
-  { label: 'Operations', path: '/operations', Icon: BarChart3 },
-  { label: 'Diagnostics', path: '/diagnostics', Icon: AlertCircle },
   { label: 'Sessions', path: '/sessions', Icon: MessageSquare },
 ] as const;
 
@@ -42,9 +25,17 @@ export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { state } = useStudioState();
+  const { setSurface } = useHierarchy();
   const runtimeOk = state.runtime?.health?.ok ?? false;
 
   function go(path: string) {
+    if (path.startsWith('/agency-builder')) setSurface('agency-builder');
+    if (path.startsWith('/workspace-studio')) setSurface('workspace-studio');
+    if (path.startsWith('/entity-editor')) setSurface('entity-editor');
+    if (path.startsWith('/profiles')) setSurface('profiles');
+    if (path.startsWith('/runs')) setSurface('runs');
+    if (path.startsWith('/sessions')) setSurface('sessions');
+    if (path.startsWith('/settings')) setSurface('settings');
     navigate(path);
     onNavigate?.();
   }
@@ -65,7 +56,7 @@ export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
       }}
     >
       <button
-        onClick={() => go('/')}
+        onClick={() => go('/agency-builder?tab=overview')}
         style={{
           width: 40,
           height: 40,
@@ -90,7 +81,7 @@ export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
 
       <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, width: '100%' }}>
         {NAV.map(({ label, path, Icon }) => {
-          const isActive = path === '/' ? location.pathname === '/' : location.pathname.startsWith(path);
+          const isActive = location.pathname.startsWith(path);
           return (
             <button
               key={path}

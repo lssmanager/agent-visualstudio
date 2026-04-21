@@ -11,23 +11,14 @@ import { usePreferences } from './lib/usePreferences';
 import { MainLayout } from './layouts/MainLayout';
 import { LoadingState } from './components/ui/LoadingState';
 import { OnboardingDrawer } from './features/onboarding/components/OnboardingDrawer';
-import OverviewPage from './features/overview/pages/OverviewPage';
+import NotFoundPage from './features/overview/pages/NotFoundPage';
 import AgencyBuilderPage from './features/studio/pages/AgencyBuilderPage';
-import AgencyTopologyPage from './features/studio/pages/AgencyTopologyPage';
 import WorkspaceStudioPage from './features/studio/pages/WorkspaceStudioPage';
-import WorkspacesPage from './features/workspaces/pages/WorkspacesPage';
-import AgentListPage from './features/agents/pages/AgentListPage';
-import AgentEditorPage from './features/agents/pages/AgentEditorPage';
+import EntityEditorPage from './features/agents/pages/EntityEditorPage';
 import ProfilesPage from './features/profiles/pages/ProfilesPage';
-import DiagnosticsPage from './features/diagnostics/pages/DiagnosticsPage';
 import SessionsPage from './features/sessions/pages/SessionsPage';
-import RoutingPage from './features/routing/pages/RoutingPage';
 import RunsPage from './features/runs/pages/RunsPage';
-import HooksPage from './features/hooks/pages/HooksPage';
-import VersionsPage from './features/versions/pages/VersionsPage';
 import SettingsPage from './features/settings/pages/SettingsPage';
-import { CommandsPage } from './features/commands/pages/CommandsPage';
-import OperationsPage from './features/operations/pages/OperationsPage';
 import { AlertTriangle } from 'lucide-react';
 
 export function App() {
@@ -172,26 +163,25 @@ export function App() {
 
               <Routes>
                 <Route element={<MainLayout />}>
-                  <Route path="/"            element={<OverviewPage />} />
+                  <Route path="/"            element={<Navigate to="/agency-builder?tab=overview" replace />} />
                   <Route path="/agency-builder" element={<AgencyBuilderPage />} />
                   <Route path="/workspace-studio" element={<WorkspaceStudioPage />} />
-                  <Route path="/agency-topology" element={<AgencyTopologyPage />} />
-                  <Route path="/studio"      element={<Navigate to="/workspace-studio" replace />} />
-                  <Route path="/workspaces"  element={<WorkspacesPage />} />
-                  <Route path="/agents/new"  element={<AgentEditorPage />} />
-                  <Route path="/agents/:id" element={<AgentEditorPage />} />
-                  <Route path="/agents"      element={<AgentListPage />} />
+                  <Route path="/entity-editor" element={<EntityEditorPage />} />
                   <Route path="/profiles"    element={<ProfilesPage />} />
-                  <Route path="/diagnostics" element={<DiagnosticsPage />} />
                   <Route path="/sessions"    element={<SessionsPage />} />
-                  <Route path="/routing"     element={<RoutingPage />} />
                   <Route path="/runs"        element={<RunsPage />} />
-                  <Route path="/hooks"       element={<HooksPage />} />
-                  <Route path="/versions"    element={<VersionsPage />} />
                   <Route path="/settings"    element={<SettingsPage />} />
-                  <Route path="/commands"    element={<CommandsPage />} />
-                  <Route path="/operations"  element={<OperationsPage />} />
-                  <Route path="*"            element={<Navigate to="/" replace />} />
+
+                  <Route path="/agency-topology" element={<Navigate to="/agency-builder?tab=topology" replace />} />
+                  <Route path="/workspaces" element={<Navigate to="/agency-builder?tab=structure" replace />} />
+                  <Route path="/routing" element={<Navigate to="/agency-builder?tab=routing" replace />} />
+                  <Route path="/hooks" element={<Navigate to="/agency-builder?tab=hooks" replace />} />
+                  <Route path="/versions" element={<Navigate to="/agency-builder?tab=versions" replace />} />
+                  <Route path="/operations" element={<Navigate to="/agency-builder?tab=operations" replace />} />
+                  <Route path="/diagnostics" element={<Navigate to="/settings?tab=diagnostics" replace />} />
+                  <Route path="/commands" element={<Navigate to="/settings?tab=automations" replace />} />
+
+                  <Route path="*"            element={<NotFoundPage />} />
                 </Route>
               </Routes>
             </BrowserRouter>

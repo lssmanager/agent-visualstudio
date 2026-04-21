@@ -382,3 +382,31 @@ export interface ReplayMetadataResponse {
     replayType?: string;
   };
 }
+
+export type AgencyBuilderTab =
+  | 'overview'
+  | 'topology'
+  | 'structure'
+  | 'routing'
+  | 'hooks'
+  | 'versions'
+  | 'operations';
+
+export type SurfaceId =
+  | 'agency-builder'
+  | 'workspace-studio'
+  | 'entity-editor'
+  | 'profiles'
+  | 'runs'
+  | 'sessions'
+  | 'settings';
+
+export interface SelectionState {
+  selectedAgencyId: string | null;
+  selectedDepartmentId: string | null;
+  selectedWorkspaceId: string | null;
+  selectedAgentId: string | null;
+  selectedSubagentId: string | null;
+  selectedSurface: SurfaceId;
+  selectedBuilderTab: AgencyBuilderTab;
+}
