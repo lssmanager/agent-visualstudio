@@ -1,4 +1,5 @@
 import type {
+  PolicySpec,
   CanonicalNodeLevel,
   ChannelBinding,
   ConnectionSpec,
@@ -160,6 +161,29 @@ export interface DashboardOperationsPendingActionsDto {
   lineage: LineageItemDto[];
   pendingActions: DashboardOperationsDto['pendingActions'];
   approvalQueue: DashboardOperationsDto['approvalQueue'];
+}
+
+export interface DashboardOperationsBudgetsDto {
+  scope: ScopeDto;
+  lineage: LineageItemDto[];
+  budgets: Array<{
+    id: string;
+    name: string;
+    scope: 'workspace' | 'agent' | 'model';
+    targetId?: string;
+    limitUsd: number;
+    periodDays: number;
+    currentUsageUsd: number;
+    enabled: boolean;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+}
+
+export interface DashboardOperationsPoliciesDto {
+  scope: ScopeDto;
+  lineage: LineageItemDto[];
+  policies: PolicySpec[];
 }
 
 export interface DashboardRunsDto {

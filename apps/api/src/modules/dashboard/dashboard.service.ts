@@ -1,6 +1,8 @@
 import type { CanonicalStudioState, TopologyRuntimeAction } from '../../../../../packages/core-types/src';
 
 import { HooksService } from '../hooks/hooks.service';
+import { BudgetsService } from '../budgets/budgets.service';
+import { PoliciesService } from '../policies/policies.service';
 import { RoutingService } from '../routing/routing.service';
 import { RunsService } from '../runs/runs.service';
 import { StudioService } from '../studio/studio.service';
@@ -11,6 +13,8 @@ import type {
   DashboardInspectorDto,
   DashboardOperationsDto,
   DashboardOperationsPendingActionsDto,
+  DashboardOperationsBudgetsDto,
+  DashboardOperationsPoliciesDto,
   DashboardOperationsRecentRunsDto,
   DashboardOperationsRuntimeStateDto,
   DashboardOverviewDto,
@@ -26,6 +30,8 @@ export class DashboardService {
   private readonly scopeResolver = new DashboardScopeResolver();
   private readonly runsService = new RunsService();
   private readonly hooksService = new HooksService();
+  private readonly budgetsService = new BudgetsService();
+  private readonly policiesService = new PoliciesService();
   private readonly routingService = new RoutingService();
   private readonly versionsService = new VersionsService();
   private readonly profileService = new DashboardProfileService();
@@ -284,6 +290,26 @@ export class DashboardService {
       lineage: operations.lineage,
       pendingActions: operations.pendingActions,
       approvalQueue: operations.approvalQueue,
+    };
+  }
+
+  async getOperationsBudgets(input: { level?: string; id?: string }): Promise<DashboardOperationsBudgetsDto> {
+    const canonical = await this.studioService.getCanonicalState();
+    const resolved = this.scopeResolver.resolve(canonical, input);
+    return {
+      scope: resolved.scope,
+      lineage: resolved.lineage,
+      budgets: this.budgetsService.findAll(),
+    };
+  }
+
+  async getOperationsPolicies(input: { level?: string; id?: string }): Promise<DashboardOperationsPoliciesDto> {
+    const canonical = await this.studioService.getCanonicalState();
+    const resolved = this.scopeResolver.resolve(canonical, input);
+    return {
+      scope: resolved.scope,
+      lineage: resolved.lineage,
+      policies: this.policiesService.findAll(),
     };
   }
 

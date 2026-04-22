@@ -49,6 +49,23 @@ export function registerDashboardRoutes(router: Router) {
     res.json(await service.getOperationsPendingActions(parseScope(req as any)));
   });
 
+  router.get('/dashboard/operations/budgets', async (req, res) => {
+    res.json(await service.getOperationsBudgets(parseScope(req as any)));
+  });
+
+  router.get('/dashboard/operations/policies', async (req, res) => {
+    res.json(await service.getOperationsPolicies(parseScope(req as any)));
+  });
+
+  // Operations aliases for governance surfaces
+  router.get('/operations/budgets', async (req, res) => {
+    res.json(await service.getOperationsBudgets(parseScope(req as any)));
+  });
+
+  router.get('/operations/policies', async (req, res) => {
+    res.json(await service.getOperationsPolicies(parseScope(req as any)));
+  });
+
   router.get('/dashboard/runs', async (req, res) => {
     const rawLimit = Number(req.query.limit);
     const limit = Number.isFinite(rawLimit) ? rawLimit : undefined;
