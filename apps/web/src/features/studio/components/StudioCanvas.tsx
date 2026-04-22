@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Layers3, RadioTower, SquareMousePointer } from 'lucide-react';
+import { CheckCircle2, Layers3, RadioTower } from 'lucide-react';
+
+function InlineMouseIcon({ size = 14, style }: { size?: number; style?: React.CSSProperties | undefined }) {
+  return <span style={{ fontSize: size, display: 'inline-block', lineHeight: 1, ...style }}>🖱️</span>;
+}
 
 import { saveFlow, validateFlow } from '../../../lib/api';
 import type { AgentSpec, FlowNode, FlowSpec, SkillSpec } from '../../../lib/types';
@@ -160,7 +164,7 @@ export function StudioCanvas({
               ? `${String(selectedNode.type)} selected. Inspector pinned to this node.`
               : 'Select a node to inspect bindings, runtime state, and diff impact.'
           }
-          icon={selectedNode ? SquareMousePointer : RadioTower}
+          icon={selectedNode ? InlineMouseIcon : RadioTower}
           emphasis={Boolean(selectedNode)}
         />
       </div>
@@ -248,7 +252,7 @@ function CanvasStatusCard({
 }: {
   title: string;
   description: string;
-  icon: typeof Layers3;
+  icon: any;
   emphasis?: boolean;
 }) {
   return (

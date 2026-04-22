@@ -7,7 +7,6 @@ import {
   GitCompare,
   Lock,
   RadioTower,
-  SquareMousePointer,
 } from 'lucide-react';
 
 import type { AgentSpec, DeployPreview, FlowNode, SkillSpec } from '../../../lib/types';
@@ -115,9 +114,9 @@ function SelectionEmptyState({
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <div style={emptyStateStyle}>
-        <div style={emptyStateIconStyle}>
-          <SquareMousePointer size={18} />
-        </div>
+          <div style={emptyStateIconStyle}>
+            <span style={{ fontSize: 18 }}>🖱️</span>
+          </div>
         <div>
           <div style={{ fontSize: 13, fontWeight: 900, color: 'var(--text-primary)' }}>No node selected</div>
           <div style={{ marginTop: 4, fontSize: 12, lineHeight: 1.45, color: 'var(--text-muted)' }}>
@@ -341,7 +340,7 @@ export function PropertiesPanel({
 
     return (
       <div style={contentStackStyle}>
-        <InspectorBlock title="Node Identity" icon={<SquareMousePointer size={13} style={{ color: 'var(--color-primary)' }} />}>
+        <InspectorBlock title="Node Identity" icon={<span style={{ fontSize: 13, color: 'var(--color-primary)' }}>🖱️</span>}>
           <MetricRow label="Name" value={selectedNodeLabel ?? selectedNode.id} />
           <MetricRow label="Type" value={String(selectedNode.type)} />
           <MetricRow label="Node ID" value={<code style={monoTextStyle}>{selectedNode.id}</code>} />
