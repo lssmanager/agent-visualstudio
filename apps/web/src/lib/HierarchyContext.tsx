@@ -349,6 +349,7 @@ export function HierarchyProvider({ children }: { children: ReactNode }) {
       value === 'overview' ||
       value === 'connections' ||
       value === 'sessions' ||
+      value === 'runs' ||
       value === 'profile' ||
       value === 'settings' ||
       value === 'topology' ||

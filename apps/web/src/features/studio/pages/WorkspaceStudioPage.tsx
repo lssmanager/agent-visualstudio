@@ -7,6 +7,10 @@ import {
   GitBranch,
   LayoutGrid,
   MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   RefreshCw,
   Rocket,
   Sparkles,
@@ -39,6 +43,8 @@ import {
 import { buildStudioHref } from '../../../lib/studioRouting';
 
 const STUDIO_AGENT_STORAGE_KEY = 'studio-active-agent-id';
+const STUDIO_LIBRARY_COLLAPSED_KEY = 'studio-library-collapsed';
+const STUDIO_INSPECTOR_COLLAPSED_KEY = 'studio-inspector-collapsed';
 
 export default function WorkspaceStudioPage() {
   const { state, refresh } = useStudioState();
@@ -50,6 +56,13 @@ export default function WorkspaceStudioPage() {
   const [preview, setPreview] = useState<DeployPreview | null>(null);
   const [builderOutput, setBuilderOutput] = useState<BuilderAgentFunctionOutput | null>(null);
   const [builderBusy, setBuilderBusy] = useState(false);
+
+  const [libraryCollapsed, setLibraryCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem(STUDIO_LIBRARY_COLLAPSED_KEY) === 'true'; } catch { return false; }
+  });
+  const [inspectorCollapsed, setInspectorCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem(STUDIO_INSPECTOR_COLLAPSED_KEY) === 'true'; } catch { return false; }
+  });
   const [builderModalOpen, setBuilderModalOpen] = useState(false);
   const [diffModalOpen, setDiffModalOpen] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -89,6 +102,24 @@ export default function WorkspaceStudioPage() {
       // ignore storage failures
     }
   }, [agentId]);
+
+  useEffect(() => {
+    try { localStorage.setItem(STUDIO_LIBRARY_COLLAPSED_KEY, String(libraryCollapsed)); } catch { /* ignore */ }
+  }, [libraryCollapsed]);
+
+  useEffect(() => {
+    try { localStorage.setItem(STUDIO_INSPECTOR_COLLAPSED_KEY, String(inspectorCollapsed)); } catch { /* ignore */ }
+  }, [inspectorCollapsed]);
+
+  // Keyboard shortcuts: Alt+[ = toggle library, Alt+] = toggle inspector
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.altKey && e.key === '[') { e.preventDefault(); setLibraryCollapsed((v) => !v); }
+      if (e.altKey && e.key === ']') { e.preventDefault(); setInspectorCollapsed((v) => !v); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   useEffect(() => {
     setSelectedTopologyAgentId((current) => current ?? state.agents[0]?.id ?? null);
@@ -387,14 +418,38 @@ export default function WorkspaceStudioPage() {
             background: 'var(--shell-panel-bg)',
             overflow: 'hidden',
             display: 'grid',
-            gridTemplateColumns: '280px minmax(0, 1fr) 340px',
+            gridTemplateColumns: `${libraryCollapsed ? '40px' : '280px'} minmax(0, 1fr) ${inspectorCollapsed ? '40px' : '340px'}`,
             minHeight: 720,
+            transition: 'grid-template-columns 0.18s ease',
           }}
         >
-          <div style={{ borderRight: '1px solid var(--shell-panel-border)', background: 'var(--shell-panel-bg)' }}>
-            <ComponentLibrary />
+          {/* Library panel */}
+          <div style={{ borderRight: '1px solid var(--shell-panel-border)', background: 'var(--shell-panel-bg)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '8px 6px', display: 'flex', justifyContent: libraryCollapsed ? 'center' : 'flex-end', flexShrink: 0, borderBottom: '1px solid var(--shell-panel-border)' }}>
+              <button
+                type="button"
+                onClick={() => setLibraryCollapsed((v) => !v)}
+                title={libraryCollapsed ? 'Expand library (Alt+[)' : 'Collapse library (Alt+[)'}
+                aria-label={libraryCollapsed ? 'Expand library panel' : 'Collapse library panel'}
+                style={{
+                  width: 26,
+                  height: 26,
+                  border: '1px solid var(--border-primary)',
+                  borderRadius: 6,
+                  background: 'transparent',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                  display: 'grid',
+                  placeItems: 'center',
+                }}
+              >
+                {libraryCollapsed ? <PanelLeftOpen size={13} /> : <PanelLeftClose size={13} />}
+              </button>
+            </div>
+            {!libraryCollapsed && <ComponentLibrary />}
           </div>
 
+          {/* Canvas */}
           <div style={{ minHeight: 0, position: 'relative', background: 'var(--canvas-surface-bg)' }}>
             <div style={{ position: 'absolute', inset: 10 }}>
               <CanvasGraphContainer minHeight={680}>
@@ -461,17 +516,41 @@ export default function WorkspaceStudioPage() {
             </div>
           </div>
 
-          <div style={{ borderLeft: '1px solid var(--shell-panel-border)', background: 'var(--shell-panel-bg)' }}>
-            <PropertiesPanel
-              diagnostics={diagnostics}
-              deployPreview={preview}
-              sessions={sessions}
-              selectedNodeId={selectedNodeId}
-              selectedNode={selectedNode}
-              agents={state.agents}
-              skills={state.skills}
-              runtimeOk={runtimeOk}
-            />
+          {/* Inspector / Properties panel */}
+          <div style={{ borderLeft: '1px solid var(--shell-panel-border)', background: 'var(--shell-panel-bg)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '8px 6px', display: 'flex', justifyContent: inspectorCollapsed ? 'center' : 'flex-start', flexShrink: 0, borderBottom: '1px solid var(--shell-panel-border)' }}>
+              <button
+                type="button"
+                onClick={() => setInspectorCollapsed((v) => !v)}
+                title={inspectorCollapsed ? 'Expand inspector (Alt+])' : 'Collapse inspector (Alt+])'}
+                aria-label={inspectorCollapsed ? 'Expand inspector panel' : 'Collapse inspector panel'}
+                style={{
+                  width: 26,
+                  height: 26,
+                  border: '1px solid var(--border-primary)',
+                  borderRadius: 6,
+                  background: 'transparent',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                  display: 'grid',
+                  placeItems: 'center',
+                }}
+              >
+                {inspectorCollapsed ? <PanelRightOpen size={13} /> : <PanelRightClose size={13} />}
+              </button>
+            </div>
+            {!inspectorCollapsed && (
+              <PropertiesPanel
+                diagnostics={diagnostics}
+                deployPreview={preview}
+                sessions={sessions}
+                selectedNodeId={selectedNodeId}
+                selectedNode={selectedNode}
+                agents={state.agents}
+                skills={state.skills}
+                runtimeOk={runtimeOk}
+              />
+            )}
           </div>
         </section>
       )}

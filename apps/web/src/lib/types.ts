@@ -386,6 +386,8 @@ export interface ReplayMetadataResponse {
 export type AgencyBuilderTab =
   | 'overview'
   | 'connections'
+  | 'operations'
+  | 'runs'
   | 'sessions'
   | 'profile'
   | 'settings'
@@ -393,8 +395,7 @@ export type AgencyBuilderTab =
   | 'structure'
   | 'routing'
   | 'hooks'
-  | 'versions'
-  | 'operations';
+  | 'versions';
 
 export interface DashboardScope {
   level: CanonicalNodeLevel;

@@ -40,6 +40,7 @@ const TAB_LABEL: Record<AgencyBuilderTab, string> = {
   overview: 'Overview',
   connections: 'Connections',
   operations: 'Operations',
+  runs: 'Runs',
   sessions: 'Sessions',
   settings: 'Settings',
   profile: 'Profile',
@@ -55,6 +56,7 @@ function parseTab(value: string | null): AgencyBuilderTab | null {
     value === 'overview' ||
     value === 'connections' ||
     value === 'operations' ||
+    value === 'runs' ||
     value === 'sessions' ||
     value === 'settings' ||
     value === 'profile' ||
@@ -419,6 +421,26 @@ export default function AdministrationPage() {
                 onRuntimeAction={(action) => void handleRuntimeAction(action)}
               />
             ) : !isInitialLoading && !error && <SurfaceStateCard title="No operations available" description="Operations data is not ready for the current scope." />
+          )}
+
+          {activeTab === 'runs' && (
+            <section style={panelStyle}>
+              <div style={{ display: 'grid', gap: 6, marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }}>
+                  Runs — {entityLevel}
+                </div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
+                  Run History
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  Scope: {contextLabel || `${entityLevel}:${entityId}`}
+                </div>
+              </div>
+              <SurfaceStateCard
+                title="Scoped run history"
+                description={`Run history for ${contextLabel || entityId} will display here. Timeline, step details, and approval queue will be available once run endpoints are scoped per ${entityLevel}.`}
+              />
+            </section>
           )}
 
           {activeTab === 'sessions' && (

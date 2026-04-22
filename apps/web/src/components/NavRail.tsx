@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Building2, Cpu, MessageSquare, Play, Settings, SquarePen } from 'lucide-react';
+import { BookOpen, Building2, Cpu, Settings, SquarePen } from 'lucide-react';
 import type { ComponentType } from 'react';
 
 import { useStudioState } from '../lib/StudioStateContext';
@@ -11,8 +11,6 @@ const NAV: Array<{ label: string; surface: SurfaceId; Icon: ComponentType<{ size
   { label: 'Administration', surface: 'agency-builder', Icon: Building2 },
   { label: 'Studio', surface: 'workspace-studio', Icon: Cpu },
   { label: 'Editor', surface: 'entity-editor', Icon: SquarePen },
-  { label: 'Runs', surface: 'runs', Icon: Play },
-  { label: 'Sessions', surface: 'sessions', Icon: MessageSquare },
 ];
 
 export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
