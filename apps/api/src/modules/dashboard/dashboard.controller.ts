@@ -37,6 +37,18 @@ export function registerDashboardRoutes(router: Router) {
     res.json(await service.getOperations(parseScope(req as any)));
   });
 
+  router.get('/dashboard/operations/runtime-state', async (req, res) => {
+    res.json(await service.getOperationsRuntimeState(parseScope(req as any)));
+  });
+
+  router.get('/dashboard/operations/recent-runs', async (req, res) => {
+    res.json(await service.getOperationsRecentRuns(parseScope(req as any)));
+  });
+
+  router.get('/dashboard/operations/pending-actions', async (req, res) => {
+    res.json(await service.getOperationsPendingActions(parseScope(req as any)));
+  });
+
   router.get('/dashboard/runs', async (req, res) => {
     const rawLimit = Number(req.query.limit);
     const limit = Number.isFinite(rawLimit) ? rawLimit : undefined;

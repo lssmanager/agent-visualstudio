@@ -10,6 +10,9 @@ import type {
   DashboardConnectionsDto,
   DashboardInspectorDto,
   DashboardOperationsDto,
+  DashboardOperationsPendingActionsDto,
+  DashboardOperationsRecentRunsDto,
+  DashboardOperationsRuntimeStateDto,
   DashboardOverviewDto,
   DashboardRunsDto,
   RuntimeCommandRequestDto,
@@ -253,6 +256,34 @@ export class DashboardService {
           detail: item.label ? `Snapshot ${item.label}` : `Snapshot ${item.id}`,
         })),
       },
+    };
+  }
+
+  async getOperationsRuntimeState(input: { level?: string; id?: string }): Promise<DashboardOperationsRuntimeStateDto> {
+    const operations = await this.getOperations(input);
+    return {
+      scope: operations.scope,
+      lineage: operations.lineage,
+      recentSessions: operations.recentSessions,
+    };
+  }
+
+  async getOperationsRecentRuns(input: { level?: string; id?: string }): Promise<DashboardOperationsRecentRunsDto> {
+    const operations = await this.getOperations(input);
+    return {
+      scope: operations.scope,
+      lineage: operations.lineage,
+      recentRuns: operations.recentRuns,
+    };
+  }
+
+  async getOperationsPendingActions(input: { level?: string; id?: string }): Promise<DashboardOperationsPendingActionsDto> {
+    const operations = await this.getOperations(input);
+    return {
+      scope: operations.scope,
+      lineage: operations.lineage,
+      pendingActions: operations.pendingActions,
+      approvalQueue: operations.approvalQueue,
     };
   }
 

@@ -143,6 +143,25 @@ export interface DashboardOperationsDto {
   };
 }
 
+export interface DashboardOperationsRuntimeStateDto {
+  scope: ScopeDto;
+  lineage: LineageItemDto[];
+  recentSessions: DashboardOperationsDto['recentSessions'];
+}
+
+export interface DashboardOperationsRecentRunsDto {
+  scope: ScopeDto;
+  lineage: LineageItemDto[];
+  recentRuns: DashboardOperationsDto['recentRuns'];
+}
+
+export interface DashboardOperationsPendingActionsDto {
+  scope: ScopeDto;
+  lineage: LineageItemDto[];
+  pendingActions: DashboardOperationsDto['pendingActions'];
+  approvalQueue: DashboardOperationsDto['approvalQueue'];
+}
+
 export interface DashboardRunsDto {
   scope: ScopeDto;
   lineage: LineageItemDto[];
