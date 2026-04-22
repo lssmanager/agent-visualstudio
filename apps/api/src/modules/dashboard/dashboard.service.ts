@@ -15,6 +15,7 @@ import type {
   DashboardOperationsPendingActionsDto,
   DashboardOperationsBudgetsDto,
   DashboardOperationsPoliciesDto,
+  DashboardOperationsGovernanceStateDto,
   DashboardOperationsRecentRunsDto,
   DashboardOperationsRuntimeStateDto,
   DashboardOverviewDto,
@@ -299,6 +300,8 @@ export class DashboardService {
     return {
       scope: resolved.scope,
       lineage: resolved.lineage,
+      mode: 'governance_v1_legacy_store',
+      scopeFilterApplied: false,
       budgets: this.budgetsService.findAll(),
     };
   }
@@ -309,7 +312,24 @@ export class DashboardService {
     return {
       scope: resolved.scope,
       lineage: resolved.lineage,
+      mode: 'governance_v1_legacy_store',
+      scopeFilterApplied: false,
       policies: this.policiesService.findAll(),
+    };
+  }
+
+  async getOperationsGovernanceState(input: { level?: string; id?: string }): Promise<DashboardOperationsGovernanceStateDto> {
+    const budgetsProjection = await this.getOperationsBudgets(input);
+    const policiesProjection = await this.getOperationsPolicies(input);
+    return {
+      scope: budgetsProjection.scope,
+      lineage: budgetsProjection.lineage,
+      mode: 'governance_v1_legacy_store',
+      scopeFilterApplied: false,
+      budgetsCount: budgetsProjection.budgets.length,
+      policiesCount: policiesProjection.policies.length,
+      message:
+        'Governance store is active in V1 legacy mode: data is available for Operations surfaces while scope-filtered inheritance is pending.',
     };
   }
 

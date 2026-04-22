@@ -166,6 +166,8 @@ export interface DashboardOperationsPendingActionsDto {
 export interface DashboardOperationsBudgetsDto {
   scope: ScopeDto;
   lineage: LineageItemDto[];
+  mode: 'governance_v1_legacy_store';
+  scopeFilterApplied: false;
   budgets: Array<{
     id: string;
     name: string;
@@ -183,7 +185,19 @@ export interface DashboardOperationsBudgetsDto {
 export interface DashboardOperationsPoliciesDto {
   scope: ScopeDto;
   lineage: LineageItemDto[];
+  mode: 'governance_v1_legacy_store';
+  scopeFilterApplied: false;
   policies: PolicySpec[];
+}
+
+export interface DashboardOperationsGovernanceStateDto {
+  scope: ScopeDto;
+  lineage: LineageItemDto[];
+  mode: 'governance_v1_legacy_store';
+  scopeFilterApplied: false;
+  budgetsCount: number;
+  policiesCount: number;
+  message: string;
 }
 
 export interface DashboardRunsDto {

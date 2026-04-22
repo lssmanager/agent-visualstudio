@@ -22,6 +22,8 @@ describe('GET operations governance projections', () => {
     jest.spyOn(DashboardService.prototype, 'getOperationsBudgets').mockResolvedValue({
       scope: { level: 'workspace', id: 'workspace-1' },
       lineage: [{ level: 'workspace', id: 'workspace-1', name: 'Workspace One' }],
+      mode: 'governance_v1_legacy_store',
+      scopeFilterApplied: false,
       budgets: [
         {
           id: 'budget-1',
@@ -45,6 +47,8 @@ describe('GET operations governance projections', () => {
     expect(dashboardRes.status).toBe(200);
     expect(operationsRes.status).toBe(200);
     expect(dashboardRes.body.scope).toEqual({ level: 'workspace', id: 'workspace-1' });
+    expect(dashboardRes.body.mode).toBe('governance_v1_legacy_store');
+    expect(dashboardRes.body.scopeFilterApplied).toBe(false);
     expect(Array.isArray(dashboardRes.body.budgets)).toBe(true);
     expect(Array.isArray(operationsRes.body.budgets)).toBe(true);
   });
@@ -53,6 +57,8 @@ describe('GET operations governance projections', () => {
     jest.spyOn(DashboardService.prototype, 'getOperationsPolicies').mockResolvedValue({
       scope: { level: 'workspace', id: 'workspace-1' },
       lineage: [{ level: 'workspace', id: 'workspace-1', name: 'Workspace One' }],
+      mode: 'governance_v1_legacy_store',
+      scopeFilterApplied: false,
       policies: [
         {
           id: 'policy-1',
@@ -74,8 +80,31 @@ describe('GET operations governance projections', () => {
     expect(dashboardRes.status).toBe(200);
     expect(operationsRes.status).toBe(200);
     expect(dashboardRes.body.scope).toEqual({ level: 'workspace', id: 'workspace-1' });
+    expect(dashboardRes.body.mode).toBe('governance_v1_legacy_store');
+    expect(dashboardRes.body.scopeFilterApplied).toBe(false);
     expect(Array.isArray(dashboardRes.body.policies)).toBe(true);
     expect(Array.isArray(operationsRes.body.policies)).toBe(true);
   });
-});
 
+  it('returns governance-state projection with explicit V1 boundary messaging', async () => {
+    jest.spyOn(DashboardService.prototype, 'getOperationsGovernanceState').mockResolvedValue({
+      scope: { level: 'workspace', id: 'workspace-1' },
+      lineage: [{ level: 'workspace', id: 'workspace-1', name: 'Workspace One' }],
+      mode: 'governance_v1_legacy_store',
+      scopeFilterApplied: false,
+      budgetsCount: 2,
+      policiesCount: 3,
+      message: 'Governance store is active in V1 legacy mode.',
+    } as any);
+
+    const app = buildApp();
+    const res = await request(app).get('/dashboard/operations/governance-state?level=workspace&id=workspace-1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.scope).toEqual({ level: 'workspace', id: 'workspace-1' });
+    expect(res.body.mode).toBe('governance_v1_legacy_store');
+    expect(res.body.scopeFilterApplied).toBe(false);
+    expect(res.body.budgetsCount).toBe(2);
+    expect(res.body.policiesCount).toBe(3);
+  });
+});

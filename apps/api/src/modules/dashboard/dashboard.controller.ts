@@ -57,6 +57,10 @@ export function registerDashboardRoutes(router: Router) {
     res.json(await service.getOperationsPolicies(parseScope(req as any)));
   });
 
+  router.get('/dashboard/operations/governance-state', async (req, res) => {
+    res.json(await service.getOperationsGovernanceState(parseScope(req as any)));
+  });
+
   // Operations aliases for governance surfaces
   router.get('/operations/budgets', async (req, res) => {
     res.json(await service.getOperationsBudgets(parseScope(req as any)));
