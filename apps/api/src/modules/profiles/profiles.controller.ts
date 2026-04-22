@@ -20,6 +20,7 @@ export function registerProfilesRoutes(router: Router) {
       status: 'planned',
       available: false,
       mode: 'read_only',
+      decision: 'excluded_from_v1',
       message:
         'Templates catalog is explicitly out of V1 scope. Use profiles catalog + workspace bootstrap flows for now.',
       updatedAt: new Date().toISOString(),

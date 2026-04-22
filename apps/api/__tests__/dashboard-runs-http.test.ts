@@ -26,6 +26,7 @@ describe('GET /dashboard/runs', () => {
         { level: 'workspace', id: 'workspace-1', name: 'Workspace One' },
       ],
       mode: 'scoped',
+      projection: 'dashboard_scoped_v1',
       total: 1,
       runs: [
         {
@@ -47,6 +48,7 @@ describe('GET /dashboard/runs', () => {
     expect(res.body).toEqual(
       expect.objectContaining({
         mode: 'scoped',
+        projection: 'dashboard_scoped_v1',
         total: 1,
       }),
     );
@@ -60,4 +62,3 @@ describe('GET /dashboard/runs', () => {
     );
   });
 });
-

@@ -533,6 +533,7 @@ export interface DashboardRunsDto {
   scope: DashboardScope;
   lineage: DashboardLineageItem[];
   mode: 'aggregated' | 'scoped';
+  projection: 'dashboard_scoped_v1';
   total: number;
   runs: RunSpec[];
 }
@@ -541,6 +542,7 @@ export interface ProfileTemplatesStateDto {
   status: 'planned';
   available: false;
   mode: 'read_only';
+  decision?: 'excluded_from_v1';
   message: string;
   updatedAt: string;
 }

@@ -223,6 +223,53 @@ describe('POST /dashboard/runtime/command – request validation', () => {
     expect(res.status).toBe(400);
     expect(res.body.ok).toBe(false);
   });
+
+  it('returns HTTP 400 when level is unsupported', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/dashboard/runtime/command')
+      .send({ ...VALID_COMMAND_BODY, level: 'team' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.error).toMatch(/unsupported level/i);
+  });
+
+  it('returns HTTP 400 when action is unsupported', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/dashboard/runtime/command')
+      .send({ ...VALID_COMMAND_BODY, action: 'restart' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.error).toMatch(/unsupported runtime action/i);
+  });
+
+  it('returns HTTP 400 when connect action is missing target', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/dashboard/runtime/command')
+      .send({ level: 'workspace', id: 'workspace-1', action: 'connect' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.error).toMatch(/target is required/i);
+  });
+
+  it('returns HTTP 400 when target level is unsupported', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/dashboard/runtime/command')
+      .send({
+        ...VALID_COMMAND_BODY,
+        target: { level: 'team', id: 'x' },
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.error).toMatch(/unsupported target level/i);
+  });
 });
 
 describe('POST /dashboard/runtime/command – server error handling', () => {

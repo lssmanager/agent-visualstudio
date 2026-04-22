@@ -272,6 +272,7 @@ export class DashboardService {
       scope: resolved.scope,
       lineage: resolved.lineage,
       mode: resolved.capabilities.runsMode,
+      projection: 'dashboard_scoped_v1',
       total: scopedRuns.length,
       runs: safeLimit ? scopedRuns.slice(0, safeLimit) : scopedRuns,
     };

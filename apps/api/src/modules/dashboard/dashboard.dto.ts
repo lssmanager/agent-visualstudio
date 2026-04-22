@@ -147,6 +147,7 @@ export interface DashboardRunsDto {
   scope: ScopeDto;
   lineage: LineageItemDto[];
   mode: 'aggregated' | 'scoped';
+  projection: 'dashboard_scoped_v1';
   total: number;
   runs: RunSpec[];
 }

@@ -8,6 +8,9 @@ import type {
 } from './dashboard.dto';
 import { DashboardService } from './dashboard.service';
 
+const VALID_SCOPE_LEVELS = new Set(['agency', 'department', 'workspace', 'agent', 'subagent']);
+const VALID_RUNTIME_ACTIONS = new Set(['connect', 'disconnect', 'pause', 'reactivate', 'redirect', 'continue']);
+
 function parseScope(req: { query: Record<string, unknown> }) {
   return {
     level: typeof req.query.level === 'string' ? req.query.level : undefined,
@@ -75,6 +78,23 @@ export function registerDashboardRoutes(router: Router) {
     const payload = req.body as RuntimeCommandRequestDto;
     if (!payload?.level || !payload?.id || !payload?.action) {
       return res.status(400).json({ ok: false, error: 'level, id and action are required' });
+    }
+    if (!VALID_SCOPE_LEVELS.has(payload.level)) {
+      return res.status(400).json({ ok: false, error: `Unsupported level: ${payload.level}` });
+    }
+    if (!VALID_RUNTIME_ACTIONS.has(payload.action)) {
+      return res.status(400).json({ ok: false, error: `Unsupported runtime action: ${payload.action}` });
+    }
+    if ((payload.action === 'connect' || payload.action === 'redirect') && !payload.target) {
+      return res.status(400).json({ ok: false, error: `target is required for ${payload.action}` });
+    }
+    if (payload.target) {
+      if (!VALID_SCOPE_LEVELS.has(payload.target.level)) {
+        return res.status(400).json({ ok: false, error: `Unsupported target level: ${payload.target.level}` });
+      }
+      if (!payload.target.id) {
+        return res.status(400).json({ ok: false, error: 'target.id is required when target is provided' });
+      }
     }
 
     try {

@@ -20,6 +20,7 @@ describe('GET /profiles/templates', () => {
     expect(res.body.status).toBe('planned');
     expect(res.body.available).toBe(false);
     expect(res.body.mode).toBe('read_only');
+    expect(res.body.decision).toBe('excluded_from_v1');
     expect(res.body.message).toMatch(/use profiles/i);
   });
 });
