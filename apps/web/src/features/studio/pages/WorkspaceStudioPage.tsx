@@ -28,7 +28,6 @@ import {
   RuntimeStatusBadge,
   StudioCommandRow,
   StudioEmptyState,
-  StudioHeroSection,
   StudioInspectorCard,
   StudioMetricRow,
   StudioPageShell,
@@ -251,32 +250,30 @@ export default function WorkspaceStudioPage() {
 
   return (
     <StudioPageShell maxWidth={1440}>
-      <StudioHeroSection
-        eyebrow="Studio"
-        title="Editor"
-        description="Compose agent behavior, test runtime readiness, and review deploy diffs from a single studio surface."
-        meta={<RuntimeStatusBadge status={runtimeOk ? 'online' : 'degraded'} label={runtimeOk ? 'runtime online' : 'runtime degraded'} />}
-        actions={
-          <StudioCommandRow>
-            <button type="button" style={toolButton(true)} disabled={busy} onClick={() => void handleRefresh()}>
-              <RefreshCw size={14} />
-              Refresh
-            </button>
-            <button type="button" style={toolButton()} disabled={busy} onClick={() => void handlePreview()}>
-              <Eye size={14} />
-              Preview Diff
-            </button>
-            <button type="button" style={toolButton()} disabled={!selectedAgent || builderBusy} onClick={() => setBuilderModalOpen(true)}>
-              <Sparkles size={14} />
-              Builder Agent Function
-            </button>
-            <button type="button" style={primaryActionButton()} disabled={busy} onClick={() => void handleDeploy()}>
-              <Rocket size={14} />
-              Apply Deployment
-            </button>
-          </StudioCommandRow>
-        }
-      />
+      <StudioSectionCard
+        title="Editor Control Bar"
+        description="Operational actions for the active Studio context."
+        actions={<RuntimeStatusBadge status={runtimeOk ? 'online' : 'degraded'} label={runtimeOk ? 'runtime online' : 'runtime degraded'} />}
+      >
+        <StudioCommandRow>
+          <button type="button" style={toolButton(true)} disabled={busy} onClick={() => void handleRefresh()}>
+            <RefreshCw size={14} />
+            Refresh
+          </button>
+          <button type="button" style={toolButton()} disabled={busy} onClick={() => void handlePreview()}>
+            <Eye size={14} />
+            Preview Diff
+          </button>
+          <button type="button" style={toolButton()} disabled={!selectedAgent || builderBusy} onClick={() => setBuilderModalOpen(true)}>
+            <Sparkles size={14} />
+            Builder Agent Function
+          </button>
+          <button type="button" style={primaryActionButton()} disabled={busy} onClick={() => void handleDeploy()}>
+            <Rocket size={14} />
+            Apply Deployment
+          </button>
+        </StudioCommandRow>
+      </StudioSectionCard>
 
       <StudioSectionCard
         title="Studio Context"

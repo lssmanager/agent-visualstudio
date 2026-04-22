@@ -5,6 +5,7 @@ export const TAB_QUERY_KEY = 'tab';
 
 export function surfaceFromPath(pathname: string): SurfaceId {
   if (pathname.startsWith('/workspace-studio')) return 'workspace-studio';
+  if (pathname.startsWith('/agency-builder')) return 'agency-builder';
   if (pathname.startsWith('/administration')) return 'agency-builder';
   if (pathname.startsWith('/entity-editor')) return 'entity-editor';
   if (pathname.startsWith('/profiles')) return 'profiles';

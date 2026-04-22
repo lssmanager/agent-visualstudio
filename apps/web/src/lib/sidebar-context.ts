@@ -41,7 +41,7 @@ export function getContext(pathname: string, state: StudioStateResponse): Sectio
     return {
       label:
         pathname.startsWith('/studio') || pathname.startsWith('/workspace-studio')
-          ? 'Workspace Studio'
+          ? 'Studio'
           : 'Agents',
       newPath:   '/agents',
       items:     agents.map((a) => ({
@@ -53,7 +53,7 @@ export function getContext(pathname: string, state: StudioStateResponse): Sectio
       emptyText: 'No agents yet',
     };
   }
-  if (pathname.startsWith('/agency-builder')) {
+  if (pathname.startsWith('/agency-builder') || pathname.startsWith('/administration')) {
     const ws = state.workspace;
     return {
       label: 'Administration',
@@ -81,7 +81,7 @@ export function getContext(pathname: string, state: StudioStateResponse): Sectio
   }
   if (pathname.startsWith('/profiles')) {
     return {
-      label: 'Profiles',
+      label: 'Profiles Hub',
       items: profiles.map((p) => ({
         id:   p.id,
         name: p.name,

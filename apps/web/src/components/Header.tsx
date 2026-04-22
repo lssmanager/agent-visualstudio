@@ -13,7 +13,7 @@ interface HeaderProps {
 
 export function Header({ onToggleSidebar, showHamburger = false }: HeaderProps) {
   const { state, refresh } = useStudioState();
-  const { selectedNode, selectedLineage } = useHierarchy();
+  const { selectedLineage } = useHierarchy();
   const { theme, toggleTheme } = useTheme();
   const { openOnboarding } = useOnboarding();
 
