@@ -56,7 +56,7 @@ export function getContext(pathname: string, state: StudioStateResponse): Sectio
   if (pathname.startsWith('/agency-builder')) {
     const ws = state.workspace;
     return {
-      label: 'Agency Builder',
+      label: 'Administration',
       items: ws ? [{
         id: ws.id,
         name: ws.name,
@@ -69,7 +69,7 @@ export function getContext(pathname: string, state: StudioStateResponse): Sectio
   if (pathname.startsWith('/agency-topology')) {
     const ws = state.workspace;
     return {
-      label: 'Agency Topology',
+      label: 'Connections',
       items: ws ? [{
         id: ws.id,
         name: ws.name,

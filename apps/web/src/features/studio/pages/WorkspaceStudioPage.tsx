@@ -581,8 +581,8 @@ export default function WorkspaceStudioPage() {
           </div>
 
           <div style={{ marginTop: 12 }}>
-            <button type="button" style={toolButton()} onClick={() => navigate('/agency-builder?tab=topology')}>
-              Open Agency Topology
+            <button type="button" style={toolButton()} onClick={() => navigate('/administration?tab=connections')}>
+              Open Connections
             </button>
           </div>
         </StudioSectionCard>

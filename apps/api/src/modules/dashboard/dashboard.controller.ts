@@ -71,11 +71,22 @@ export function registerDashboardRoutes(router: Router) {
       return res.status(400).json({ ok: false, error: 'level, id and action are required' });
     }
 
-    const result = await service.executeRuntimeCommand(payload);
-    if (result.result.status !== 'applied') {
-      return res.status(501).json(result);
+    try {
+      const result = await service.executeRuntimeCommand(payload);
+      // Always return 200 — the result.result.status field carries the operational outcome:
+      //   'applied'               → action succeeded
+      //   'unsupported_by_runtime'→ runtime does not support this action (expected, not an error)
+      //   'rejected'              → runtime supported it but rejected the request (e.g. wrong state)
+      // HTTP 4xx/5xx are reserved for request validation failures and unexpected server errors.
+      return res.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unexpected error executing runtime command';
+      return res.status(500).json({
+        ok: false,
+        error: message,
+        command: payload.action,
+      });
     }
-    return res.json(result);
   });
 }
 

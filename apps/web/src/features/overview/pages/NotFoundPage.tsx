@@ -18,8 +18,8 @@ export default function NotFoundPage() {
           The requested route does not exist in the current Studio IA.
         </p>
         <div style={{ marginTop: 8 }}>
-          <Link to="/agency-builder?tab=overview" style={{ color: 'var(--color-primary)', fontWeight: 700, textDecoration: 'none' }}>
-            Go to Agency Builder
+          <Link to="/administration?tab=overview" style={{ color: 'var(--color-primary)', fontWeight: 700, textDecoration: 'none' }}>
+            Go to Administration
           </Link>
         </div>
       </div>

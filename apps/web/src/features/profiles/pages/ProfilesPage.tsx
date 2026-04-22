@@ -11,11 +11,11 @@ import type { ProfileSpec } from '../../../lib/types';
 
 type HubTab = 'profiles' | 'skills' | 'tools' | 'templates';
 
-const HUB_TABS: Array<{ id: HubTab; label: string }> = [
+const HUB_TABS: Array<{ id: HubTab; label: string; planned?: boolean }> = [
   { id: 'profiles', label: 'Profiles' },
   { id: 'skills', label: 'Skills' },
   { id: 'tools', label: 'Tools' },
-  { id: 'templates', label: 'Templates' },
+  { id: 'templates', label: 'Templates', planned: true },
 ];
 
 export default function ProfilesPage() {
@@ -76,9 +76,18 @@ export default function ProfilesPage() {
                 fontWeight: 700,
                 padding: '8px 10px',
                 cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
               }}
             >
               {tab.label}
+              {tab.planned && (
+                <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 999, background: 'var(--tone-warning-bg, rgba(245,158,11,0.1))', color: 'var(--tone-warning-text, #f59e0b)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Soon
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -217,10 +226,40 @@ export default function ProfilesPage() {
       {/* ── Templates tab ────────────────────────────────────────────── */}
       {activeTab === 'templates' && (
         <section style={panelStyle}>
-          <h2 style={{ margin: 0, fontSize: 'var(--text-lg)' }}>Templates &amp; Presets</h2>
-          <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)' }}>
-            Templates let you bootstrap workspaces from pre-configured starting points. Select a profile in the Profiles tab to use it as a template.
-          </p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 10, flexWrap: 'wrap' }}>
+            <h2 style={{ margin: 0, fontSize: 'var(--text-lg)' }}>Templates &amp; Presets</h2>
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                borderRadius: 999,
+                padding: '3px 8px',
+                background: 'var(--tone-warning-bg, rgba(245,158,11,0.08))',
+                color: 'var(--tone-warning-text, #f59e0b)',
+                border: '1px solid var(--tone-warning-border, rgba(245,158,11,0.3))',
+                textTransform: 'uppercase',
+                letterSpacing: '0.06em',
+              }}
+            >
+              Planned — not yet operational
+            </span>
+          </div>
+
+          {/* Non-interactive notice */}
+          <div
+            style={{
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--tone-warning-border, rgba(245,158,11,0.3))',
+              background: 'var(--tone-warning-bg, rgba(245,158,11,0.08))',
+              padding: '10px 14px',
+              fontSize: 12,
+              color: 'var(--tone-warning-text, #f59e0b)',
+            }}
+          >
+            Templates are a planned feature. They will allow bootstrapping workspaces from pre-configured starting points once the template catalog backend is implemented. For now, use the <strong>Profiles</strong> tab to create a workspace from a profile directly.
+          </div>
+
+          {/* Preview-only cards (non-interactive) */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
             <TemplateCard
               icon={<Layers3 size={18} />}

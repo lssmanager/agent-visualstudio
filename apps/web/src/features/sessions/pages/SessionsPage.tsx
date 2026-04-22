@@ -283,20 +283,46 @@ export default function SessionsPage() {
                   <div
                     className="rounded-md border p-3 text-xs space-y-1"
                     style={{
-                      borderColor: commandResult.status === 'applied' ? 'var(--tone-success-border)' : 'var(--tone-warning-border)',
-                      background: commandResult.status === 'applied' ? 'var(--tone-success-bg)' : 'var(--tone-warning-bg)',
+                      borderColor:
+                        commandResult.status === 'applied'
+                          ? 'var(--tone-success-border, rgba(16,185,129,0.3))'
+                          : commandResult.status === 'rejected'
+                            ? 'var(--tone-danger-border, rgba(239,68,68,0.3))'
+                            : 'var(--tone-warning-border, rgba(245,158,11,0.3))',
+                      background:
+                        commandResult.status === 'applied'
+                          ? 'var(--tone-success-bg, rgba(16,185,129,0.08))'
+                          : commandResult.status === 'rejected'
+                            ? 'var(--tone-danger-bg, rgba(239,68,68,0.08))'
+                            : 'var(--tone-warning-bg, rgba(245,158,11,0.08))',
                     }}
                   >
                     <div className="flex items-center gap-1.5">
-                      <div className={`w-1.5 h-1.5 rounded-full ${commandResult.status === 'applied' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                      <div
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: '50%',
+                          background:
+                            commandResult.status === 'applied'
+                              ? 'var(--tone-success-text, #10b981)'
+                              : commandResult.status === 'rejected'
+                                ? 'var(--tone-danger-text, #ef4444)'
+                                : 'var(--tone-warning-text, #f59e0b)',
+                        }}
+                      />
                       <span className="font-semibold capitalize" style={{ color: 'var(--text-primary)' }}>
-                        {commandResult.status.replace(/_/g, ' ')}
+                        {commandResult.status === 'applied'
+                          ? 'Applied'
+                          : commandResult.status === 'unsupported_by_runtime'
+                            ? 'Not supported by runtime'
+                            : 'Rejected by runtime'}
                       </span>
                       <span style={{ color: 'var(--text-muted)' }}>→ {commandResult.action}</span>
                     </div>
                     <p style={{ color: 'var(--text-muted)' }}>{commandResult.message}</p>
                     {commandResult.errorCode && (
-                      <code style={{ color: 'var(--tone-danger-text)', fontFamily: 'var(--font-mono)' }}>{commandResult.errorCode}</code>
+                      <code style={{ color: 'var(--tone-danger-text, #ef4444)', fontFamily: 'var(--font-mono)' }}>{commandResult.errorCode}</code>
                     )}
                   </div>
                 )}

@@ -1,5 +1,5 @@
-import type { CSSProperties, ReactNode } from 'react';
-import { Activity, Zap, Cpu, Tag } from 'lucide-react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
+import { Activity, Zap, Cpu, Tag, ChevronDown, ChevronRight } from 'lucide-react';
 
 import type { DashboardInspectorDto } from '../../../../lib/types';
 
@@ -98,7 +98,7 @@ export function RightInspectorPanel({ data }: { data: DashboardInspectorDto | nu
 
           {/* Tool Bindings */}
           {data.toolBindings.length > 0 && (
-            <Section title="Tools">
+            <Section title="Tools" defaultOpen={false}>
               {data.toolBindings.slice(0, 5).map((item) => (
                 <BindingRow key={item.id} name={item.name} source={item.source} enabled={item.enabled} />
               ))}
@@ -151,13 +151,24 @@ export function RightInspectorPanel({ data }: { data: DashboardInspectorDto | nu
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({ title, children, defaultOpen = true }: { title: string; children: ReactNode; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <section style={sectionStyle}>
-      <h4 style={{ margin: 0, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', fontWeight: 700 }}>
-        {title}
-      </h4>
-      <div style={{ display: 'grid', gap: 6 }}>{children}</div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: 0, width: '100%' }}
+      >
+        <h4 style={{ margin: 0, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', fontWeight: 700 }}>
+          {title}
+        </h4>
+        {open
+          ? <ChevronDown size={11} style={{ color: 'var(--text-muted)' }} />
+          : <ChevronRight size={11} style={{ color: 'var(--text-muted)' }} />
+        }
+      </button>
+      {open && <div style={{ display: 'grid', gap: 6 }}>{children}</div>}
     </section>
   );
 }

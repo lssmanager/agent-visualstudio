@@ -148,13 +148,23 @@ export class OpenClawRuntimeAdapter implements RuntimeAdapter {
     });
 
     if (!isOkResult(runtimeResult)) {
+      // Try to extract a reason from the runtime response
+      const runtimeRecord = asRecord(runtimeResult);
+      const runtimeMessage =
+        typeof runtimeRecord?.message === 'string' ? runtimeRecord.message
+        : typeof runtimeRecord?.reason === 'string' ? runtimeRecord.reason
+        : typeof runtimeRecord?.error === 'string' ? runtimeRecord.error
+        : null;
+
       return topologyActionResultSchema.parse({
         action,
         status: 'rejected',
         runtimeSupported: true,
-        message: `Runtime rejected topology action "${action}"`,
+        message: runtimeMessage
+          ? `Runtime rejected action "${action}": ${runtimeMessage}`
+          : `Runtime rejected topology action "${action}"`,
         requestedAt,
-        errorCode: 'RUNTIME_REJECTED',
+        errorCode: typeof runtimeRecord?.code === 'string' ? runtimeRecord.code : 'RUNTIME_REJECTED',
       });
     }
 
