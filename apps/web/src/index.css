@@ -365,3 +365,30 @@
     grid-template-columns: 1fr !important;
   }
 }
+
+.app-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(143, 162, 201, 0.45) transparent;
+}
+
+.app-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.app-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.app-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(143, 162, 201, 0.38);
+  border-radius: 999px;
+}
+
+.app-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(143, 162, 201, 0.52);
+}
+
+.app-scrollbar::-webkit-scrollbar-corner {
+  background: transparent;
+}

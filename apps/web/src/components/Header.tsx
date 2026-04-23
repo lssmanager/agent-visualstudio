@@ -37,15 +37,15 @@ export function Header({ onToggleSidebar, showHamburger = false, onOpenShortcuts
   };
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', minWidth: 0, gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, maxWidth: 460 }}>
         {showHamburger && (
           <button onClick={onToggleSidebar} style={iconButton} title="Toggle sidebar">
             <Menu size={18} />
           </button>
         )}
 
-        <div style={{ minWidth: 0, display: 'grid', gap: 2 }}>
+        <div style={{ minWidth: 0, display: 'grid', gap: 2, maxWidth: '100%' }}>
           <span
             style={{
               fontSize: 12,
@@ -61,12 +61,13 @@ export function Header({ onToggleSidebar, showHamburger = false, onOpenShortcuts
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
               <span
                 style={{
-                  fontSize: 18,
+                  fontSize: 16,
                   fontWeight: 700,
                   color: 'var(--text-primary)',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
+                  maxWidth: 220,
                 }}
               >
                 {workspace.name}
@@ -80,6 +81,7 @@ export function Header({ onToggleSidebar, showHamburger = false, onOpenShortcuts
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
+                    maxWidth: 180,
                   }}
                 >
                   {workspace.defaultModel}

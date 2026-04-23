@@ -31,6 +31,8 @@ export function NavRail({ onNavigate, compact = false }: { onNavigate?: () => vo
     <div
       style={{
         width: compact ? 64 : 88,
+        minWidth: compact ? 64 : 88,
+        maxWidth: compact ? 64 : 88,
         background: 'var(--shell-rail-bg)',
         borderRight: '1px solid var(--shell-rail-border)',
         display: 'flex',
@@ -40,6 +42,7 @@ export function NavRail({ onNavigate, compact = false }: { onNavigate?: () => vo
         padding: '12px 8px',
         height: '100vh',
         overflow: 'hidden',
+        overflowX: 'hidden',
       }}
     >
       <button
@@ -77,7 +80,7 @@ export function NavRail({ onNavigate, compact = false }: { onNavigate?: () => vo
       </button>
 
       {!compact && <div style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Environment</div>}
-      <nav style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, width: '100%' }}>
+      <nav className="app-scrollbar" style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, width: '100%' }}>
         {NAV.map(({ label, surface, Icon }) => {
           const isActive = currentSurface === surface || isProductSurfacePath(location.pathname, surface);
           const href = buildStudioHref({

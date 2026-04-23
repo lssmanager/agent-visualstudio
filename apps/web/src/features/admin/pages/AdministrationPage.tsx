@@ -312,75 +312,76 @@ export default function AdministrationPage() {
 
   const showInspector = !focusMode && !inspectorCollapsed;
   return (
-    <div style={{ maxWidth: 1520, margin: '0 auto', display: 'grid', gap: 14, height: '100%', minHeight: 0 }}>
-      <section style={panelStyle}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 10, flexWrap: 'wrap' }}>
-          <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-              Administration
+    <div style={{ maxWidth: 1520, margin: '0 auto', display: 'grid', gridTemplateColumns: showInspector ? `minmax(0, 1fr) 6px ${inspectorWidth}px` : 'minmax(0, 1fr)', gap: showInspector ? 0 : 14, height: '100%', minHeight: 0 }}>
+      <div style={{ minHeight: 0, display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', gap: 14, paddingRight: showInspector ? 14 : 0 }}>
+        <section style={panelStyle}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                Administration
+              </div>
+              <h1 style={{ margin: 0, fontSize: 'var(--text-xl)' }}>Administration</h1>
+              <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 13 }}>
+                Scope: {contextLabel || `${entityLevel}:${entityId}`}
+              </p>
             </div>
-            <h1 style={{ margin: 0, fontSize: 'var(--text-xl)' }}>Administration</h1>
-            <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 13 }}>
-              Scope: {contextLabel || `${entityLevel}:${entityId}`}
-            </p>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() =>
+                  navigate(
+                    buildStudioHref({
+                      surface: 'workspace-studio',
+                      nodeKey: selectedNode?.key ?? selectedLineage[selectedLineage.length - 1]?.key ?? null,
+                    }),
+                  )
+                }
+                disabled={!viewConfig.canEnterStudio}
+                title={viewConfig.canEnterStudio ? 'Open the studio for the current scope' : 'Studio is unavailable at this scope'}
+                style={{
+                  ...buttonStyle,
+                  opacity: viewConfig.canEnterStudio ? 1 : 0.6,
+                  cursor: viewConfig.canEnterStudio ? 'pointer' : 'not-allowed',
+                }}
+              >
+                Open Studio
+              </button>
+              <button type="button" onClick={() => void loadProjections()} style={buttonStyle} disabled={loading}>
+                {loading ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              onClick={() =>
-                navigate(
-                  buildStudioHref({
-                    surface: 'workspace-studio',
-                    nodeKey: selectedNode?.key ?? selectedLineage[selectedLineage.length - 1]?.key ?? null,
-                  }),
-                )
-              }
-              disabled={!viewConfig.canEnterStudio}
-              title={viewConfig.canEnterStudio ? 'Open the studio for the current scope' : 'Studio is unavailable at this scope'}
-              style={{
-                ...buttonStyle,
-                opacity: viewConfig.canEnterStudio ? 1 : 0.6,
-                cursor: viewConfig.canEnterStudio ? 'pointer' : 'not-allowed',
-              }}
-            >
-              Open Studio
-            </button>
-            <button type="button" onClick={() => void loadProjections()} style={buttonStyle} disabled={loading}>
-              {loading ? 'Refreshing...' : 'Refresh'}
-            </button>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${tabs.length}, minmax(0,1fr))`, gap: 8 }}>
+            {tabs.map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => {
+                  setSearchParams(
+                    (current) => {
+                      const next = new URLSearchParams(current);
+                      next.set('tab', tab);
+                      return next;
+                    },
+                    { replace: true },
+                  );
+                }}
+                style={{
+                  ...buttonStyle,
+                  background: activeTab === tab ? 'var(--color-primary-soft)' : 'var(--bg-secondary)',
+                  color: activeTab === tab ? 'var(--color-primary)' : 'var(--text-primary)',
+                }}
+              >
+                {TAB_LABEL[tab]}
+              </button>
+            ))}
           </div>
-        </div>
+        </section>
 
-        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${tabs.length}, minmax(0,1fr))`, gap: 8 }}>
-          {tabs.map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => {
-                setSearchParams(
-                  (current) => {
-                    const next = new URLSearchParams(current);
-                    next.set('tab', tab);
-                    return next;
-                  },
-                  { replace: true },
-                );
-              }}
-              style={{
-                ...buttonStyle,
-                background: activeTab === tab ? 'var(--color-primary-soft)' : 'var(--bg-secondary)',
-                color: activeTab === tab ? 'var(--color-primary)' : 'var(--text-primary)',
-              }}
-            >
-              {TAB_LABEL[tab]}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section style={{ display: 'grid', gridTemplateColumns: showInspector ? `minmax(0, 1fr) 6px ${inspectorWidth}px` : 'minmax(0, 1fr)', gap: showInspector ? 0 : 14, minHeight: 0, height: '100%' }}>
-        <div style={{ display: 'grid', gap: 14, minHeight: 0, overflowY: 'auto', paddingRight: showInspector ? 14 : 0 }}>
+        <section className="app-scrollbar" style={{ minHeight: 0, overflowY: 'auto' }}>
+          <div style={{ display: 'grid', gap: 14, minHeight: 0 }}>
           {isInitialLoading && <SurfaceStateCard title="Loading administration projections" description="Fetching overview, connections, operations and inspector data for the current scope." />}
           {error && !hasLoadedProjections && (
             <SurfaceStateCard title="Failed to load administration data" description={error} tone="danger" />
@@ -464,24 +465,25 @@ export default function AdministrationPage() {
               <SurfaceStateCard title="No profile bound" description="Select or bind a profile to inspect the effective configuration for this scope." />
             ) : null
           )}
-        </div>
+          </div>
+        </section>
+      </div>
 
-        {showInspector && (
-          <>
-            <div
-              onMouseDown={startInspectorDrag}
-              style={{ cursor: 'col-resize', width: 6, minHeight: 0, background: 'var(--shell-panel-border)' }}
+      {showInspector && (
+        <>
+          <div
+            onMouseDown={startInspectorDrag}
+            style={{ cursor: 'col-resize', width: 6, minHeight: 0, background: 'var(--shell-panel-border)' }}
+          />
+          <div className="app-scrollbar" style={{ minHeight: 0, overflowY: 'auto', paddingLeft: 14 }}>
+            <RightInspectorPanel
+              data={inspector}
+              state={isInitialLoading ? 'loading' : error && !hasLoadedProjections ? 'error' : 'empty'}
+              message={error ?? 'No inspector data available for this scope.'}
             />
-            <div style={{ minHeight: 0, overflowY: 'auto', paddingLeft: 14 }}>
-              <RightInspectorPanel
-                data={inspector}
-                state={isInitialLoading ? 'loading' : error && !hasLoadedProjections ? 'error' : 'empty'}
-                message={error ?? 'No inspector data available for this scope.'}
-              />
-            </div>
-          </>
-        )}
-      </section>
+          </div>
+        </>
+      )}
 
       {notice && <div style={noticeStyle}>{notice}</div>}
       {actionResult && (

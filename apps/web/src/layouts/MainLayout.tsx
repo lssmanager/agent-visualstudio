@@ -305,7 +305,8 @@ export function MainLayout() {
           top: 0,
           zIndex: 40,
           height: 52,
-          display: 'flex',
+          display: 'grid',
+          gridTemplateColumns: 'auto auto minmax(0, 1fr)',
           alignItems: 'center',
           gap: 8,
           padding: '0 14px',
@@ -316,7 +317,7 @@ export function MainLayout() {
         }}
       >
         {/* Panel collapse toggle — icon-first, tooltip on hover */}
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: '1px solid var(--border-primary)', borderRadius: 'var(--radius-md)', padding: 3, background: 'var(--bg-secondary)' }}>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: '1px solid var(--border-primary)', borderRadius: 'var(--radius-md)', padding: 3, background: 'var(--bg-secondary)', flexShrink: 0 }}>
           <button
             type="button"
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
@@ -361,7 +362,7 @@ export function MainLayout() {
 
         {/* Surface switcher (Administration / Studio) — only outside Studio */}
         {!isStudioEnvironment && (
-          <div style={{ display: 'inline-flex', border: '1px solid var(--border-primary)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+          <div style={{ display: 'inline-flex', border: '1px solid var(--border-primary)', borderRadius: 'var(--radius-md)', overflow: 'hidden', minWidth: 'max-content', flexShrink: 0 }}>
             <button
               type="button"
               onClick={() =>
@@ -375,7 +376,7 @@ export function MainLayout() {
               }
               style={{
                 border: 'none',
-                padding: '6px 11px',
+                padding: '7px 14px',
                 fontSize: 12,
                 fontWeight: 700,
                 cursor: 'pointer',
@@ -399,7 +400,7 @@ export function MainLayout() {
               style={{
                 border: 'none',
                 borderLeft: '1px solid var(--border-primary)',
-                padding: '6px 11px',
+                padding: '7px 14px',
                 fontSize: 12,
                 fontWeight: 700,
                 cursor: canOpenStudio ? 'pointer' : 'not-allowed',
@@ -413,12 +414,14 @@ export function MainLayout() {
           </div>
         )}
 
-        <div style={{ flex: 1 }} />
-        <Header onToggleSidebar={() => setMobileOpen((open) => !open)} showHamburger={isMobile} onOpenShortcuts={() => setShortcutsOpen((v) => !v)} />
+        <div style={{ minWidth: 0, display: 'flex', justifyContent: 'flex-end' }}>
+          <Header onToggleSidebar={() => setMobileOpen((open) => !open)} showHamburger={isMobile} onOpenShortcuts={() => setShortcutsOpen((v) => !v)} />
+        </div>
       </header>
 
       {/* Main content area */}
       <main
+        className="app-scrollbar"
         style={{
           gridColumn: contentCol,
           gridRow: '2',
