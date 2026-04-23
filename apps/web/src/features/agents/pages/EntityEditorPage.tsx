@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { SquarePen, Save, Lock, Users, BookOpen, Wrench, GitBranch, Zap, History, Activity, ChevronRight, Target } from 'lucide-react';
 
 import { PageHeader } from '../../../components';
@@ -18,13 +19,16 @@ import {
   getEditorPromptGraph,
   getEditorSectionDependencyImpact,
   getEditorRollbackRisk,
+  getEditorSkillsTools,
+  patchEditorSkillsTools,
 } from '../../../lib/api';
-import type { AgentSpec, HookSpec, RunSpec, WorkspaceSpec } from '../../../lib/types';
+import type { AgentSpec, EditorSkillsToolsDto, HookSpec, RunSpec, WorkspaceSpec } from '../../../lib/types';
 import { RadarChart } from '../../../components/ui/Charts';
 import { AnalyticsStateBoundary } from '../../analytics/components/AnalyticsStateBoundary';
 import { TimeWindowSelector } from '../../analytics/components/TimeWindowSelector';
 import { useAnalyticsMetric } from '../../analytics/hooks/useAnalyticsMetric';
 import type { AnalyticsWindow } from '../../analytics/types';
+import { NODE_QUERY_KEY } from '../../../lib/studioRouting';
 
 type EntitySection =
   | 'identity'
@@ -74,13 +78,13 @@ const MATRIX: Record<EntityLevel, EntitySection[]> = {
   subagent:   ['identity', 'prompts-behavior', 'skills-tools', 'handoffs', 'hooks', 'versions', 'operations', 'readiness'],
 };
 
-// ── Helpers ───────────────────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function SectionLoading() {
   return (
     <div className="flex items-center gap-2 py-10 justify-center" style={{ color: 'var(--text-muted)' }}>
       <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-      <span className="text-sm">Loading…</span>
+      <span className="text-sm">Loadingâ€¦</span>
     </div>
   );
 }
@@ -108,7 +112,7 @@ function SaveButton({ saving, onClick, disabled }: { saving: boolean; onClick: (
       }}
     >
       {saving ? (
-        <><div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" /> Saving…</>
+        <><div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" /> Savingâ€¦</>
       ) : (
         <><Save size={13} /> Save Changes</>
       )}
@@ -133,7 +137,7 @@ function labelStyle(): React.CSSProperties {
   return { fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4, display: 'block' };
 }
 
-// ── Identity Section ─────────────────────────────────────────────────────
+// â”€â”€ Identity Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function IdentitySection({
   level,
@@ -233,7 +237,7 @@ function IdentitySection({
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Agent Identity</p>
-          {saved && <span className="text-xs font-semibold" style={{ color: 'var(--tone-success-text)' }}>Saved ✓</span>}
+          {saved && <span className="text-xs font-semibold" style={{ color: 'var(--tone-success-text)' }}>Saved âœ“</span>}
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -285,7 +289,7 @@ function IdentitySection({
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Workspace Identity</p>
-          {saved && <span className="text-xs font-semibold" style={{ color: 'var(--tone-success-text)' }}>Saved ✓</span>}
+          {saved && <span className="text-xs font-semibold" style={{ color: 'var(--tone-success-text)' }}>Saved âœ“</span>}
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -324,7 +328,7 @@ function IdentitySection({
   return <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No entity data available for this context.</p>;
 }
 
-// ── Prompts/Behavior Section ──────────────────────────────────────────────
+// â”€â”€ Prompts/Behavior Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function PromptsBehaviorSection({
   level,
@@ -382,7 +386,7 @@ function PromptsBehaviorSection({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>System Instructions</p>
-        {saved && <span className="text-xs font-semibold" style={{ color: 'var(--tone-success-text)' }}>Saved ✓</span>}
+        {saved && <span className="text-xs font-semibold" style={{ color: 'var(--tone-success-text)' }}>Saved âœ“</span>}
       </div>
       <div>
         <label style={labelStyle()}>Instructions</label>
@@ -403,7 +407,7 @@ function PromptsBehaviorSection({
   );
 }
 
-// ── Skills/Tools Section ──────────────────────────────────────────────────
+// â”€â”€ Skills/Tools Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function SkillsToolsSection({
   level,
@@ -416,22 +420,38 @@ function SkillsToolsSection({
   workspace: WorkspaceSpec | null;
   onSaved: () => void;
 }) {
-  const { state } = useStudioState();
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [catalog, setCatalog] = useState<EditorSkillsToolsDto | null>(null);
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
+  const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
+
+  const scopeId = (level === 'agent' || level === 'subagent') ? agent?.id : workspace?.id;
+
+  const loadCatalog = useCallback(async () => {
+    if (!scopeId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const next = await getEditorSkillsTools(level, scopeId);
+      setCatalog(next);
+      setSelectedSkills(new Set(next.effective.skills));
+      setSelectedTools(new Set(next.effective.tools));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load skills/tools assignments');
+    } finally {
+      setLoading(false);
+    }
+  }, [level, scopeId]);
 
   useEffect(() => {
-    if (level === 'agent' || level === 'subagent') {
-      setSelected(new Set(agent?.skillRefs ?? []));
-    } else if (level === 'workspace') {
-      setSelected(new Set(workspace?.skillIds ?? []));
-    }
-  }, [agent, workspace, level]);
+    void loadCatalog();
+  }, [loadCatalog]);
 
-  const handleToggle = (skillId: string) => {
-    setSelected((prev) => {
+  const handleToggleSkill = (skillId: string) => {
+    setSelectedSkills((prev) => {
       const next = new Set(prev);
       if (next.has(skillId)) next.delete(skillId);
       else next.add(skillId);
@@ -439,88 +459,109 @@ function SkillsToolsSection({
     });
   };
 
+  const handleToggleTool = (toolId: string) => {
+    setSelectedTools((prev) => {
+      const next = new Set(prev);
+      if (next.has(toolId)) next.delete(toolId);
+      else next.add(toolId);
+      return next;
+    });
+  };
+
   const handleSave = useCallback(async () => {
+    if (!scopeId) return;
     setSaving(true);
     setError(null);
     try {
-      if ((level === 'agent' || level === 'subagent') && agent) {
-        await saveAgent({ ...agent, skillRefs: [...selected] });
-      } else if (level === 'workspace' && workspace) {
-        await updateWorkspace({ ...workspace, skillIds: [...selected] });
-      }
+      await patchEditorSkillsTools({
+        level,
+        id: scopeId,
+        skills: { select: [...selectedSkills] },
+        tools: { select: [...selectedTools] },
+      });
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
       onSaved();
+      await loadCatalog();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed');
     } finally {
       setSaving(false);
     }
-  }, [agent, workspace, level, selected, onSaved]);
-
-  const skills = state.skills ?? [];
-
-  if (!skills.length) {
-    return (
-      <div className="py-6 text-center">
-        <Wrench size={28} className="mx-auto mb-2" style={{ color: 'var(--text-muted)' }} />
-        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No skills in the catalog.</p>
-        <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Add skills to the workspace catalog first.</p>
-      </div>
-    );
-  }
+  }, [level, loadCatalog, onSaved, scopeId, selectedSkills, selectedTools]);
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Skill Assignment</p>
-          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{selected.size} of {skills.length} assigned</p>
+          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Skills / Tools Assignment</p>
+          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+            {selectedSkills.size} skills · {selectedTools.size} tools selected
+          </p>
         </div>
-        {saved && <span className="text-xs font-semibold" style={{ color: 'var(--tone-success-text)' }}>Saved ✓</span>}
+        {saved && <span className="text-xs font-semibold" style={{ color: 'var(--tone-success-text)' }}>Saved</span>}
       </div>
 
-      <div className="space-y-2">
-        {skills.map((skill) => {
-          const isChecked = selected.has(skill.id);
-          return (
-            <label
-              key={skill.id}
-              className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors"
-              style={{
-                borderColor: isChecked ? 'var(--color-primary)' : 'var(--border-primary)',
-                background: isChecked ? 'var(--color-primary-soft)' : 'var(--bg-secondary)',
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={isChecked}
-                onChange={() => handleToggle(skill.id)}
-                className="mt-0.5 flex-shrink-0"
-              />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{skill.name}</p>
-                <p className="text-xs mt-0.5 line-clamp-1" style={{ color: 'var(--text-muted)' }}>{skill.description}</p>
-                <div className="flex items-center gap-2 mt-1">
-                  {skill.category && (
-                    <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}>
-                      {skill.category}
-                    </span>
-                  )}
-                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{skill.functions?.length ?? 0} functions</span>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: '0.06em' }}>Available Skills</p>
+          {loading && <SectionLoading />}
+          {!loading && (catalog?.skills ?? []).map((skill) => {
+            const isBlocked = skill.state === 'blocked' || skill.state === 'disabled';
+            const isChecked = selectedSkills.has(skill.id);
+            return (
+              <label key={skill.id} className="flex items-start gap-3 rounded-lg border p-3" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)', opacity: isBlocked ? 0.65 : 1 }}>
+                <input type="checkbox" checked={isChecked} disabled={isBlocked} onChange={() => handleToggleSkill(skill.id)} className="mt-0.5 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{skill.name}</p>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{skill.description ?? 'No description'}</p>
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                    source: {skill.source}{skill.blockedReason ? ` · blocked: ${skill.blockedReason}` : ''}
+                  </p>
                 </div>
-              </div>
-            </label>
-          );
-        })}
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: '0.06em' }}>Available Tools</p>
+          {loading && <SectionLoading />}
+          {!loading && (catalog?.tools ?? []).map((tool) => {
+            const isBlocked = tool.state === 'blocked' || tool.state === 'disabled';
+            const isChecked = selectedTools.has(tool.id);
+            return (
+              <label key={tool.id} className="flex items-start gap-3 rounded-lg border p-3" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)', opacity: isBlocked ? 0.65 : 1 }}>
+                <input type="checkbox" checked={isChecked} disabled={isBlocked} onChange={() => handleToggleTool(tool.id)} className="mt-0.5 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{tool.name}</p>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{tool.description ?? 'No description'}</p>
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                    source: {tool.source}{tool.blockedReason ? ` · blocked: ${tool.blockedReason}` : ''}
+                  </p>
+                </div>
+              </label>
+            );
+          })}
+        </div>
       </div>
+
+      {catalog && (
+        <div className="rounded-lg border p-3" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}>
+          <p className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: '0.06em' }}>Effective Assignment</p>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+            Skills: {catalog.effective.skills.join(', ') || 'None'} · Tools: {catalog.effective.tools.join(', ') || 'None'}
+          </p>
+        </div>
+      )}
+
       {error && <p className="text-xs" style={{ color: 'var(--tone-danger-text)' }}>{error}</p>}
       <SaveButton saving={saving} onClick={() => { void handleSave(); }} />
     </div>
   );
 }
 
-// ── Handoffs Section ──────────────────────────────────────────────────────
+// â”€â”€ Handoffs Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function HandoffsSection({ agent }: { agent: AgentSpec | null }) {
   if (!agent) return <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No agent selected.</p>;
@@ -548,7 +589,7 @@ function HandoffsSection({ agent }: { agent: AgentSpec | null }) {
               style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}
             >
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>→</span>
+                <span className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>â†’</span>
                 <code className="text-xs font-semibold" style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>
                   {rule.targetAgentId}
                 </code>
@@ -570,7 +611,7 @@ function HandoffsSection({ agent }: { agent: AgentSpec | null }) {
   );
 }
 
-// ── Routing & Channels Section ────────────────────────────────────────────
+// â”€â”€ Routing & Channels Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function RoutingChannelsSection({
   level,
@@ -642,7 +683,7 @@ function RoutingChannelsSection({
               >
                 <div className="flex items-center gap-2 text-xs">
                   <code style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>{rule.from}</code>
-                  <span style={{ color: 'var(--text-muted)' }}>→</span>
+                  <span style={{ color: 'var(--text-muted)' }}>â†’</span>
                   <code style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>{rule.to}</code>
                   <span className="ml-auto text-xs px-1.5 py-0.5 rounded" style={{ background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}>
                     priority {rule.priority}
@@ -665,7 +706,7 @@ function RoutingChannelsSection({
   );
 }
 
-// ── Hooks Section ─────────────────────────────────────────────────────────
+// â”€â”€ Hooks Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function HooksSection() {
   const [hooks, setHooks] = useState<HookSpec[] | null>(null);
@@ -696,7 +737,7 @@ function HooksSection() {
         <div className="py-6 text-center rounded-lg border border-dashed" style={{ borderColor: 'var(--border-primary)' }}>
           <Zap size={24} className="mx-auto mb-2" style={{ color: 'var(--text-muted)' }} />
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No hooks configured</p>
-          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Manage hooks in Settings → Automations</p>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Manage hooks in Settings â†’ Automations</p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -710,7 +751,7 @@ function HooksSection() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <code className="text-xs font-semibold" style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)' }}>{hook.event}</code>
-                  <span className="text-xs capitalize" style={{ color: 'var(--text-muted)' }}>→ {hook.action}</span>
+                  <span className="text-xs capitalize" style={{ color: 'var(--text-muted)' }}>â†’ {hook.action}</span>
                 </div>
               </div>
               <span className={`text-xs px-2 py-0.5 rounded flex-shrink-0 ${hook.enabled ? 'text-emerald-700 bg-emerald-50' : 'text-slate-500 bg-slate-100'}`}>
@@ -724,7 +765,7 @@ function HooksSection() {
   );
 }
 
-// ── Versions Section ──────────────────────────────────────────────────────
+// â”€â”€ Versions Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function VersionsSection({
   level,
@@ -822,7 +863,7 @@ function VersionsSection({
   );
 }
 
-// ── Operations Section ────────────────────────────────────────────────────
+// â”€â”€ Operations Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function OperationsSection() {
   const { state } = useStudioState();
@@ -890,7 +931,7 @@ function OperationsSection() {
                 </div>
                 <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
                   {new Date(run.startedAt).toLocaleString()}
-                  {run.steps && ` · ${run.steps.length} steps`}
+                  {run.steps && ` Â· ${run.steps.length} steps`}
                 </p>
               </div>
             );
@@ -901,7 +942,7 @@ function OperationsSection() {
   );
 }
 
-// ── Catalog Section (agency level) ───────────────────────────────────────
+// â”€â”€ Catalog Section (agency level) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function CatalogSection() {
   const { state } = useStudioState();
@@ -944,7 +985,7 @@ function CatalogSection() {
   );
 }
 
-// ── Readiness Section ─────────────────────────────────────────────────────
+// â”€â”€ Readiness Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function ReadinessSection({
   level,
@@ -1195,7 +1236,7 @@ function ReadinessSection({
             <div style={{ padding: 10, display: 'grid', gap: 6 }}>
               {(dependenciesMetric.data?.edges ?? []).slice(0, 10).map((edge, idx) => (
                 <div key={`${edge.from}-${edge.to}-${idx}`} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-                  <span style={{ color: 'var(--text-primary)' }}>{edge.from} → {edge.to}</span>
+                  <span style={{ color: 'var(--text-primary)' }}>{edge.from} â†’ {edge.to}</span>
                   <span style={{ color: 'var(--text-muted)' }}>{edge.kind}</span>
                 </div>
               ))}
@@ -1217,7 +1258,7 @@ function ReadinessSection({
             <div style={{ marginTop: 8, display: 'grid', gap: 4 }}>
               {(promptGraphMetric.data?.edges ?? []).map((edge, idx) => (
                 <div key={`${edge.from}-${edge.to}-${idx}`} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6, fontSize: 10 }}>
-                  <span style={{ color: 'var(--text-primary)' }}>{edge.from} → {edge.to}</span>
+                  <span style={{ color: 'var(--text-primary)' }}>{edge.from} â†’ {edge.to}</span>
                   <span style={{ color: 'var(--text-muted)' }}>{edge.weight.toFixed(2)}</span>
                 </div>
               ))}
@@ -1257,12 +1298,25 @@ function ReadinessSection({
   );
 }
 
-// ── EntityEditorPage ──────────────────────────────────────────────────────
+// â”€â”€ EntityEditorPage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export default function EntityEditorPage() {
-  const { selectedNode, selectedLineage, scope } = useHierarchy();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { tree, selectedNode, selectedLineage, scope, selectByEntity } = useHierarchy();
   const { state, refresh } = useStudioState();
   const [activeSection, setActiveSection] = useState<EntitySection>('identity');
+  const [createName, setCreateName] = useState('');
+  const [createModel, setCreateModel] = useState('');
+  const [createRole, setCreateRole] = useState('');
+  const [createDescription, setCreateDescription] = useState('');
+  const [createBusy, setCreateBusy] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  const createMode = searchParams.get('mode') === 'create';
+  const createType = searchParams.get('type') === 'subagent' ? 'subagent' : 'agent';
+  const requestedParentWorkspaceId = searchParams.get('parentWorkspaceId');
+  const requestedProfileId = searchParams.get('profileId');
 
   const level = selectedNode?.level;
   const entityLevel: EntityLevel | null =
@@ -1293,6 +1347,122 @@ export default function EntityEditorPage() {
 
   const activeAgent = subagent ?? agent;
   const workspace = state.workspace;
+  const profilePrefill = requestedProfileId ? state.profiles.find((item) => item.id === requestedProfileId) ?? null : null;
+  const workspaceOptions = useMemo(
+    () =>
+      Object.values(tree.nodes)
+        .filter((node) => node.level === 'workspace')
+        .map((node) => ({ id: node.id, label: node.label })),
+    [tree.nodes],
+  );
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState(
+    requestedParentWorkspaceId ?? scope.workspaceId ?? workspaceOptions[0]?.id ?? '',
+  );
+
+  useEffect(() => {
+    if (!createMode) return;
+    setSelectedWorkspaceId(requestedParentWorkspaceId ?? scope.workspaceId ?? workspaceOptions[0]?.id ?? '');
+  }, [createMode, requestedParentWorkspaceId, scope.workspaceId, workspaceOptions]);
+
+  useEffect(() => {
+    if (!profilePrefill) return;
+    if (!createModel && profilePrefill.defaultModel) setCreateModel(profilePrefill.defaultModel);
+  }, [createModel, profilePrefill]);
+
+  const handleCreateAgent = useCallback(async () => {
+    const parentWorkspaceId = selectedWorkspaceId || scope.workspaceId || workspace?.id;
+    if (!parentWorkspaceId) {
+      setCreateError('Select a parent workspace before creating an agent.');
+      return;
+    }
+    if (!createName.trim()) {
+      setCreateError('Agent name is required.');
+      return;
+    }
+    const nextId = `${createType}-${Date.now()}`;
+    const parentAgentId = createType === 'subagent' ? (scope.agentId ?? undefined) : undefined;
+    setCreateBusy(true);
+    setCreateError(null);
+    try {
+      await saveAgent({
+        id: nextId,
+        workspaceId: parentWorkspaceId,
+        name: createName.trim(),
+        role: createRole || 'Agent',
+        description: createDescription || '',
+        instructions: '',
+        model: createModel || profilePrefill?.defaultModel || workspace?.defaultModel || '',
+        skillRefs: profilePrefill?.defaultSkills ?? [],
+        tags: profilePrefill?.tags ?? [],
+        visibility: 'workspace',
+        executionMode: 'direct',
+        kind: createType,
+        parentAgentId,
+        handoffRules: [],
+        channelBindings: [],
+        isEnabled: true,
+      });
+      await refresh();
+      selectByEntity(createType, nextId);
+      navigate(`/entity-editor?${NODE_QUERY_KEY}=${createType}:${nextId}`, { replace: true });
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : 'Failed to create agent');
+    } finally {
+      setCreateBusy(false);
+    }
+  }, [createDescription, createModel, createName, createRole, createType, navigate, profilePrefill, refresh, scope.agentId, scope.workspaceId, selectByEntity, selectedWorkspaceId, workspace?.defaultModel]);
+
+  if (createMode) {
+    return (
+      <div className="max-w-4xl mx-auto space-y-6">
+        <PageHeader
+          title={createType === 'subagent' ? 'Create Subagent' : 'Create Agent'}
+          icon={SquarePen}
+          description="Create entities directly in Entity Editor create mode (no startup wizard)."
+        />
+        <div className="rounded-xl border p-5 space-y-4" style={{ borderColor: 'var(--border-primary)', background: 'var(--card-bg)' }}>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label style={labelStyle()}>Parent Workspace</label>
+              <select style={inputStyle()} value={selectedWorkspaceId} onChange={(e) => setSelectedWorkspaceId(e.target.value)}>
+                <option value="">Select workspace</option>
+                {workspaceOptions.map((item) => (
+                  <option key={item.id} value={item.id}>{item.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle()}>Profile Prefill</label>
+              <input style={inputStyle()} value={profilePrefill?.name ?? 'None'} disabled />
+            </div>
+            <div>
+              <label style={labelStyle()}>Name</label>
+              <input style={inputStyle()} value={createName} onChange={(e) => setCreateName(e.target.value)} placeholder="Pick a name for this agent" />
+            </div>
+            <div>
+              <label style={labelStyle()}>Model</label>
+              <input style={inputStyle()} value={createModel} onChange={(e) => setCreateModel(e.target.value)} placeholder="Default model" />
+            </div>
+            <div>
+              <label style={labelStyle()}>Role</label>
+              <input style={inputStyle()} value={createRole} onChange={(e) => setCreateRole(e.target.value)} placeholder="What kind of agent is this?" />
+            </div>
+            <div>
+              <label style={labelStyle()}>Description</label>
+              <input style={inputStyle()} value={createDescription} onChange={(e) => setCreateDescription(e.target.value)} placeholder="Agent mission summary" />
+            </div>
+          </div>
+          {createError && <p className="text-xs" style={{ color: 'var(--tone-danger-text)' }}>{createError}</p>}
+          <div className="flex items-center gap-2">
+            <SaveButton saving={createBusy} onClick={() => { void handleCreateAgent(); }} disabled={!selectedWorkspaceId || !createName.trim()} />
+            <button type="button" onClick={() => navigate('/entity-editor')} style={{ ...inputStyle(), width: 'auto', cursor: 'pointer' }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!entityLevel || !selectedNode) {
     return (

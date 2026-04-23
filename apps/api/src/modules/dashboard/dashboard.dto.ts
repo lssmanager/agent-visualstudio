@@ -645,3 +645,49 @@ export interface EditorRollbackRiskDto {
   meta?: AnalyticsMetaDto;
   versions: Array<{ versionId: string; label: string; riskScore: number; reasons: string[] }>;
 }
+
+export type EditorCatalogItemSource = 'profile' | 'agency' | 'workspace' | 'global' | 'local';
+export type EditorCatalogItemState = 'available' | 'selected' | 'required' | 'blocked' | 'disabled';
+
+export interface EditorSkillsToolsItemDto {
+  id: string;
+  name: string;
+  description?: string;
+  type?: string;
+  source: EditorCatalogItemSource;
+  state: EditorCatalogItemState;
+  blockedReason?: string;
+}
+
+export interface EditorSkillsToolsDto {
+  scope: ScopeDto;
+  sources: {
+    profileDefaults: string[];
+    agencyEnabled: string[];
+    inherited: string[];
+    localOverrides: string[];
+  };
+  skills: EditorSkillsToolsItemDto[];
+  tools: EditorSkillsToolsItemDto[];
+  effective: {
+    skills: string[];
+    tools: string[];
+  };
+}
+
+export interface EditorSkillsToolsPatchDto {
+  level: CanonicalNodeLevel;
+  id: string;
+  skills?: {
+    select?: string[];
+    deselect?: string[];
+    require?: string[];
+    disable?: string[];
+  };
+  tools?: {
+    select?: string[];
+    deselect?: string[];
+    require?: string[];
+    disable?: string[];
+  };
+}

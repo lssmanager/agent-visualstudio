@@ -64,6 +64,7 @@ import {
   EditorPromptGraphDto,
   EditorSectionDependencyImpactDto,
   EditorRollbackRiskDto,
+  EditorSkillsToolsDto,
 } from './types';
 import type { AnalyticsGranularity, AnalyticsWindow } from '../features/analytics/types';
 
@@ -990,4 +991,24 @@ export async function getEditorRollbackRisk(level: CanonicalNodeLevel, id: strin
   const params = new URLSearchParams({ level, id, window });
   const response = await fetch(`${API_BASE}/editor/rollback-risk?${params.toString()}`);
   return parseJson<EditorRollbackRiskDto>(response);
+}
+
+export async function getEditorSkillsTools(level: CanonicalNodeLevel, id: string, window: AnalyticsWindow = '24H') {
+  const params = new URLSearchParams({ level, id, window });
+  const response = await fetch(`${API_BASE}/editor/skills-tools?${params.toString()}`);
+  return parseJson<EditorSkillsToolsDto>(response);
+}
+
+export async function patchEditorSkillsTools(input: {
+  level: CanonicalNodeLevel;
+  id: string;
+  skills?: { select?: string[]; deselect?: string[]; require?: string[]; disable?: string[] };
+  tools?: { select?: string[]; deselect?: string[]; require?: string[]; disable?: string[] };
+}) {
+  const response = await fetch(`${API_BASE}/editor/skills-tools`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return parseJson<{ ok: boolean; updatedAgentId?: string; message?: string }>(response);
 }

@@ -54,6 +54,7 @@ export function MainLayout() {
   const isMobile = !useMediaQuery('(min-width: 769px)');
   const activeSurface = surfaceFromPath(location.pathname);
   const isAdministration = isAdministrationPath(location.pathname);
+  const isEntityEditor = location.pathname.startsWith('/entity-editor');
   const isStudioEnvironment = isStudioPath(location.pathname) && location.pathname.startsWith('/workspace-studio');
   const canOpenStudio = SCOPE_VIEW_REGISTRY[selectedLevel].canEnterStudio;
   const showContext = isDesktop && !isStudioEnvironment;
@@ -211,15 +212,17 @@ export function MainLayout() {
   useEffect(() => {
     setSurface(activeSurface);
 
-    if (isAdministration) {
+    if (isAdministration || isEntityEditor) {
       const nodeKey = parseNodeQuery(location.search);
       if (nodeKey && tree.nodes[nodeKey]) {
         selectByKey(nodeKey);
       }
-      const tab = parseBuilderTab(location.search);
-      if (tab) setBuilderTab(tab);
+      if (isAdministration) {
+        const tab = parseBuilderTab(location.search);
+        if (tab) setBuilderTab(tab);
+      }
     }
-  }, [activeSurface, isAdministration, location.search, selectByKey, setBuilderTab, setSurface, tree.nodes]);
+  }, [activeSurface, isAdministration, isEntityEditor, location.search, selectByKey, setBuilderTab, setSurface, tree.nodes]);
 
   return (
     <ShellLayoutProvider

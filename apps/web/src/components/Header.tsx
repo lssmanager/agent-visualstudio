@@ -1,8 +1,6 @@
-import { Keyboard, Menu, Moon, Plus, RotateCw, Sun, Columns2 } from 'lucide-react';
+import { Keyboard, Menu, Moon, RotateCw, Sun, Columns2 } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 
-import { useHierarchy } from '../lib/HierarchyContext';
-import { useOnboarding } from '../lib/OnboardingContext';
 import { useStudioState } from '../lib/StudioStateContext';
 import { useTheme } from '../lib/ThemeProvider';
 import { usePreferences } from '../lib/usePreferences';
@@ -18,9 +16,7 @@ interface HeaderProps {
 export function Header({ onToggleSidebar, showHamburger = false, onOpenShortcuts }: HeaderProps) {
   const location = useLocation();
   const { state, refresh } = useStudioState();
-  const { selectedLineage } = useHierarchy();
   const { theme, toggleTheme } = useTheme();
-  const { openOnboarding } = useOnboarding();
   const { layoutMode, setLayoutMode } = usePreferences();
 
   const workspace = state.workspace;
@@ -62,51 +58,34 @@ export function Header({ onToggleSidebar, showHamburger = false, onOpenShortcuts
             {surfaceLabel}
           </span>
           {workspace ? (
-            <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+              <span
+                style={{
+                  fontSize: 18,
+                  fontWeight: 700,
+                  color: 'var(--text-primary)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {workspace.name}
+              </span>
+              {workspace.defaultModel && (
                 <span
                   style={{
-                    fontSize: 18,
-                    fontWeight: 700,
-                    color: 'var(--text-primary)',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {workspace.name}
-                </span>
-                {workspace.defaultModel && (
-                  <span
-                    style={{
-                      fontSize: 12,
-                      fontFamily: 'var(--font-mono)',
-                      color: 'var(--text-muted)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {workspace.defaultModel}
-                  </span>
-                )}
-              </div>
-              {selectedLineage.length > 0 && (
-                <span
-                  style={{
-                    fontSize: 11,
-                    color: 'var(--text-muted)',
+                    fontSize: 12,
                     fontFamily: 'var(--font-mono)',
+                    color: 'var(--text-muted)',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
-                    maxWidth: 440,
                   }}
                 >
-                  {selectedLineage.map((node) => node.label).join(' / ')}
+                  {workspace.defaultModel}
                 </span>
               )}
-            </>
+            </div>
           ) : (
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)' }}>No workspace selected</span>
           )}
@@ -114,29 +93,6 @@ export function Header({ onToggleSidebar, showHamburger = false, onOpenShortcuts
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-        {!workspace && (
-          <button
-            onClick={openOnboarding}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '9px 13px',
-              borderRadius: 12,
-              border: '1px solid rgba(77,124,255,0.4)',
-              background: 'var(--btn-primary-bg)',
-              color: 'var(--btn-primary-text)',
-              fontSize: 13,
-              fontWeight: 700,
-              cursor: 'pointer',
-              boxShadow: 'var(--shadow-sm)',
-            }}
-          >
-            <Plus size={14} />
-            New Workspace
-          </button>
-        )}
-
         <RuntimeBadge ok={runtimeOk} size="sm" />
 
         <button

@@ -31,6 +31,10 @@ interface AdminSettingsPanelProps {
 // ── Shared helpers ────────────────────────────────────────────────────────
 
 function PanelLoading() {
+  const createHref = workspace?.id
+    ? `/entity-editor?mode=create&type=agent&parentWorkspaceId=${encodeURIComponent(workspace.id)}`
+    : '/entity-editor?mode=create&type=agent';
+
   return (
     <div className="flex items-center gap-2 py-8 justify-center" style={{ color: 'var(--text-muted)' }}>
       <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
@@ -419,7 +423,7 @@ function ScopedSettingsSummary() {
             type="button"
             className="font-semibold underline"
             style={{ color: 'var(--color-primary)' }}
-            onClick={() => navigate('/entity-editor')}
+            onClick={() => navigate(createHref)}
           >
             Entity Editor
           </button>.
@@ -468,7 +472,7 @@ function ScopedSettingsSummary() {
 
       <button
         type="button"
-        onClick={() => navigate('/entity-editor')}
+        onClick={() => navigate(createHref)}
         className="w-full flex items-center justify-between rounded-lg border p-3 text-left"
         style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}
       >

@@ -147,9 +147,6 @@ export function App() {
 
   if (!state) return null;
 
-  // Open onboarding automatically when no workspace exists
-  const shouldShowOnboarding = onboardingOpen || !state.workspace;
-
   return (
     <ThemeProvider initialTheme={theme} onThemeChange={setTheme}>
       <StudioStateContext.Provider value={{ state, refresh: refreshState }}>
@@ -158,7 +155,7 @@ export function App() {
             <BrowserRouter>
               {/* Onboarding drawer overlays the dashboard */}
               <OnboardingDrawer
-                open={shouldShowOnboarding}
+                open={onboardingOpen}
                 onComplete={async () => {
                   setOnboardingOpen(false);
                   await loadState();
@@ -182,7 +179,10 @@ export function App() {
                   <Route path="/workspaces" element={<Navigate to="/administration?tab=overview" replace />} />
                   <Route path="/studio" element={<Navigate to="/workspace-studio" replace />} />
                   <Route path="/agents" element={<Navigate to="/entity-editor" replace />} />
-                  <Route path="/agents/new" element={<Navigate to="/entity-editor" replace />} />
+                  <Route
+                    path="/agents/new"
+                    element={<Navigate to="/entity-editor?mode=create&type=agent" replace />}
+                  />
                   <Route path="/agents/:id" element={<Navigate to="/entity-editor" replace />} />
                   <Route path="/routing" element={<Navigate to="/administration?tab=connections" replace />} />
                   <Route path="/hooks" element={<Navigate to="/administration?tab=connections" replace />} />

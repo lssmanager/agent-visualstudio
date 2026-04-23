@@ -1,6 +1,7 @@
 import type { CanonicalStudioState, TopologyRuntimeAction, SessionState } from '../../../../../packages/core-types/src';
 
 import { HooksService } from '../hooks/hooks.service';
+import { AgentsService } from '../agents/agents.service';
 import { BudgetsService } from '../budgets/budgets.service';
 import { PoliciesService } from '../policies/policies.service';
 import { RoutingService } from '../routing/routing.service';
@@ -61,6 +62,8 @@ import type {
   EditorPromptGraphDto,
   EditorSectionDependencyImpactDto,
   EditorRollbackRiskDto,
+  EditorSkillsToolsDto,
+  EditorSkillsToolsPatchDto,
   TimeSeriesPoint,
 } from './dashboard.dto';
 import type { MetricsQueryDto } from './dto/metrics-query.dto';
@@ -72,6 +75,7 @@ export class DashboardService {
   private readonly scopeResolver = new DashboardScopeResolver();
   private readonly runsService = new RunsService();
   private readonly hooksService = new HooksService();
+  private readonly agentsService = new AgentsService();
   private readonly budgetsService = new BudgetsService();
   private readonly policiesService = new PoliciesService();
   private readonly routingService = new RoutingService();
@@ -1722,5 +1726,100 @@ export class DashboardService {
       meta: { warnings, source: 'editor_rollback_risk_projection' },
       versions,
     };
+  }
+
+  async getEditorSkillsTools(input: MetricsQueryDto, warnings: string[] = []): Promise<EditorSkillsToolsDto> {
+    const canonical = await this.studioService.getCanonicalState();
+    const resolved = this.scopeResolver.resolve(canonical, input);
+    const effectiveProfile = await this.profileService.getEffectiveProfile(resolved.scope, resolved.lineage);
+    const actor =
+      canonical.agents.find((item) => item.id === resolved.scope.id) ??
+      canonical.subagents.find((item) => item.id === resolved.scope.id) ??
+      null;
+
+    const selectedSkills = new Set(actor?.skillRefs ?? []);
+    const selectedTools = new Set<string>((actor?.permissions?.tools ?? []).filter((item): item is string => typeof item === 'string'));
+    const profileDefaults = effectiveProfile.effectiveSkills ?? [];
+
+    return {
+      scope: resolved.scope,
+      sources: {
+        profileDefaults,
+        agencyEnabled: canonical.catalog.skills.map((item) => item.id),
+        inherited: [],
+        localOverrides: actor?.skillRefs ?? [],
+      },
+      skills: canonical.catalog.skills.map((item) => ({
+        id: item.id,
+        name: item.name,
+        description: item.description,
+        source: profileDefaults.includes(item.id) ? 'profile' : 'global',
+        state: selectedSkills.has(item.id) ? 'selected' : 'available',
+      })),
+      tools: canonical.catalog.tools.map((item) => ({
+        id: item.id,
+        name: item.name,
+        description: item.description,
+        type: item.protocol,
+        source: 'global',
+        state: selectedTools.has(item.id) ? 'selected' : 'available',
+      })),
+      effective: {
+        skills: [...selectedSkills],
+        tools: [...selectedTools],
+      },
+      ...(warnings.length > 0 ? { meta: { warnings } } : {}),
+    } as EditorSkillsToolsDto;
+  }
+
+  async patchEditorSkillsTools(input: EditorSkillsToolsPatchDto): Promise<{ ok: boolean; updatedAgentId?: string; message?: string }> {
+    const canonical = await this.studioService.getCanonicalState();
+    const actor =
+      canonical.agents.find((item) => item.id === input.id) ??
+      canonical.subagents.find((item) => item.id === input.id) ??
+      null;
+
+    if (!actor) {
+      return { ok: false, message: 'skills/tools patch is only supported for agent/subagent scopes' };
+    }
+
+    const nextSkills = new Set(actor.skillRefs ?? []);
+    const nextTools = new Set<string>((actor.permissions?.tools ?? []).filter((item): item is string => typeof item === 'string'));
+    const blockedSkills = new Set(input.skills?.disable ?? []);
+    const blockedTools = new Set(input.tools?.disable ?? []);
+
+    for (const id of input.skills?.select ?? []) {
+      if (!blockedSkills.has(id)) nextSkills.add(id);
+    }
+    for (const id of input.skills?.require ?? []) {
+      if (!blockedSkills.has(id)) nextSkills.add(id);
+    }
+    for (const id of input.skills?.deselect ?? []) {
+      nextSkills.delete(id);
+    }
+
+    for (const id of input.tools?.select ?? []) {
+      if (!blockedTools.has(id)) nextTools.add(id);
+    }
+    for (const id of input.tools?.require ?? []) {
+      if (!blockedTools.has(id)) nextTools.add(id);
+    }
+    for (const id of input.tools?.deselect ?? []) {
+      nextTools.delete(id);
+    }
+
+    const updated = this.agentsService.update(actor.id, {
+      skillRefs: [...nextSkills],
+      permissions: {
+        ...(actor.permissions ?? {}),
+        tools: [...nextTools],
+      },
+    });
+
+    if (!updated) {
+      return { ok: false, message: 'failed to update agent assignments' };
+    }
+
+    return { ok: true, updatedAgentId: updated.id };
   }
 }

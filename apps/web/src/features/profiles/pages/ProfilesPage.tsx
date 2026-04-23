@@ -158,6 +158,7 @@ export default function ProfilesPage() {
                 workspaceName={workspaceName}
                 onWorkspaceNameChange={setWorkspaceName}
                 onCreateWorkspace={() => void handleCreateWorkspace()}
+                onUseProfileForAgent={() => navigate(`/entity-editor?mode=create&type=agent&profileId=${encodeURIComponent(selectedProfile.id)}`)}
                 busy={busy}
               />
             ) : (
@@ -388,12 +389,14 @@ function ProfileDetailPanel({
   workspaceName,
   onWorkspaceNameChange,
   onCreateWorkspace,
+  onUseProfileForAgent,
   busy,
 }: {
   profile: ProfileSpec;
   workspaceName: string;
   onWorkspaceNameChange: (v: string) => void;
   onCreateWorkspace: () => void;
+  onUseProfileForAgent: () => void;
   busy: boolean;
 }) {
   return (
@@ -500,6 +503,22 @@ function ProfileDetailPanel({
           }}
         >
           {busy ? 'Creating workspace…' : 'Create workspace'}
+        </button>
+        <button
+          type="button"
+          onClick={onUseProfileForAgent}
+          style={{
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--border-primary)',
+            background: 'var(--bg-secondary)',
+            color: 'var(--text-primary)',
+            padding: '10px 14px',
+            cursor: 'pointer',
+            fontSize: 12,
+            fontWeight: 700,
+          }}
+        >
+          Use this profile for Agent
         </button>
       </div>
     </>

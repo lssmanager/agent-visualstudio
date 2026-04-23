@@ -352,43 +352,6 @@ export default function AdministrationPage() {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-          <div
-            style={{
-              borderRadius: 'var(--radius-md)',
-              border: '1px solid var(--border-primary)',
-              background: 'var(--bg-secondary)',
-              padding: '10px 12px',
-              display: 'grid',
-              gap: 4,
-            }}
-          >
-            <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)' }}>
-              Active Context
-            </div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.5 }}>
-              {contextLabel || `${entityLevel}:${entityId}`}
-            </div>
-          </div>
-          <div
-            style={{
-              borderRadius: 'var(--radius-md)',
-              border: '1px solid var(--border-primary)',
-              background: 'var(--bg-secondary)',
-              padding: '10px 12px',
-              display: 'grid',
-              gap: 4,
-            }}
-          >
-            <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)' }}>
-              Surface
-            </div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.5 }}>
-              Administration
-            </div>
-          </div>
-        </div>
-
         <div style={{ display: 'grid', gridTemplateColumns: `repeat(${tabs.length}, minmax(0,1fr))`, gap: 8 }}>
           {tabs.map((tab) => (
             <button

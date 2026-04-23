@@ -6,6 +6,7 @@ import type {
   EditorReadinessDto,
   EditorSectionStatusDto,
   EditorVersionsDto,
+  EditorSkillsToolsPatchDto,
   ProfileOverrideRequestDto,
   RuntimeCommandRequestDto,
   UnbindProfileRequestDto,
@@ -340,6 +341,22 @@ export function registerDashboardRoutes(router: Router) {
       return sendMetricValidationError(res, query.errors);
     }
     res.json(await service.getEditorVersions(query.value, query.warnings) as EditorVersionsDto);
+  });
+
+  router.get('/editor/skills-tools', async (req, res) => {
+    const query = parseMetricInput(req as any, { allowGranularity: false });
+    if (!query.ok || !query.value) {
+      return sendMetricValidationError(res, query.errors);
+    }
+    res.json(await service.getEditorSkillsTools(query.value, query.warnings));
+  });
+
+  router.patch('/editor/skills-tools', async (req, res) => {
+    const payload = req.body as EditorSkillsToolsPatchDto;
+    if (!payload?.level || !payload?.id) {
+      return res.status(400).json({ ok: false, error: 'level and id are required' });
+    }
+    return res.json(await service.patchEditorSkillsTools(payload));
   });
 
   router.get('/editor/readiness-by-workspace', async (req, res) => {
