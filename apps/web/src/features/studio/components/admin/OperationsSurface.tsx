@@ -20,6 +20,7 @@ import type {
   TopologyRuntimeAction,
 } from '../../../../lib/types';
 import { AnalyticsStateBoundary } from '../../../analytics/components/AnalyticsStateBoundary';
+import { PlannedVisualQueue } from '../../../analytics/components/PlannedVisualQueue';
 import { TimeWindowSelector } from '../../../analytics/components/TimeWindowSelector';
 import { useAnalyticsMetric } from '../../../analytics/hooks/useAnalyticsMetric';
 import type { AnalyticsWindow } from '../../../analytics/types';
@@ -387,6 +388,15 @@ export function OperationsSurface({
           <AlertTriangle size={12} /> {costMetric.error}
         </div>
       )}
+
+      <PlannedVisualQueue
+        title="P2 Refinements"
+        items={[
+          { id: 'op-p2-1', label: 'Approval Queue Forecast', note: 'Needs queue age distribution + expected service rate contracts.' },
+          { id: 'op-p2-2', label: 'Policy Conflict Explorer', note: 'Needs policy rule graph and override conflict metadata.' },
+          { id: 'op-p2-3', label: 'Runtime Recovery Simulation', note: 'Needs state transition simulation endpoint.' },
+        ]}
+      />
     </section>
   );
 }

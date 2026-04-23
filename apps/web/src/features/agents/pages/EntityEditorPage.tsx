@@ -19,6 +19,7 @@ import {
 import type { AgentSpec, HookSpec, RunSpec, WorkspaceSpec } from '../../../lib/types';
 import { RadarChart } from '../../../components/ui/Charts';
 import { AnalyticsStateBoundary } from '../../analytics/components/AnalyticsStateBoundary';
+import { PlannedVisualQueue } from '../../analytics/components/PlannedVisualQueue';
 import { TimeWindowSelector } from '../../analytics/components/TimeWindowSelector';
 import { useAnalyticsMetric } from '../../analytics/hooks/useAnalyticsMetric';
 import type { AnalyticsWindow } from '../../analytics/types';
@@ -1182,6 +1183,15 @@ function ReadinessSection({
           {readinessMetric.error ?? sectionStatusMetric.error ?? inheritanceMetric.error ?? readinessByWorkspaceMetric.error ?? dependenciesMetric.error}
         </p>
       )}
+
+      <PlannedVisualQueue
+        title="P2 Refinements"
+        items={[
+          { id: 'ed-p2-1', label: 'Prompt Graph Map', note: 'Requires prompt fragment graph projection and lineage metadata.' },
+          { id: 'ed-p2-2', label: 'Section Dependency Impact', note: 'Requires section dependency DAG and impact scoring.' },
+          { id: 'ed-p2-3', label: 'Rollback Risk Analyzer', note: 'Requires version diff semantic classifier contract.' },
+        ]}
+      />
     </div>
   );
 }

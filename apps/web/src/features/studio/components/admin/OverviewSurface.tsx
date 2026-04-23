@@ -30,6 +30,7 @@ import {
 import { Sparkline, AreaChart, BarChart, DonutChart, BulletGauge, LatencyBar } from '../../../../components/ui/Charts';
 import { AnalyticsStateBoundary } from '../../../analytics/components/AnalyticsStateBoundary';
 import { TimeWindowSelector } from '../../../analytics/components/TimeWindowSelector';
+import { PlannedVisualQueue } from '../../../analytics/components/PlannedVisualQueue';
 import type { AnalyticsWindow } from '../../../analytics/types';
 
 export function OverviewSurface({ data }: { data: DashboardOverviewDto }) {
@@ -444,6 +445,15 @@ export function OverviewSurface({ data }: { data: DashboardOverviewDto }) {
           <span>{new Date(data.versionSummary.latestSnapshotAt).toLocaleString()}</span>
         </div>
       )}
+
+      <PlannedVisualQueue
+        title="P2 Refinements"
+        items={[
+          { id: 'ov-p2-1', label: 'Cost Anomaly Bands', note: 'Requires anomaly scoring contract per model/time bucket.' },
+          { id: 'ov-p2-2', label: 'Fallback Transition Timeline', note: 'Requires model fallback transition events in runtime telemetry.' },
+          { id: 'ov-p2-3', label: 'Budget Guardrail Simulation', note: 'Requires scenario simulation endpoint with policy snapshots.' },
+        ]}
+      />
     </section>
   );
 }

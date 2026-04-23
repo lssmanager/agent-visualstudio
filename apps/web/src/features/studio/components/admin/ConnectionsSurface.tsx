@@ -26,6 +26,7 @@ import {
 import { RadialGauge, TopologyGraph, FlowSankey } from '../../../../components/ui/Charts';
 import { AnalyticsStateBoundary } from '../../../analytics/components/AnalyticsStateBoundary';
 import { TimeWindowSelector } from '../../../analytics/components/TimeWindowSelector';
+import { PlannedVisualQueue } from '../../../analytics/components/PlannedVisualQueue';
 import type { AnalyticsWindow } from '../../../analytics/types';
 
 const EDGE_STATE_CONFIG = {
@@ -355,6 +356,15 @@ export function ConnectionsSurface({ data }: { data: DashboardConnectionsDto }) 
           No topology connections in this scope.
         </div>
       )}
+
+      <PlannedVisualQueue
+        title="P2 Refinements"
+        items={[
+          { id: 'cn-p2-1', label: 'Edge Reliability Confidence Map', note: 'Needs historical edge success/failure rollups by link.' },
+          { id: 'cn-p2-2', label: 'Hook Blast-Radius Overlay', note: 'Needs dependency impact index for hook-trigger cascades.' },
+          { id: 'cn-p2-3', label: 'Routing Drift Detector', note: 'Needs baseline-vs-current routing decision snapshots.' },
+        ]}
+      />
     </section>
   );
 }
