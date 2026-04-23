@@ -1,4 +1,4 @@
-import type { CanonicalStudioState, TopologyRuntimeAction } from '../../../../../packages/core-types/src';
+import type { CanonicalStudioState, TopologyRuntimeAction, SessionState } from '../../../../../packages/core-types/src';
 
 import { HooksService } from '../hooks/hooks.service';
 import { BudgetsService } from '../budgets/budgets.service';
@@ -432,7 +432,7 @@ export class DashboardService {
     const rowsMap = new Map<string, OperationsActionsHeatmapDto['rows'][number]>();
 
     for (const run of runs) {
-      const label = run.ref.workspaceId ?? 'unknown';
+      const label = run.workspaceId ?? 'unknown';
       const row = rowsMap.get(label) ?? { scopeLabel: label, connect: 0, disconnect: 0, pause: 0, reactivate: 0, redirect: 0, continue: 0 };
       const action = String(run.metadata?.runtimeAction ?? '').toLowerCase();
       switch (action) {
@@ -773,7 +773,7 @@ export class DashboardService {
     const resolved = this.scopeResolver.resolve(canonical, input);
     const timeline = this.buildTimeline(input.window);
     const agents = this.countAgents(canonical, resolved.workspaceIds);
-    const channels = resolved.sessions.filter((session) => Boolean((session as any).channel)).length;
+    const channels = resolved.sessions.filter((session: SessionState) => Boolean((session as any).channel)).length;
     const runs = this.filterRunsByScope(canonical, resolved.workspaceIds, resolved.agentIds);
     const snapshots = this.versionsService.listSnapshots().length;
     const runCounts = this.seriesFromEvents(
@@ -799,7 +799,7 @@ export class DashboardService {
       channels: { current: channels, delta: 0, trend: this.toTrend(timeline, Array.from({ length: timeline.length }, () => channels)) },
       running: runs.filter((run) => run.status === 'running').length,
       awaitingApproval: runs.filter((run) => run.status === 'waiting_approval').length,
-      paused: resolved.sessions.filter((session) => session.status === 'paused').length,
+      paused: resolved.sessions.filter((session: SessionState) => session.status === 'paused').length,
       snapshots,
     };
   }
@@ -890,11 +890,11 @@ export class DashboardService {
     const timeline = this.buildTimeline(input.window);
     const activeSeries = this.seriesFromEvents(
       timeline,
-      resolved.sessions.filter((session) => session.status === 'active').map((session) => session.lastEventAt).filter(Boolean) as string[],
+      resolved.sessions.filter((session: SessionState) => session.status === 'active').map((session: SessionState) => session.lastEventAt).filter(Boolean) as string[],
     );
     const completedSeries = this.seriesFromEvents(
       timeline,
-      resolved.sessions.filter((session) => session.status === 'closed').map((session) => session.lastEventAt).filter(Boolean) as string[],
+      resolved.sessions.filter((session: SessionState) => session.status === 'closed').map((session: SessionState) => session.lastEventAt).filter(Boolean) as string[],
     );
     const series = timeline.map((ts, idx) => ({ ts, active: activeSeries[idx] ?? 0, completed: completedSeries[idx] ?? 0 }));
     return {
@@ -1221,7 +1221,7 @@ export class DashboardService {
     const connected = canonical.topology.links.filter(l => l.runtimeState === 'connected').length;
     const hooks = this.hooksService.findAll();
     const enabledHooks = hooks.filter((h: any) => h.enabled !== false).length;
-    const routing = this.routingService.findAll();
+    const routing = this.routingService.getCompiledRouting()?.rules ?? [];
     return {
       scope: resolved.scope,
       window: input.window,
@@ -1291,11 +1291,12 @@ export class DashboardService {
     const agents = canonical.agents.filter(a => agentSet.has(a.id));
     const nodes: ConnectionsTopologyDto['nodes'] = [];
     const edges: ConnectionsTopologyDto['edges'] = [];
-    nodes.push({ id: 'workspace', label: canonical.workspace?.name ?? 'Workspace', type: 'workspace', x: 400, y: 280, meta: canonical.runtime.health.ok ? 'ok' : 'critical' });
+    const workspaceName = canonical.workspaces.find((w) => resolved.workspaceIds.includes(w.id))?.name ?? 'Workspace';
+    nodes.push({ id: 'workspace', label: workspaceName, type: 'workspace', x: 400, y: 280, meta: canonical.runtime.health.ok ? 'ok' : 'critical' });
     agents.slice(0, 16).forEach((agent, i) => {
       const angle = (2 * Math.PI * i) / Math.max(agents.length, 1);
       const r = Math.min(200, 80 + agents.length * 12);
-      const sessionsForAgentWorkspace = resolved.sessions.filter((session) => session.ref.workspaceId === agent.workspaceId).length;
+      const sessionsForAgentWorkspace = resolved.sessions.filter((session: SessionState) => session.ref.workspaceId === agent.workspaceId).length;
       const health = sessionsForAgentWorkspace > 10 ? 'critical' : sessionsForAgentWorkspace > 3 ? 'warning' : 'ok';
       nodes.push({
         id: agent.id,
@@ -1311,7 +1312,7 @@ export class DashboardService {
     for (const link of links) {
       const conn = canonical.topology.connections.find(c => c.id === link.linkId);
       if (conn && nodes.find(n => n.id === conn.from.id) && nodes.find(n => n.id === conn.to.id)) {
-        const weight = resolved.sessions.filter((session) => session.ref.workspaceId && (session.ref.workspaceId === conn.from.id || session.ref.workspaceId === conn.to.id)).length;
+        const weight = resolved.sessions.filter((session: SessionState) => session.ref.workspaceId && (session.ref.workspaceId === conn.from.id || session.ref.workspaceId === conn.to.id)).length;
         edges.push({ from: conn.from.id, to: conn.to.id, label: link.runtimeState, weight: Math.max(1, weight) });
       }
     }
@@ -1331,7 +1332,7 @@ export class DashboardService {
     const agents = canonical.agents.filter(a => agentSet.has(a.id));
     const nodes = [
       { id: 'input', label: 'Input', value: 100 },
-      ...agents.slice(0, 6).map((agent) => ({ id: agent.id, label: agent.name, value: Math.max(1, resolved.sessions.filter((session) => session.ref.workspaceId === agent.workspaceId).length) })),
+      ...agents.slice(0, 6).map((agent) => ({ id: agent.id, label: agent.name, value: Math.max(1, resolved.sessions.filter((session: SessionState) => session.ref.workspaceId === agent.workspaceId).length) })),
       { id: 'output', label: 'Output', value: 95 },
     ];
     const links: ConnectionsFlowGraphDto['links'] = [];
@@ -1407,7 +1408,7 @@ export class DashboardService {
       nodes.push({ id: department.id, parentId: canonical.agency.id, label: department.name, level: 'department', value: Math.max(1, department.workspaceIds.length) });
     }
     for (const workspace of canonical.workspaces) {
-      const sessions = canonical.sessions.filter((session) => session.ref.workspaceId === workspace.id).length;
+      const sessions = canonical.runtimeControl.sessions.filter((session) => session.ref.workspaceId === workspace.id).length;
       nodes.push({ id: workspace.id, parentId: workspace.departmentId, label: workspace.name, level: 'workspace', value: Math.max(1, sessions) });
     }
     return {
@@ -1517,11 +1518,12 @@ export class DashboardService {
   async getEditorInheritance(input: MetricsQueryDto, warnings: string[] = []): Promise<EditorInheritanceDto> {
     const canonical = await this.studioService.getCanonicalState();
     const resolved = this.scopeResolver.resolve(canonical, input);
+    const workspace = this.resolveWorkspace(canonical, resolved.scope, resolved.workspaceIds);
     return {
       scope: resolved.scope,
       state: this.analyticsState(Boolean(canonical.runtime.health.ok), true),
       data: [
-        { field: 'model', source: 'inherited', effectiveValue: canonical.workspace?.defaultModel ?? 'gpt-5.4' },
+        { field: 'model', source: 'inherited', effectiveValue: workspace?.defaultModel ?? 'gpt-5.4' },
         { field: 'skills', source: 'local_override', effectiveValue: String(resolved.agentIds.length) },
         { field: 'policies', source: 'locked', effectiveValue: String(this.policiesService.findAll().length) },
       ],
@@ -1552,7 +1554,7 @@ export class DashboardService {
     const canonical = await this.studioService.getCanonicalState();
     const resolved = this.scopeResolver.resolve(canonical, input);
     const data = canonical.workspaces.map((workspace) => {
-      const sessions = canonical.sessions.filter((session) => session.ref.workspaceId === workspace.id).length;
+      const sessions = canonical.runtimeControl.sessions.filter((session) => session.ref.workspaceId === workspace.id).length;
       const agents = canonical.agents.filter((agent) => agent.workspaceId === workspace.id).length;
       const readinessPct = Math.min(100, Math.round((sessions * 5 + agents * 10 + (workspace.profileIds?.length ?? 0) * 12)));
       return {
