@@ -13,7 +13,7 @@ const NAV: Array<{ label: string; surface: SurfaceId; Icon: ComponentType<{ size
   { label: 'Editor', surface: 'entity-editor', Icon: SquarePen },
 ];
 
-export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
+export function NavRail({ onNavigate, compact = false }: { onNavigate?: () => void; compact?: boolean }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { state } = useStudioState();
@@ -30,7 +30,7 @@ export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div
       style={{
-        width: 88,
+        width: compact ? 64 : 88,
         background: 'var(--shell-rail-bg)',
         borderRight: '1px solid var(--shell-rail-border)',
         display: 'flex',
@@ -38,8 +38,8 @@ export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
         alignItems: 'center',
         gap: 8,
         padding: '12px 8px',
-        height: '100%',
-        overflowY: 'auto',
+        height: '100vh',
+        overflow: 'hidden',
       }}
     >
       <button
@@ -54,7 +54,7 @@ export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
           )
         }
         style={{
-          width: 56,
+          width: compact ? 46 : 56,
           height: 56,
           borderRadius: 14,
           background: 'var(--color-primary)',
@@ -76,8 +76,8 @@ export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
         OC
       </button>
 
-      <div style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Environment</div>
-      <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, width: '100%' }}>
+      {!compact && <div style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Environment</div>}
+      <nav style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, width: '100%' }}>
         {NAV.map(({ label, surface, Icon }) => {
           const isActive = currentSurface === surface || isProductSurfacePath(location.pathname, surface);
           const href = buildStudioHref({
@@ -93,7 +93,7 @@ export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
               data-tip={label}
               aria-label={label}
               style={{
-                width: 72,
+                width: compact ? 48 : 72,
                 borderRadius: 12,
                 border: isActive ? '1px solid rgba(77,124,255,0.34)' : '1px solid transparent',
                 background: isActive ? 'rgba(77,124,255,0.2)' : 'transparent',
@@ -109,13 +109,13 @@ export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
               }}
             >
               <Icon size={17} />
-              <span style={{ fontSize: 10, fontWeight: 700 }}>{label}</span>
+              {!compact && <span style={{ fontSize: 10, fontWeight: 700 }}>{label}</span>}
             </button>
           );
         })}
       </nav>
 
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7, paddingTop: 8, width: '100%' }}>
+      <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7, paddingTop: 8, width: '100%' }}>
         <div
           title={runtimeOk ? 'Runtime online' : 'Runtime offline'}
           style={{
@@ -131,7 +131,7 @@ export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
           data-tip={getSurfaceLabel('profiles')}
           aria-label={getSurfaceLabel('profiles')}
           style={{
-            width: 72,
+            width: compact ? 48 : 72,
             borderRadius: 12,
             border: currentSurface === 'profiles'
               ? '1px solid rgba(77,124,255,0.34)'
@@ -142,20 +142,20 @@ export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
             color: currentSurface === 'profiles' ? '#f2f7ff' : 'var(--shell-rail-text)',
             display: 'grid',
             placeItems: 'center',
-            gap: 3,
+            gap: compact ? 0 : 3,
             cursor: 'pointer',
             padding: '9px 6px 8px',
           }}
         >
-          <BookOpen size={17} />
-          <span style={{ fontSize: 10, fontWeight: 700 }}>{getSurfaceLabel('profiles')}</span>
-        </button>
+            <BookOpen size={17} />
+            {!compact && <span style={{ fontSize: 10, fontWeight: 700 }}>{getSurfaceLabel('profiles')}</span>}
+          </button>
         <button
           onClick={() => go('settings', buildStudioHref({ surface: 'settings', nodeKey: selectedKey }))}
           data-tip={getSurfaceLabel('settings')}
           aria-label={getSurfaceLabel('settings')}
           style={{
-            width: 72,
+            width: compact ? 48 : 72,
             borderRadius: 12,
             border: currentSurface === 'settings'
               ? '1px solid rgba(77,124,255,0.34)'
@@ -166,14 +166,14 @@ export function NavRail({ onNavigate }: { onNavigate?: () => void }) {
             color: currentSurface === 'settings' ? '#f2f7ff' : 'var(--shell-rail-text)',
             display: 'grid',
             placeItems: 'center',
-            gap: 3,
+            gap: compact ? 0 : 3,
             cursor: 'pointer',
             padding: '9px 6px 8px',
           }}
         >
-          <Settings size={17} />
-          <span style={{ fontSize: 10, fontWeight: 700 }}>{getSurfaceLabel('settings')}</span>
-        </button>
+            <Settings size={17} />
+            {!compact && <span style={{ fontSize: 10, fontWeight: 700 }}>{getSurfaceLabel('settings')}</span>}
+          </button>
       </div>
     </div>
   );

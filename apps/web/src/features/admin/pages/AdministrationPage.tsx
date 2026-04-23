@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AlertTriangle } from 'lucide-react';
 
@@ -28,6 +28,7 @@ import type {
   TopologyRuntimeAction,
 } from '../../../lib/types';
 import { useStudioState } from '../../../lib/StudioStateContext';
+import { useShellLayout } from '../../../layouts/ShellLayoutContext';
 import { AdminSettingsPanel } from '../../studio/components/admin/AdminSettingsPanel';
 import { ConnectionsSurface } from '../../studio/components/admin/ConnectionsSurface';
 import { OperationsSurface } from '../../studio/components/admin/OperationsSurface';
@@ -127,6 +128,7 @@ export default function AdministrationPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { state } = useStudioState();
+  const { inspectorCollapsed, inspectorWidth, setInspectorWidth, focusMode } = useShellLayout();
   const { selectedNode, selectedLineage, setBuilderTab } = useHierarchy();
 
   const entityLevel = getEntityLevel(selectedNode?.level);
@@ -149,6 +151,7 @@ export default function AdministrationPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [actionResult, setActionResult] = useState<Pick<TopologyActionResult, 'status' | 'message' | 'action'> | null>(null);
+  const dragRef = useRef<{ active: boolean; startX: number; startW: number }>({ active: false, startX: 0, startW: 0 });
 
   const contextLabel = selectedLineage.map((item) => item.label).join(' / ');
   const profileCatalog = useMemo(() => state.profiles ?? [], [state.profiles]);
@@ -285,8 +288,31 @@ export default function AdministrationPage() {
     }
   }
 
+  function startInspectorDrag(e: React.MouseEvent) {
+    e.preventDefault();
+    dragRef.current = { active: true, startX: e.clientX, startW: inspectorWidth };
+    const onMove = (ev: MouseEvent) => {
+      if (!dragRef.current.active) return;
+      const delta = dragRef.current.startX - ev.clientX;
+      const next = Math.max(280, Math.min(520, dragRef.current.startW + delta));
+      setInspectorWidth(next);
+    };
+    const onUp = () => {
+      dragRef.current.active = false;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  const showInspector = !focusMode && !inspectorCollapsed;
   return (
-    <div style={{ maxWidth: 1520, margin: '0 auto', display: 'grid', gap: 14 }}>
+    <div style={{ maxWidth: 1520, margin: '0 auto', display: 'grid', gap: 14, height: '100%', minHeight: 0 }}>
       <section style={panelStyle}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 10, flexWrap: 'wrap' }}>
           <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
@@ -390,8 +416,8 @@ export default function AdministrationPage() {
         </div>
       </section>
 
-      <section style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 360px', gap: 14 }} className="studio-responsive-two-col">
-        <div style={{ display: 'grid', gap: 14 }}>
+      <section style={{ display: 'grid', gridTemplateColumns: showInspector ? `minmax(0, 1fr) 6px ${inspectorWidth}px` : 'minmax(0, 1fr)', gap: showInspector ? 0 : 14, minHeight: 0, height: '100%' }}>
+        <div style={{ display: 'grid', gap: 14, minHeight: 0, overflowY: 'auto', paddingRight: showInspector ? 14 : 0 }}>
           {isInitialLoading && <SurfaceStateCard title="Loading administration projections" description="Fetching overview, connections, operations and inspector data for the current scope." />}
           {error && !hasLoadedProjections && (
             <SurfaceStateCard title="Failed to load administration data" description={error} tone="danger" />
@@ -477,11 +503,21 @@ export default function AdministrationPage() {
           )}
         </div>
 
-        <RightInspectorPanel
-          data={inspector}
-          state={isInitialLoading ? 'loading' : error && !hasLoadedProjections ? 'error' : 'empty'}
-          message={error ?? 'No inspector data available for this scope.'}
-        />
+        {showInspector && (
+          <>
+            <div
+              onMouseDown={startInspectorDrag}
+              style={{ cursor: 'col-resize', width: 6, minHeight: 0, background: 'var(--shell-panel-border)' }}
+            />
+            <div style={{ minHeight: 0, overflowY: 'auto', paddingLeft: 14 }}>
+              <RightInspectorPanel
+                data={inspector}
+                state={isInitialLoading ? 'loading' : error && !hasLoadedProjections ? 'error' : 'empty'}
+                message={error ?? 'No inspector data available for this scope.'}
+              />
+            </div>
+          </>
+        )}
       </section>
 
       {notice && <div style={noticeStyle}>{notice}</div>}
