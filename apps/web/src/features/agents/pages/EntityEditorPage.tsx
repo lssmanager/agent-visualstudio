@@ -4,9 +4,22 @@ import { SquarePen, Save, Lock, Users, BookOpen, Wrench, GitBranch, Zap, History
 import { PageHeader } from '../../../components';
 import { useHierarchy } from '../../../lib/HierarchyContext';
 import { useStudioState } from '../../../lib/StudioStateContext';
-import { saveAgent, updateWorkspace, getHooks, getVersions, getRuns, getEffectiveProfile } from '../../../lib/api';
-import type { AgentSpec, CanonicalNodeLevel, EffectiveProfileDto, HookSpec, RunSpec, VersionSnapshot, WorkspaceSpec } from '../../../lib/types';
+import {
+  saveAgent,
+  updateWorkspace,
+  getHooks,
+  getRuns,
+  getEditorReadiness,
+  getEditorSectionStatus,
+  getEditorInheritance,
+  getEditorVersions,
+} from '../../../lib/api';
+import type { AgentSpec, HookSpec, RunSpec, WorkspaceSpec } from '../../../lib/types';
 import { RadarChart } from '../../../components/ui/Charts';
+import { AnalyticsStateBoundary } from '../../analytics/components/AnalyticsStateBoundary';
+import { TimeWindowSelector } from '../../analytics/components/TimeWindowSelector';
+import { useAnalyticsMetric } from '../../analytics/hooks/useAnalyticsMetric';
+import type { AnalyticsWindow } from '../../analytics/types';
 
 type EntitySection =
   | 'identity'
@@ -708,81 +721,97 @@ function HooksSection() {
 
 // ── Versions Section ──────────────────────────────────────────────────────
 
-function VersionsSection() {
-  const [versions, setVersions] = useState<VersionSnapshot[] | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+function VersionsSection({
+  level,
+  entityId,
+}: {
+  level: EntityLevel;
+  entityId: string;
+}) {
+  const [window, setWindow] = useState<AnalyticsWindow>('24H');
 
-  useEffect(() => {
-    setLoading(true);
-    getVersions()
-      .then(setVersions)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to load versions'))
-      .finally(() => setLoading(false));
-  }, []);
-
-  if (loading) return <SectionLoading />;
-  if (error) return <p className="text-sm" style={{ color: 'var(--tone-danger-text)' }}>{error}</p>;
+  const versionsMetric = useAnalyticsMetric({
+    level,
+    id: entityId,
+    window,
+    fetcher: (lvl, scopeId, selectedWindow) => getEditorVersions(lvl, scopeId, selectedWindow),
+    getState: (payload) => payload.state as any,
+  });
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Version Snapshots</p>
-          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{versions?.length ?? 0} snapshots</p>
+          <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Versions Timeline</p>
+          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+            Contract-backed versions for {level}:{entityId}
+          </p>
         </div>
-        <ReadOnlyBadge />
+        <div className="flex items-center gap-2">
+          <ReadOnlyBadge />
+          <TimeWindowSelector value={window} onChange={setWindow} />
+        </div>
       </div>
-      {!versions?.length ? (
-        <div className="py-6 text-center rounded-lg border border-dashed" style={{ borderColor: 'var(--border-primary)' }}>
-          <History size={24} className="mx-auto mb-2" style={{ color: 'var(--text-muted)' }} />
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No snapshots</p>
-          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Create a version snapshot to capture the current state</p>
-        </div>
-      ) : (
-        <div style={{ position: 'relative' }}>
-          {/* Timeline spine */}
-          <div style={{ position: 'absolute', left: 10, top: 0, bottom: 0, width: 2, background: 'var(--border-primary)' }} />
-          <div className="space-y-2" style={{ paddingLeft: 28 }}>
-            {versions.slice(0, 8).map((v, idx) => (
-              <div
-                key={v.id}
-                style={{
-                  position: 'relative',
-                  borderRadius: 'var(--radius-md)',
-                  border: '1px solid var(--border-primary)',
-                  background: idx === 0 ? 'var(--color-primary-soft)' : 'var(--bg-secondary)',
-                  padding: '8px 12px',
-                }}
-              >
-                {/* Timeline dot */}
-                <div style={{
-                  position: 'absolute',
-                  left: -24,
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  width: 10,
-                  height: 10,
-                  borderRadius: '50%',
-                  background: idx === 0 ? 'var(--color-primary)' : 'var(--border-primary)',
-                  border: '2px solid var(--bg-primary)',
-                }} />
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-semibold" style={{ color: idx === 0 ? 'var(--color-primary)' : 'var(--text-primary)' }}>
-                      {v.label ?? 'Snapshot'}
-                      {idx === 0 && <span style={{ fontSize: 9, marginLeft: 6, fontWeight: 700, textTransform: 'uppercase', background: 'var(--color-primary)', color: '#fff', padding: '1px 5px', borderRadius: 999 }}>latest</span>}
-                    </p>
-                    <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                      {new Date(v.createdAt).toLocaleString()}
-                    </p>
-                  </div>
-                  <code className="text-xs" style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{v.id.substring(0, 8)}</code>
-                </div>
-              </div>
-            ))}
+
+      <AnalyticsStateBoundary state={versionsMetric.state} title="Versions timeline">
+        {!versionsMetric.data?.data?.length ? (
+          <div className="py-6 text-center rounded-lg border border-dashed" style={{ borderColor: 'var(--border-primary)' }}>
+            <History size={24} className="mx-auto mb-2" style={{ color: 'var(--text-muted)' }} />
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No versions</p>
           </div>
-        </div>
+        ) : (
+          <div style={{ position: 'relative' }}>
+            <div style={{ position: 'absolute', left: 10, top: 0, bottom: 0, width: 2, background: 'var(--border-primary)' }} />
+            <div className="space-y-2" style={{ paddingLeft: 28 }}>
+              {versionsMetric.data.data.slice(0, 12).map((v, idx) => (
+                <div
+                  key={v.id}
+                  style={{
+                    position: 'relative',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border-primary)',
+                    background: v.status === 'current' ? 'var(--color-primary-soft)' : 'var(--bg-secondary)',
+                    padding: '8px 12px',
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: -24,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      width: 10,
+                      height: 10,
+                      borderRadius: '50%',
+                      background: v.status === 'current' ? 'var(--color-primary)' : 'var(--border-primary)',
+                      border: '2px solid var(--bg-primary)',
+                    }}
+                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold" style={{ color: v.status === 'current' ? 'var(--color-primary)' : 'var(--text-primary)' }}>
+                        {v.label}
+                        {idx === 0 && (
+                          <span style={{ fontSize: 9, marginLeft: 6, fontWeight: 700, textTransform: 'uppercase', background: 'var(--color-primary)', color: '#fff', padding: '1px 5px', borderRadius: 999 }}>
+                            latest
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                        {new Date(v.at).toLocaleString()}
+                      </p>
+                    </div>
+                    <span className="text-xs" style={{ color: 'var(--text-muted)', textTransform: 'capitalize' }}>{v.status}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </AnalyticsStateBoundary>
+
+      {versionsMetric.error && (
+        <p className="text-xs" style={{ color: 'var(--tone-danger-text)' }}>{versionsMetric.error}</p>
       )}
     </div>
   );
@@ -914,113 +943,123 @@ function CatalogSection() {
 
 function ReadinessSection({
   level,
-  agent,
-  workspace,
   entityId,
 }: {
   level: EntityLevel;
-  agent: AgentSpec | null;
-  workspace: WorkspaceSpec | null;
   entityId: string;
 }) {
-  const { state } = useStudioState();
-  const [profile, setProfile] = useState<EffectiveProfileDto | null>(null);
+  const [window, setWindow] = useState<AnalyticsWindow>('24H');
 
-  useEffect(() => {
-    if (level === 'workspace' || level === 'agent' || level === 'subagent') {
-      getEffectiveProfile(level as CanonicalNodeLevel, entityId).then(setProfile).catch(() => null);
-    }
-  }, [level, entityId]);
+  const readinessMetric = useAnalyticsMetric({
+    level,
+    id: entityId,
+    window,
+    fetcher: (lvl, scopeId, selectedWindow) => getEditorReadiness(lvl, scopeId, selectedWindow),
+    getState: (payload) => payload.state as any,
+  });
 
-  // Compute per-section readiness (0–1)
-  const axes = useMemo(() => {
-    if (level === 'agent' || level === 'subagent') {
-      const a = agent;
-      return [
-        { label: 'Identity',      value: a ? (a.name ? 0.5 : 0) + (a.role ? 0.25 : 0) + (a.description ? 0.25 : 0) : 0 },
-        { label: 'Instructions',  value: a?.instructions ? Math.min(1, a.instructions.length / 200) : 0 },
-        { label: 'Skills',        value: a?.skillRefs?.length ? Math.min(1, a.skillRefs.length / 5) : 0 },
-        { label: 'Routing',       value: a?.channelBindings?.length ? Math.min(1, a.channelBindings.filter((b) => b.enabled).length / Math.max(1, a.channelBindings.length)) : 0 },
-        { label: 'Handoffs',      value: a?.handoffRules?.length ? Math.min(1, a.handoffRules.length / 3) : 0 },
-        { label: 'Profile',       value: profile?.catalogProfile ? 1 : 0 },
-      ];
-    }
-    if (level === 'workspace') {
-      const w = workspace;
-      return [
-        { label: 'Identity',   value: w ? (w.name ? 0.5 : 0) + (w.defaultModel ? 0.5 : 0) : 0 },
-        { label: 'Agents',     value: Math.min(1, (w?.agentIds?.length ?? 0) / 5) },
-        { label: 'Skills',     value: Math.min(1, (w?.skillIds?.length ?? 0) / 5) },
-        { label: 'Profiles',   value: Math.min(1, (w?.profileIds?.length ?? 0) / 2) },
-        { label: 'Policies',   value: Math.min(1, (w?.policyRefs?.length ?? 0) / 3) },
-        { label: 'Routing',    value: Math.min(1, (w?.routingRules?.length ?? 0) / 4) },
-      ];
-    }
-    if (level === 'agency') {
-      const skills = state.skills ?? [];
-      const agents = state.agents ?? [];
-      return [
-        { label: 'Agents',     value: Math.min(1, agents.length / 5) },
-        { label: 'Skills',     value: Math.min(1, skills.length / 5) },
-        { label: 'Flows',      value: Math.min(1, (state.flows?.length ?? 0) / 3) },
-        { label: 'Profiles',   value: Math.min(1, (state.profiles?.length ?? 0) / 3) },
-        { label: 'Runtime',    value: state.runtime?.health?.ok ? 1 : 0 },
-      ];
-    }
-    return [];
-  }, [level, agent, workspace, profile, state]);
+  const sectionStatusMetric = useAnalyticsMetric({
+    level,
+    id: entityId,
+    window,
+    fetcher: (lvl, scopeId, selectedWindow) => getEditorSectionStatus(lvl, scopeId, selectedWindow),
+    getState: (payload) => payload.state as any,
+  });
+
+  const inheritanceMetric = useAnalyticsMetric({
+    level,
+    id: entityId,
+    window,
+    fetcher: (lvl, scopeId, selectedWindow) => getEditorInheritance(lvl, scopeId, selectedWindow),
+    getState: (payload) => payload.state as any,
+  });
+
+  const axes = useMemo(
+    () =>
+      (readinessMetric.data?.data ?? []).map((item) => ({
+        label: item.dimension,
+        value: Math.max(0, Math.min(1, item.score)),
+      })),
+    [readinessMetric.data],
+  );
 
   const overallPct = axes.length > 0 ? Math.round((axes.reduce((sum, a) => sum + a.value, 0) / axes.length) * 100) : 0;
 
-  // Inheritance matrix (profile-scoped only)
-  const showInheritance = level === 'agent' || level === 'subagent' || level === 'workspace';
-
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Config Readiness</p>
           <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            {overallPct}% complete across {axes.length} dimensions
+            {overallPct}% complete across {axes.length} dimensions (contract-backed)
           </p>
         </div>
-        <div
-          style={{
-            fontSize: 20,
-            fontWeight: 800,
-            color: overallPct >= 80 ? 'var(--tone-success-text, #10b981)' : overallPct >= 50 ? 'var(--tone-warning-text, #f59e0b)' : 'var(--tone-danger-text, #ef4444)',
-          }}
-        >
-          {overallPct}%
+        <div className="flex items-center gap-3">
+          <div
+            style={{
+              fontSize: 20,
+              fontWeight: 800,
+              color: overallPct >= 80 ? 'var(--tone-success-text, #10b981)' : overallPct >= 50 ? 'var(--tone-warning-text, #f59e0b)' : 'var(--tone-danger-text, #ef4444)',
+            }}
+          >
+            {overallPct}%
+          </div>
+          <TimeWindowSelector value={window} onChange={setWindow} />
         </div>
       </div>
 
-      {/* Radar chart + per-axis bars */}
-      {axes.length >= 3 && (
-        <div style={{ display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap' }}>
-          <RadarChart axes={axes} size={160} color="var(--color-primary)" />
-          <div style={{ flex: 1, minWidth: 120, display: 'grid', gap: 8 }}>
-            {axes.map((axis) => {
-              const pct = Math.round(axis.value * 100);
-              const color = pct >= 80 ? 'var(--tone-success-text, #10b981)' : pct >= 40 ? 'var(--tone-warning-text, #f59e0b)' : 'var(--tone-danger-text, #ef4444)';
-              return (
-                <div key={axis.label}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
-                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{axis.label}</span>
-                    <span style={{ fontSize: 10, fontWeight: 700, color }}>{pct}%</span>
+      <AnalyticsStateBoundary state={readinessMetric.state} title="Readiness radar">
+        {axes.length >= 3 && (
+          <div style={{ display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap' }}>
+            <RadarChart axes={axes} size={160} color="var(--color-primary)" />
+            <div style={{ flex: 1, minWidth: 120, display: 'grid', gap: 8 }}>
+              {axes.map((axis) => {
+                const pct = Math.round(axis.value * 100);
+                const color = pct >= 80 ? 'var(--tone-success-text, #10b981)' : pct >= 40 ? 'var(--tone-warning-text, #f59e0b)' : 'var(--tone-danger-text, #ef4444)';
+                return (
+                  <div key={axis.label}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{axis.label}</span>
+                      <span style={{ fontSize: 10, fontWeight: 700, color }}>{pct}%</span>
+                    </div>
+                    <div style={{ height: 3, background: 'var(--border-primary)', borderRadius: 99, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 99 }} />
+                    </div>
                   </div>
-                  <div style={{ height: 3, background: 'var(--border-primary)', borderRadius: 99, overflow: 'hidden' }}>
-                    <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 99 }} />
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </AnalyticsStateBoundary>
 
-      {/* Inheritance/override matrix */}
-      {showInheritance && profile && (
+      <AnalyticsStateBoundary state={sectionStatusMetric.state} title="Section stepper">
+        <div style={{ display: 'grid', gap: 8 }}>
+          {(sectionStatusMetric.data?.data ?? []).map((row, index) => {
+            const tone =
+              row.status === 'complete'
+                ? 'var(--tone-success-text, #10b981)'
+                : row.status === 'in_progress'
+                  ? 'var(--color-primary)'
+                  : row.status === 'blocked'
+                    ? 'var(--tone-danger-text, #ef4444)'
+                    : 'var(--text-muted)';
+            return (
+              <div key={`${row.section}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 20, height: 20, borderRadius: 999, border: `1px solid ${tone}`, color: tone, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700 }}>
+                  {index + 1}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{row.section}</div>
+                  <div style={{ fontSize: 10, color: tone, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{row.status.replace('_', ' ')}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </AnalyticsStateBoundary>
+
+      <AnalyticsStateBoundary state={inheritanceMetric.state} title="Inheritance matrix">
         <div
           className="rounded-lg border overflow-hidden"
           style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}
@@ -1041,7 +1080,7 @@ function ReadinessSection({
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
             <thead>
               <tr>
-                {['Property', 'Effective Value', 'Source', 'Overridden?'].map((h) => (
+                {['Field', 'Effective Value', 'Source'].map((h) => (
                   <th key={h} style={{ padding: '6px 10px', textAlign: 'left', fontWeight: 700, color: 'var(--text-muted)', borderBottom: '1px solid var(--border-primary)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                     {h}
                   </th>
@@ -1049,26 +1088,23 @@ function ReadinessSection({
               </tr>
             </thead>
             <tbody>
-              {[
-                { prop: 'Model',    effective: profile.effectiveModel ?? '—',                   source: profile.appliedAtLevel ?? 'none',   overridden: Boolean(profile.overrides?.model) },
-                { prop: 'Skills',   effective: profile.effectiveSkills.slice(0, 3).join(', ') || '—', source: profile.appliedAtLevel ?? 'none',   overridden: Boolean(profile.overrides?.skills?.length) },
-                { prop: 'Routines', effective: profile.effectiveRoutines.slice(0, 2).join(', ') || '—', source: profile.appliedAtLevel ?? 'none', overridden: Boolean(profile.overrides?.routines?.length) },
-                { prop: 'Tags',     effective: profile.effectiveTags.slice(0, 3).join(', ') || '—',    source: profile.appliedAtLevel ?? 'none', overridden: Boolean(profile.overrides?.tags?.length) },
-              ].map((row, i) => (
-                <tr key={row.prop} style={{ background: i % 2 === 0 ? 'transparent' : 'var(--bg-primary)' }}>
-                  <td style={{ padding: '5px 10px', color: 'var(--text-muted)', fontWeight: 600 }}>{row.prop}</td>
-                  <td style={{ padding: '5px 10px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 10 }}>{row.effective}</td>
-                  <td style={{ padding: '5px 10px', color: 'var(--text-muted)' }}>{String(row.source)}</td>
+              {(inheritanceMetric.data?.data ?? []).map((row, i) => (
+                <tr key={`${row.field}-${i}`} style={{ background: i % 2 === 0 ? 'transparent' : 'var(--bg-primary)' }}>
+                  <td style={{ padding: '5px 10px', color: 'var(--text-muted)', fontWeight: 600 }}>{row.field}</td>
+                  <td style={{ padding: '5px 10px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 10 }}>{row.effectiveValue}</td>
                   <td style={{ padding: '5px 10px' }}>
-                    <span style={{
-                      fontSize: 9,
-                      fontWeight: 700,
-                      borderRadius: 999,
-                      padding: '1px 6px',
-                      background: row.overridden ? 'var(--tone-warning-bg, rgba(245,158,11,0.08))' : 'var(--bg-tertiary)',
-                      color: row.overridden ? 'var(--tone-warning-text, #f59e0b)' : 'var(--text-muted)',
-                    }}>
-                      {row.overridden ? 'overridden' : 'inherited'}
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 700,
+                        borderRadius: 999,
+                        padding: '1px 6px',
+                        background: row.source === 'local_override' ? 'var(--tone-warning-bg, rgba(245,158,11,0.08))' : 'var(--bg-tertiary)',
+                        color: row.source === 'local_override' ? 'var(--tone-warning-text, #f59e0b)' : 'var(--text-muted)',
+                        textTransform: 'capitalize',
+                      }}
+                    >
+                      {row.source.replace('_', ' ')}
                     </span>
                   </td>
                 </tr>
@@ -1076,13 +1112,12 @@ function ReadinessSection({
             </tbody>
           </table>
         </div>
-      )}
+      </AnalyticsStateBoundary>
 
-      {showInheritance && !profile && (
-        <div className="py-4 text-center rounded-lg border border-dashed" style={{ borderColor: 'var(--border-primary)' }}>
-          <Target size={20} className="mx-auto mb-1" style={{ color: 'var(--text-muted)' }} />
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No profile bound. Bind a profile to see the inheritance matrix.</p>
-        </div>
+      {(readinessMetric.error || sectionStatusMetric.error || inheritanceMetric.error) && (
+        <p className="text-xs" style={{ color: 'var(--tone-danger-text)' }}>
+          {readinessMetric.error ?? sectionStatusMetric.error ?? inheritanceMetric.error}
+        </p>
       )}
     </div>
   );
@@ -1274,13 +1309,11 @@ export default function EntityEditorPage() {
           )}
           {activeSection === 'handoffs' && <HandoffsSection agent={activeAgent} />}
           {activeSection === 'hooks' && <HooksSection />}
-          {activeSection === 'versions' && <VersionsSection />}
+          {activeSection === 'versions' && <VersionsSection level={entityLevel} entityId={selectedNode?.id ?? ''} />}
           {activeSection === 'operations' && <OperationsSection />}
           {activeSection === 'readiness' && (
             <ReadinessSection
               level={entityLevel}
-              agent={activeAgent}
-              workspace={workspace}
               entityId={selectedNode?.id ?? ''}
             />
           )}
