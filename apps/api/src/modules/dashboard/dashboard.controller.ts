@@ -2,10 +2,15 @@ import { Router } from 'express';
 
 import type {
   BindProfileRequestDto,
+  EditorInheritanceDto,
+  EditorReadinessDto,
+  EditorSectionStatusDto,
+  EditorVersionsDto,
   ProfileOverrideRequestDto,
   RuntimeCommandRequestDto,
   UnbindProfileRequestDto,
 } from './dashboard.dto';
+import { validateMetricsQuery } from './dto/metrics-query.dto';
 import { DashboardService } from './dashboard.service';
 
 const VALID_SCOPE_LEVELS = new Set(['agency', 'department', 'workspace', 'agent', 'subagent']);
@@ -81,62 +86,148 @@ export function registerDashboardRoutes(router: Router) {
   });
 
   // ── Analytics Metrics ──────────────────────────────────────────────────────
-  function parseMetricInput(req: { query: Record<string, unknown> }) {
-    return {
-      level: typeof req.query.level === 'string' ? req.query.level : undefined,
-      id: typeof req.query.id === 'string' ? req.query.id : undefined,
-      window: typeof req.query.window === 'string' ? req.query.window : '24h',
-      granularity: typeof req.query.granularity === 'string' ? req.query.granularity : '1h',
-    };
+  function parseMetricInput(
+    req: { query: Record<string, unknown> },
+    options?: { allowGranularity?: boolean; requireGranularity?: boolean },
+  ) {
+    return validateMetricsQuery(req.query, options);
+  }
+
+  function sendMetricValidationError(res: any, errors: Array<{ field: string; reason: string; value: unknown }>) {
+    return res.status(400).json({
+      ok: false,
+      code: 'INVALID_QUERY',
+      errors,
+    });
   }
 
   router.get('/dashboard/metrics/kpis', async (req, res) => {
-    res.json(await service.getMetricsKpis(parseMetricInput(req as any)));
+    const query = parseMetricInput(req as any, { allowGranularity: false });
+    if (!query.ok || !query.value) {
+      return sendMetricValidationError(res, query.errors);
+    }
+    res.json(await service.getMetricsKpis(query.value, query.warnings));
   });
 
   router.get('/dashboard/metrics/runs', async (req, res) => {
-    res.json(await service.getMetricsRuns(parseMetricInput(req as any)));
+    const query = parseMetricInput(req as any, { allowGranularity: true });
+    if (!query.ok || !query.value) {
+      return sendMetricValidationError(res, query.errors);
+    }
+    res.json(await service.getMetricsRuns(query.value, query.warnings));
   });
 
   router.get('/dashboard/metrics/tokens', async (req, res) => {
-    res.json(await service.getMetricsTokens(parseMetricInput(req as any)));
+    const query = parseMetricInput(req as any, { allowGranularity: true });
+    if (!query.ok || !query.value) {
+      return sendMetricValidationError(res, query.errors);
+    }
+    res.json(await service.getMetricsTokens(query.value, query.warnings));
   });
 
   router.get('/dashboard/metrics/sessions', async (req, res) => {
-    res.json(await service.getMetricsSessions(parseMetricInput(req as any)));
+    const query = parseMetricInput(req as any, { allowGranularity: true });
+    if (!query.ok || !query.value) {
+      return sendMetricValidationError(res, query.errors);
+    }
+    res.json(await service.getMetricsSessions(query.value, query.warnings));
   });
 
   router.get('/dashboard/metrics/budget', async (req, res) => {
-    res.json(await service.getMetricsBudget(parseMetricInput(req as any)));
+    const query = parseMetricInput(req as any, { allowGranularity: false });
+    if (!query.ok || !query.value) {
+      return sendMetricValidationError(res, query.errors);
+    }
+    res.json(await service.getMetricsBudget(query.value, query.warnings));
   });
 
   router.get('/dashboard/metrics/model-mix', async (req, res) => {
-    res.json(await service.getMetricsModelMix(parseMetricInput(req as any)));
+    const query = parseMetricInput(req as any, { allowGranularity: false });
+    if (!query.ok || !query.value) {
+      return sendMetricValidationError(res, query.errors);
+    }
+    res.json(await service.getMetricsModelMix(query.value, query.warnings));
   });
 
   router.get('/dashboard/metrics/latency', async (req, res) => {
-    res.json(await service.getMetricsLatency(parseMetricInput(req as any)));
+    const query = parseMetricInput(req as any, { allowGranularity: false });
+    if (!query.ok || !query.value) {
+      return sendMetricValidationError(res, query.errors);
+    }
+    res.json(await service.getMetricsLatency(query.value, query.warnings));
   });
 
   // ── Connections Visuals ────────────────────────────────────────────────────
   router.get('/dashboard/connections/metering', async (req, res) => {
-    res.json(await service.getConnectionsMetering(parseMetricInput(req as any)));
+    const query = parseMetricInput(req as any, { allowGranularity: false });
+    if (!query.ok || !query.value) {
+      return sendMetricValidationError(res, query.errors);
+    }
+    res.json(await service.getConnectionsMetering(query.value, query.warnings));
   });
 
   router.get('/dashboard/connections/radial', async (req, res) => {
-    res.json(await service.getConnectionsRadial(parseMetricInput(req as any)));
+    const query = parseMetricInput(req as any, { allowGranularity: false });
+    if (!query.ok || !query.value) {
+      return sendMetricValidationError(res, query.errors);
+    }
+    res.json(await service.getConnectionsRadial(query.value, query.warnings));
   });
 
   router.get('/dashboard/connections/dependency-graph', async (req, res) => {
-    res.json(await service.getConnectionsDependencyGraph(parseMetricInput(req as any)));
+    const query = parseMetricInput(req as any, { allowGranularity: false });
+    if (!query.ok || !query.value) {
+      return sendMetricValidationError(res, query.errors);
+    }
+    res.json(await service.getConnectionsDependencyGraph(query.value, query.warnings));
   });
 
   router.get('/dashboard/connections/topology', async (req, res) => {
-    res.json(await service.getConnectionsTopology(parseMetricInput(req as any)));
+    const query = parseMetricInput(req as any, { allowGranularity: false });
+    if (!query.ok || !query.value) {
+      return sendMetricValidationError(res, query.errors);
+    }
+    res.json(await service.getConnectionsTopology(query.value, query.warnings));
   });
 
   router.get('/dashboard/connections/flow-graph', async (req, res) => {
-    res.json(await service.getConnectionsFlowGraph(parseMetricInput(req as any)));
+    const query = parseMetricInput(req as any, { allowGranularity: false });
+    if (!query.ok || !query.value) {
+      return sendMetricValidationError(res, query.errors);
+    }
+    res.json(await service.getConnectionsFlowGraph(query.value, query.warnings));
+  });
+
+  router.get('/editor/readiness', async (req, res) => {
+    const query = parseMetricInput(req as any, { allowGranularity: false });
+    if (!query.ok || !query.value) {
+      return sendMetricValidationError(res, query.errors);
+    }
+    res.json(await service.getEditorReadiness(query.value, query.warnings) as EditorReadinessDto);
+  });
+
+  router.get('/editor/section-status', async (req, res) => {
+    const query = parseMetricInput(req as any, { allowGranularity: false });
+    if (!query.ok || !query.value) {
+      return sendMetricValidationError(res, query.errors);
+    }
+    res.json(await service.getEditorSectionStatus(query.value, query.warnings) as EditorSectionStatusDto);
+  });
+
+  router.get('/editor/inheritance', async (req, res) => {
+    const query = parseMetricInput(req as any, { allowGranularity: false });
+    if (!query.ok || !query.value) {
+      return sendMetricValidationError(res, query.errors);
+    }
+    res.json(await service.getEditorInheritance(query.value, query.warnings) as EditorInheritanceDto);
+  });
+
+  router.get('/editor/versions', async (req, res) => {
+    const query = parseMetricInput(req as any, { allowGranularity: false });
+    if (!query.ok || !query.value) {
+      return sendMetricValidationError(res, query.errors);
+    }
+    res.json(await service.getEditorVersions(query.value, query.warnings) as EditorVersionsDto);
   });
 
   router.post('/dashboard/profile/bind', (req, res) => {

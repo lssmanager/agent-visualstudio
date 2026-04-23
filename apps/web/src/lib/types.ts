@@ -590,10 +590,20 @@ export interface SelectionState {
 // ── Analytics Metrics DTOs ─────────────────────────────────────────────────
 
 export interface TimeSeriesPoint { ts: string; value: number }
+export type AnalyticsState =
+  | 'ready'
+  | 'loading'
+  | 'empty'
+  | 'runtime_offline'
+  | 'runtime_degraded'
+  | 'unsupported_for_scope'
+  | 'planned_not_operational';
 
 export interface MetricsKpisDto {
   scope: DashboardScope;
   window: string;
+  state?: AnalyticsState;
+  meta?: { warnings?: string[]; source?: string };
   agents:   { current: number; delta: number; trend: TimeSeriesPoint[] };
   sessions: { current: number; delta: number; trend: TimeSeriesPoint[] };
   runs:     { current: number; delta: number; trend: TimeSeriesPoint[] };
@@ -608,6 +618,8 @@ export interface MetricsRunsDto {
   scope: DashboardScope;
   window: string;
   granularity: string;
+  state?: AnalyticsState;
+  meta?: { warnings?: string[]; source?: string };
   series: Array<{ ts: string; total: number; failed: number; errorRate: number }>;
   totals: { total: number; failed: number; errorRate: number };
 }
@@ -616,6 +628,8 @@ export interface MetricsTokensDto {
   scope: DashboardScope;
   window: string;
   granularity: string;
+  state?: AnalyticsState;
+  meta?: { warnings?: string[]; source?: string };
   series: Array<{ ts: string; prompt: number; completion: number }>;
   totals: { prompt: number; completion: number };
 }
@@ -624,6 +638,8 @@ export interface MetricsSessionsDto {
   scope: DashboardScope;
   window: string;
   granularity: string;
+  state?: AnalyticsState;
+  meta?: { warnings?: string[]; source?: string };
   series: Array<{ ts: string; active: number; completed: number }>;
   totals: { active: number; completed: number };
 }
@@ -631,6 +647,8 @@ export interface MetricsSessionsDto {
 export interface MetricsBudgetDto {
   scope: DashboardScope;
   window: string;
+  state?: AnalyticsState;
+  meta?: { warnings?: string[]; source?: string };
   budgets: Array<{
     id: string;
     name: string;
@@ -649,18 +667,24 @@ export interface MetricsBudgetDto {
 export interface MetricsModelMixDto {
   scope: DashboardScope;
   window: string;
+  state?: AnalyticsState;
+  meta?: { warnings?: string[]; source?: string };
   models: Array<{ model: string; count: number; pct: number; costUsd: number }>;
 }
 
 export interface MetricsLatencyDto {
   scope: DashboardScope;
   window: string;
+  state?: AnalyticsState;
+  meta?: { warnings?: string[]; source?: string };
   models: Array<{ model: string; p50ms: number; p95ms: number }>;
 }
 
 export interface ConnectionsMeteringDto {
   scope: DashboardScope;
   window: string;
+  state?: AnalyticsState;
+  meta?: { warnings?: string[]; source?: string };
   meters: {
     supportedEdges:   { value: number; max: number; pct: number };
     hookCoverage:     { value: number; max: number; pct: number };
@@ -672,6 +696,8 @@ export interface ConnectionsMeteringDto {
 export interface ConnectionsRadialDto {
   scope: DashboardScope;
   window: string;
+  state?: AnalyticsState;
+  meta?: { warnings?: string[]; source?: string };
   edges:    { total: number; connected: number; paused: number; disconnected: number };
   hooks:    { total: number; enabled: number };
   channels: { total: number; enabled: number };
@@ -682,18 +708,24 @@ export interface GraphEdge { from: string; to: string; label?: string; weight?: 
 
 export interface ConnectionsDependencyGraphDto {
   scope: DashboardScope;
+  state?: AnalyticsState;
+  meta?: { warnings?: string[]; source?: string };
   nodes: GraphNode[];
   edges: GraphEdge[];
 }
 
 export interface ConnectionsTopologyDto {
   scope: DashboardScope;
+  state?: AnalyticsState;
+  meta?: { warnings?: string[]; source?: string };
   nodes: GraphNode[];
   edges: GraphEdge[];
 }
 
 export interface ConnectionsFlowGraphDto {
   scope: DashboardScope;
+  state?: AnalyticsState;
+  meta?: { warnings?: string[]; source?: string };
   nodes: Array<{ id: string; label: string; value: number }>;
   links: Array<{ source: string; target: string; value: number }>;
 }

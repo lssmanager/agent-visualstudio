@@ -12,12 +12,16 @@ import {
   getMetricsLatency,
 } from '../../../../lib/api';
 import { Sparkline, AreaChart, DonutChart, BulletGauge, LatencyBar } from '../../../../components/ui/Charts';
+import { AnalyticsStateBoundary } from '../../../analytics/components/AnalyticsStateBoundary';
+import { TimeWindowSelector } from '../../../analytics/components/TimeWindowSelector';
+import type { AnalyticsWindow } from '../../../analytics/types';
 
 export function OverviewSurface({ data }: { data: DashboardOverviewDto }) {
   const hasFailedRuns = data.runsSummary.failed > 0;
   const runtimeOk = data.runtimeHealth.ok;
   const level = data.scope.level as CanonicalNodeLevel;
   const id = data.scope.id;
+  const [window, setWindow] = useState<AnalyticsWindow>('24H');
 
   const [kpis, setKpis] = useState<MetricsKpisDto | null>(null);
   const [runsMetric, setRunsMetric] = useState<MetricsRunsDto | null>(null);
@@ -28,14 +32,14 @@ export function OverviewSurface({ data }: { data: DashboardOverviewDto }) {
   const [latency, setLatency] = useState<MetricsLatencyDto | null>(null);
 
   useEffect(() => {
-    void getMetricsKpis(level, id).then(setKpis).catch(() => null);
-    void getMetricsRuns(level, id).then(setRunsMetric).catch(() => null);
-    void getMetricsTokens(level, id).then(setTokensMetric).catch(() => null);
-    void getMetricsSessions(level, id).then(setSessionsMetric).catch(() => null);
-    void getMetricsBudget(level, id).then(setBudget).catch(() => null);
-    void getMetricsModelMix(level, id).then(setModelMix).catch(() => null);
-    void getMetricsLatency(level, id).then(setLatency).catch(() => null);
-  }, [level, id]);
+    void getMetricsKpis(level, id, window).then(setKpis).catch(() => null);
+    void getMetricsRuns(level, id, window, '1H').then(setRunsMetric).catch(() => null);
+    void getMetricsTokens(level, id, window, '1H').then(setTokensMetric).catch(() => null);
+    void getMetricsSessions(level, id, window, '1H').then(setSessionsMetric).catch(() => null);
+    void getMetricsBudget(level, id, window).then(setBudget).catch(() => null);
+    void getMetricsModelMix(level, id, window).then(setModelMix).catch(() => null);
+    void getMetricsLatency(level, id, window).then(setLatency).catch(() => null);
+  }, [level, id, window]);
 
   const runsTrend = kpis?.runs.trend.map((p) => p.value) ?? [];
   const sessionsTrend = kpis?.sessions.trend.map((p) => p.value) ?? [];
@@ -63,6 +67,7 @@ export function OverviewSurface({ data }: { data: DashboardOverviewDto }) {
           {runtimeOk ? 'Runtime online' : 'Runtime degraded'}
         </span>
       </div>
+      <TimeWindowSelector value={window} onChange={setWindow} />
 
       {/* ── KPI Sparkline Strip ───────────────────────────────────── */}
       <div style={kpiGrid}>
@@ -111,7 +116,9 @@ export function OverviewSurface({ data }: { data: DashboardOverviewDto }) {
       </div>
 
       {/* ── Runs 24h Area Chart ───────────────────────────────────── */}
-      {runsMetric && runsMetric.series.length > 0 && (
+      {runsMetric && (
+        <AnalyticsStateBoundary state={runsMetric.state ?? 'ready'} title="Runs metric">
+        {runsMetric.series.length > 0 && (
         <div style={sectionCard}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
             <span style={cardLabel}>Runs – 24h</span>
@@ -134,6 +141,8 @@ export function OverviewSurface({ data }: { data: DashboardOverviewDto }) {
             <Stat label="Error rate" value={`${(runsMetric.totals.errorRate * 100).toFixed(1)}%`} tone={runsMetric.totals.errorRate > 0.1 ? 'danger' : 'success'} />
           </div>
         </div>
+      )}
+        </AnalyticsStateBoundary>
       )}
 
       {/* ── Tokens + Sessions row ─────────────────────────────────── */}
@@ -211,7 +220,9 @@ export function OverviewSurface({ data }: { data: DashboardOverviewDto }) {
       </div>
 
       {/* ── Budget gauges ─────────────────────────────────────────── */}
-      {budget && budget.budgets.length > 0 && (
+      {budget && (
+        <AnalyticsStateBoundary state={budget.state ?? 'ready'} title="Budget metric">
+        {budget.budgets.length > 0 && (
         <div style={sectionCard}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
             <span style={cardLabel}>Budget Usage</span>
@@ -225,6 +236,8 @@ export function OverviewSurface({ data }: { data: DashboardOverviewDto }) {
             ))}
           </div>
         </div>
+      )}
+        </AnalyticsStateBoundary>
       )}
 
       {/* ── Model mix + Latency ───────────────────────────────────── */}

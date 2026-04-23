@@ -276,10 +276,25 @@ export type ScopeResolvedEntity = {
 // ── Analytics Metrics DTOs ─────────────────────────────────────────────────
 
 export interface TimeSeriesPoint { ts: string; value: number }
+export type AnalyticsState =
+  | 'ready'
+  | 'loading'
+  | 'empty'
+  | 'runtime_offline'
+  | 'runtime_degraded'
+  | 'unsupported_for_scope'
+  | 'planned_not_operational';
+
+export interface AnalyticsMetaDto {
+  warnings?: string[];
+  source?: string;
+}
 
 export interface MetricsKpisDto {
   scope: ScopeDto;
   window: string;
+  state?: AnalyticsState;
+  meta?: AnalyticsMetaDto;
   agents:   { current: number; delta: number; trend: TimeSeriesPoint[] };
   sessions: { current: number; delta: number; trend: TimeSeriesPoint[] };
   runs:     { current: number; delta: number; trend: TimeSeriesPoint[] };
@@ -294,6 +309,8 @@ export interface MetricsRunsDto {
   scope: ScopeDto;
   window: string;
   granularity: string;
+  state?: AnalyticsState;
+  meta?: AnalyticsMetaDto;
   series: Array<{ ts: string; total: number; failed: number; errorRate: number }>;
   totals: { total: number; failed: number; errorRate: number };
 }
@@ -302,6 +319,8 @@ export interface MetricsTokensDto {
   scope: ScopeDto;
   window: string;
   granularity: string;
+  state?: AnalyticsState;
+  meta?: AnalyticsMetaDto;
   series: Array<{ ts: string; prompt: number; completion: number }>;
   totals: { prompt: number; completion: number };
 }
@@ -310,6 +329,8 @@ export interface MetricsSessionsDto {
   scope: ScopeDto;
   window: string;
   granularity: string;
+  state?: AnalyticsState;
+  meta?: AnalyticsMetaDto;
   series: Array<{ ts: string; active: number; completed: number }>;
   totals: { active: number; completed: number };
 }
@@ -317,6 +338,8 @@ export interface MetricsSessionsDto {
 export interface MetricsBudgetDto {
   scope: ScopeDto;
   window: string;
+  state?: AnalyticsState;
+  meta?: AnalyticsMetaDto;
   budgets: Array<{
     id: string;
     name: string;
@@ -335,18 +358,24 @@ export interface MetricsBudgetDto {
 export interface MetricsModelMixDto {
   scope: ScopeDto;
   window: string;
+  state?: AnalyticsState;
+  meta?: AnalyticsMetaDto;
   models: Array<{ model: string; count: number; pct: number; costUsd: number }>;
 }
 
 export interface MetricsLatencyDto {
   scope: ScopeDto;
   window: string;
+  state?: AnalyticsState;
+  meta?: AnalyticsMetaDto;
   models: Array<{ model: string; p50ms: number; p95ms: number }>;
 }
 
 export interface ConnectionsMeteringDto {
   scope: ScopeDto;
   window: string;
+  state?: AnalyticsState;
+  meta?: AnalyticsMetaDto;
   meters: {
     supportedEdges:    { value: number; max: number; pct: number };
     hookCoverage:      { value: number; max: number; pct: number };
@@ -358,6 +387,8 @@ export interface ConnectionsMeteringDto {
 export interface ConnectionsRadialDto {
   scope: ScopeDto;
   window: string;
+  state?: AnalyticsState;
+  meta?: AnalyticsMetaDto;
   edges:    { total: number; connected: number; paused: number; disconnected: number };
   hooks:    { total: number; enabled: number };
   channels: { total: number; enabled: number };
@@ -368,20 +399,54 @@ export interface GraphEdge { from: string; to: string; label?: string; weight?: 
 
 export interface ConnectionsDependencyGraphDto {
   scope: ScopeDto;
+  state?: AnalyticsState;
+  meta?: AnalyticsMetaDto;
   nodes: GraphNode[];
   edges: GraphEdge[];
 }
 
 export interface ConnectionsTopologyDto {
   scope: ScopeDto;
+  state?: AnalyticsState;
+  meta?: AnalyticsMetaDto;
   nodes: GraphNode[];
   edges: GraphEdge[];
 }
 
 export interface ConnectionsFlowGraphDto {
   scope: ScopeDto;
+  state?: AnalyticsState;
+  meta?: AnalyticsMetaDto;
   nodes: Array<{ id: string; label: string; value: number }>;
   links: Array<{ source: string; target: string; value: number }>;
 }
 
+export interface EditorReadinessDto {
+  scope: ScopeDto;
+  state: AnalyticsState;
+  data: Array<{ dimension: 'Identity' | 'Behavior' | 'Assignment' | 'Versions' | 'Catalog' | 'Operations'; score: number }>;
+  meta?: AnalyticsMetaDto;
+}
+
+export interface EditorSectionStatusDto {
+  scope: ScopeDto;
+  state: AnalyticsState;
+  data: Array<{ section: string; status: 'complete' | 'in_progress' | 'blocked' | 'planned' }>;
+  meta?: AnalyticsMetaDto;
+}
+
+export interface EditorInheritanceDto {
+  scope: ScopeDto;
+  state: AnalyticsState;
+  data: Array<{ field: string; source: 'inherited' | 'local_override' | 'locked'; effectiveValue: string }>;
+  meta?: AnalyticsMetaDto;
+}
+
+export interface EditorVersionsDto {
+  scope: ScopeDto;
+  window: string;
+  state: AnalyticsState;
+  data: Array<{ id: string; label: string; at: string; status: 'current' | 'draft' | 'snapshot' }>;
+  meta?: AnalyticsMetaDto;
+}
 

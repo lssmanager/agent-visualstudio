@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { Network, Route, Radio, Anchor, CheckCircle, XCircle, PauseCircle } from 'lucide-react';
 
 import type { CanonicalNodeLevel, DashboardConnectionsDto, ConnectionsMeteringDto, ConnectionsRadialDto, ConnectionsDependencyGraphDto, ConnectionsTopologyDto, ConnectionsFlowGraphDto } from '../../../../lib/types';
@@ -10,6 +10,9 @@ import {
   getConnectionsFlowGraph,
 } from '../../../../lib/api';
 import { RadialGauge, TopologyGraph, FlowSankey } from '../../../../components/ui/Charts';
+import { AnalyticsStateBoundary } from '../../../analytics/components/AnalyticsStateBoundary';
+import { TimeWindowSelector } from '../../../analytics/components/TimeWindowSelector';
+import type { AnalyticsWindow } from '../../../analytics/types';
 
 const EDGE_STATE_CONFIG = {
   connected:    { icon: CheckCircle, color: 'var(--tone-success-text, #10b981)', bg: 'var(--tone-success-bg, rgba(16,185,129,0.08))', label: 'Connected' },
@@ -22,6 +25,7 @@ export function ConnectionsSurface({ data }: { data: DashboardConnectionsDto }) 
   const connPct = totalEdges > 0 ? Math.round((connectedEdges / totalEdges) * 100) : 0;
   const level = data.scope.level as CanonicalNodeLevel;
   const id = data.scope.id;
+  const [window, setWindow] = useState<AnalyticsWindow>('24H');
 
   const [metering, setMetering] = useState<ConnectionsMeteringDto | null>(null);
   const [radial, setRadial] = useState<ConnectionsRadialDto | null>(null);
@@ -30,12 +34,12 @@ export function ConnectionsSurface({ data }: { data: DashboardConnectionsDto }) 
   const [flowGraph, setFlowGraph] = useState<ConnectionsFlowGraphDto | null>(null);
 
   useEffect(() => {
-    void getConnectionsMetering(level, id).then(setMetering).catch(() => null);
-    void getConnectionsRadial(level, id).then(setRadial).catch(() => null);
-    void getConnectionsDependencyGraph(level, id).then(setDepGraph).catch(() => null);
-    void getConnectionsTopology(level, id).then(setTopology).catch(() => null);
-    void getConnectionsFlowGraph(level, id).then(setFlowGraph).catch(() => null);
-  }, [level, id]);
+    void getConnectionsMetering(level, id, window).then(setMetering).catch(() => null);
+    void getConnectionsRadial(level, id, window).then(setRadial).catch(() => null);
+    void getConnectionsDependencyGraph(level, id, window).then(setDepGraph).catch(() => null);
+    void getConnectionsTopology(level, id, window).then(setTopology).catch(() => null);
+    void getConnectionsFlowGraph(level, id, window).then(setFlowGraph).catch(() => null);
+  }, [level, id, window]);
 
   return (
     <section style={panelStyle}>
@@ -49,6 +53,7 @@ export function ConnectionsSurface({ data }: { data: DashboardConnectionsDto }) 
           </span>
         </div>
       </div>
+      <TimeWindowSelector value={window} onChange={setWindow} />
 
       {/* ── Lane Summary ──────────────────────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 8 }}>
@@ -60,6 +65,7 @@ export function ConnectionsSurface({ data }: { data: DashboardConnectionsDto }) 
 
       {/* ── Metering radial gauges ────────────────────────────────── */}
       {metering && (
+        <AnalyticsStateBoundary state={metering.state ?? 'ready'} title="Connections metering">
         <div style={sectionCard}>
           <div style={cardLabel}>Health Meters</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 12, marginTop: 12 }}>
@@ -89,10 +95,12 @@ export function ConnectionsSurface({ data }: { data: DashboardConnectionsDto }) 
             />
           </div>
         </div>
+        </AnalyticsStateBoundary>
       )}
 
       {/* ── Radial summary ─────────────────────────────────────────── */}
       {radial && (
+        <AnalyticsStateBoundary state={radial.state ?? 'ready'} title="Connections radial">
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
           <RadialSummaryCard
             title="Edges"
@@ -120,6 +128,7 @@ export function ConnectionsSurface({ data }: { data: DashboardConnectionsDto }) 
             ]}
           />
         </div>
+        </AnalyticsStateBoundary>
       )}
 
       {/* ── Edge connectivity meter ───────────────────────────────── */}
@@ -265,7 +274,7 @@ function toneColor(tone: Tone) {
   }
 }
 
-function LaneCard({ icon, title, value, detail, tone }: { icon: React.ReactNode; title: string; value: number; detail: string; tone: Tone }) {
+function LaneCard({ icon, title, value, detail, tone }: { icon: ReactNode; title: string; value: number; detail: string; tone: Tone }) {
   const color = toneColor(tone);
   return (
     <div style={laneCardStyle}>

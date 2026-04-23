@@ -41,6 +41,7 @@ import {
   VersionSnapshot,
   WorkspaceSpec,
 } from './types';
+import type { AnalyticsGranularity, AnalyticsWindow } from '../features/analytics/types';
 
 const API_BASE = '/api/studio/v1';
 
@@ -675,45 +676,63 @@ export async function getUsageByAgent() {
 
 // ── Analytics Metrics ─────────────────────────────────────────────────────
 
-function toMetricQuery(level: CanonicalNodeLevel, id: string, window = '24h', granularity = '1h') {
+function toMetricQuery(level: CanonicalNodeLevel, id: string, window: AnalyticsWindow = '24H', granularity?: AnalyticsGranularity) {
   const params = new URLSearchParams({ level, id, window, granularity });
+  if (!granularity) {
+    params.delete('granularity');
+  }
   return params.toString();
 }
 
-export async function getMetricsKpis(level: CanonicalNodeLevel, id: string, window = '24h') {
+export async function getMetricsKpis(level: CanonicalNodeLevel, id: string, window: AnalyticsWindow = '24H') {
   const params = new URLSearchParams({ level, id, window });
   const response = await fetch(`${API_BASE}/dashboard/metrics/kpis?${params.toString()}`);
   return parseJson<MetricsKpisDto>(response);
 }
 
-export async function getMetricsRuns(level: CanonicalNodeLevel, id: string, window = '24h', granularity = '1h') {
+export async function getMetricsRuns(
+  level: CanonicalNodeLevel,
+  id: string,
+  window: AnalyticsWindow = '24H',
+  granularity: AnalyticsGranularity = '1H',
+) {
   const response = await fetch(`${API_BASE}/dashboard/metrics/runs?${toMetricQuery(level, id, window, granularity)}`);
   return parseJson<MetricsRunsDto>(response);
 }
 
-export async function getMetricsTokens(level: CanonicalNodeLevel, id: string, window = '24h', granularity = '1h') {
+export async function getMetricsTokens(
+  level: CanonicalNodeLevel,
+  id: string,
+  window: AnalyticsWindow = '24H',
+  granularity: AnalyticsGranularity = '1H',
+) {
   const response = await fetch(`${API_BASE}/dashboard/metrics/tokens?${toMetricQuery(level, id, window, granularity)}`);
   return parseJson<MetricsTokensDto>(response);
 }
 
-export async function getMetricsSessions(level: CanonicalNodeLevel, id: string, window = '24h', granularity = '1h') {
+export async function getMetricsSessions(
+  level: CanonicalNodeLevel,
+  id: string,
+  window: AnalyticsWindow = '24H',
+  granularity: AnalyticsGranularity = '1H',
+) {
   const response = await fetch(`${API_BASE}/dashboard/metrics/sessions?${toMetricQuery(level, id, window, granularity)}`);
   return parseJson<MetricsSessionsDto>(response);
 }
 
-export async function getMetricsBudget(level: CanonicalNodeLevel, id: string, window = '30d') {
+export async function getMetricsBudget(level: CanonicalNodeLevel, id: string, window: AnalyticsWindow = '24H') {
   const params = new URLSearchParams({ level, id, window });
   const response = await fetch(`${API_BASE}/dashboard/metrics/budget?${params.toString()}`);
   return parseJson<MetricsBudgetDto>(response);
 }
 
-export async function getMetricsModelMix(level: CanonicalNodeLevel, id: string, window = '24h') {
+export async function getMetricsModelMix(level: CanonicalNodeLevel, id: string, window: AnalyticsWindow = '24H') {
   const params = new URLSearchParams({ level, id, window });
   const response = await fetch(`${API_BASE}/dashboard/metrics/model-mix?${params.toString()}`);
   return parseJson<MetricsModelMixDto>(response);
 }
 
-export async function getMetricsLatency(level: CanonicalNodeLevel, id: string, window = '24h') {
+export async function getMetricsLatency(level: CanonicalNodeLevel, id: string, window: AnalyticsWindow = '24H') {
   const params = new URLSearchParams({ level, id, window });
   const response = await fetch(`${API_BASE}/dashboard/metrics/latency?${params.toString()}`);
   return parseJson<MetricsLatencyDto>(response);
@@ -721,32 +740,73 @@ export async function getMetricsLatency(level: CanonicalNodeLevel, id: string, w
 
 // ── Connections Visuals ───────────────────────────────────────────────────
 
-export async function getConnectionsMetering(level: CanonicalNodeLevel, id: string, window = '24h') {
+export async function getConnectionsMetering(level: CanonicalNodeLevel, id: string, window: AnalyticsWindow = '24H') {
   const params = new URLSearchParams({ level, id, window });
   const response = await fetch(`${API_BASE}/dashboard/connections/metering?${params.toString()}`);
   return parseJson<ConnectionsMeteringDto>(response);
 }
 
-export async function getConnectionsRadial(level: CanonicalNodeLevel, id: string, window = '24h') {
+export async function getConnectionsRadial(level: CanonicalNodeLevel, id: string, window: AnalyticsWindow = '24H') {
   const params = new URLSearchParams({ level, id, window });
   const response = await fetch(`${API_BASE}/dashboard/connections/radial?${params.toString()}`);
   return parseJson<ConnectionsRadialDto>(response);
 }
 
-export async function getConnectionsDependencyGraph(level: CanonicalNodeLevel, id: string) {
-  const params = new URLSearchParams({ level, id });
+export async function getConnectionsDependencyGraph(level: CanonicalNodeLevel, id: string, window: AnalyticsWindow = '24H') {
+  const params = new URLSearchParams({ level, id, window });
   const response = await fetch(`${API_BASE}/dashboard/connections/dependency-graph?${params.toString()}`);
   return parseJson<ConnectionsDependencyGraphDto>(response);
 }
 
-export async function getConnectionsTopology(level: CanonicalNodeLevel, id: string) {
-  const params = new URLSearchParams({ level, id });
+export async function getConnectionsTopology(level: CanonicalNodeLevel, id: string, window: AnalyticsWindow = '24H') {
+  const params = new URLSearchParams({ level, id, window });
   const response = await fetch(`${API_BASE}/dashboard/connections/topology?${params.toString()}`);
   return parseJson<ConnectionsTopologyDto>(response);
 }
 
-export async function getConnectionsFlowGraph(level: CanonicalNodeLevel, id: string) {
-  const params = new URLSearchParams({ level, id });
+export async function getConnectionsFlowGraph(level: CanonicalNodeLevel, id: string, window: AnalyticsWindow = '24H') {
+  const params = new URLSearchParams({ level, id, window });
   const response = await fetch(`${API_BASE}/dashboard/connections/flow-graph?${params.toString()}`);
   return parseJson<ConnectionsFlowGraphDto>(response);
+}
+
+export async function getEditorReadiness(level: CanonicalNodeLevel, id: string, window: AnalyticsWindow = '24H') {
+  const params = new URLSearchParams({ level, id, window });
+  const response = await fetch(`${API_BASE}/editor/readiness?${params.toString()}`);
+  return parseJson<{
+    scope: { level: CanonicalNodeLevel; id: string };
+    state: string;
+    data: Array<{ dimension: string; score: number }>;
+  }>(response);
+}
+
+export async function getEditorSectionStatus(level: CanonicalNodeLevel, id: string, window: AnalyticsWindow = '24H') {
+  const params = new URLSearchParams({ level, id, window });
+  const response = await fetch(`${API_BASE}/editor/section-status?${params.toString()}`);
+  return parseJson<{
+    scope: { level: CanonicalNodeLevel; id: string };
+    state: string;
+    data: Array<{ section: string; status: string }>;
+  }>(response);
+}
+
+export async function getEditorInheritance(level: CanonicalNodeLevel, id: string, window: AnalyticsWindow = '24H') {
+  const params = new URLSearchParams({ level, id, window });
+  const response = await fetch(`${API_BASE}/editor/inheritance?${params.toString()}`);
+  return parseJson<{
+    scope: { level: CanonicalNodeLevel; id: string };
+    state: string;
+    data: Array<{ field: string; source: string; effectiveValue: string }>;
+  }>(response);
+}
+
+export async function getEditorVersions(level: CanonicalNodeLevel, id: string, window: AnalyticsWindow = '24H') {
+  const params = new URLSearchParams({ level, id, window });
+  const response = await fetch(`${API_BASE}/editor/versions?${params.toString()}`);
+  return parseJson<{
+    scope: { level: CanonicalNodeLevel; id: string };
+    window: string;
+    state: string;
+    data: Array<{ id: string; label: string; at: string; status: string }>;
+  }>(response);
 }

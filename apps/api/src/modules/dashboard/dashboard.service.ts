@@ -34,8 +34,13 @@ import type {
   ConnectionsDependencyGraphDto,
   ConnectionsTopologyDto,
   ConnectionsFlowGraphDto,
+  EditorInheritanceDto,
+  EditorReadinessDto,
+  EditorSectionStatusDto,
+  EditorVersionsDto,
   TimeSeriesPoint,
 } from './dashboard.dto';
+import type { MetricsQueryDto } from './dto/metrics-query.dto';
 import { DashboardProfileService } from './profile-system.service';
 import { DashboardScopeResolver } from './scope-resolver.service';
 
@@ -531,104 +536,222 @@ export class DashboardService {
     return map[window] ?? 24;
   }
 
-  private syntheticTs(points: number, window: string): string[] {
+  private windowMs(window: string): number {
+    const map: Record<string, number> = {
+      '1H': 3600e3,
+      '4H': 4 * 3600e3,
+      '6H': 6 * 3600e3,
+      '8H': 8 * 3600e3,
+      '12H': 12 * 3600e3,
+      '24H': 24 * 3600e3,
+      '3D': 3 * 86400e3,
+      '7D': 7 * 86400e3,
+      '15D': 15 * 86400e3,
+      '1M': 30 * 86400e3,
+      '2M': 60 * 86400e3,
+      '3M': 90 * 86400e3,
+      '1Y': 365 * 86400e3,
+    };
+    return map[window] ?? 24 * 3600e3;
+  }
+
+  private buildTimeline(window: string): string[] {
+    const points = this.windowPoints(window);
     const now = Date.now();
-    const windowMs: Record<string, number> = { '1H': 3600e3, '4H': 4*3600e3, '6H': 6*3600e3, '8H': 8*3600e3, '12H': 12*3600e3, '24H': 24*3600e3, '3D': 3*86400e3, '7D': 7*86400e3, '15D': 15*86400e3, '1M': 30*86400e3, '2M': 60*86400e3, '3M': 90*86400e3, '1Y': 365*86400e3 };
-    const ms = windowMs[window] ?? 24*3600e3;
-    const step = ms / (points - 1);
-    return Array.from({ length: points }, (_, i) => new Date(now - ms + i * step).toISOString());
+    const windowMs = this.windowMs(window);
+    const start = now - windowMs;
+    const step = windowMs / Math.max(points - 1, 1);
+    return Array.from({ length: points }, (_, i) => new Date(start + i * step).toISOString());
   }
 
-  private smoothRandom(base: number, variance: number, points: number): number[] {
-    const result: number[] = [];
-    let v = base;
-    for (let i = 0; i < points; i++) {
-      v = Math.max(0, v + (Math.random() - 0.5) * variance);
-      result.push(Math.round(v));
+  private analyticsState(runtimeOk: boolean, hasData: boolean): 'ready' | 'runtime_degraded' | 'empty' {
+    if (!runtimeOk) {
+      return 'runtime_degraded';
     }
-    return result;
+    return hasData ? 'ready' : 'empty';
   }
 
-  async getMetricsKpis(input: { level?: string; id?: string; window?: string }): Promise<MetricsKpisDto> {
+  private seriesFromEvents(timeline: string[], eventTimes: string[]): number[] {
+    const values = Array.from({ length: timeline.length }, () => 0);
+    const starts = timeline.map((ts) => new Date(ts).getTime());
+    for (const eventTime of eventTimes) {
+      const time = new Date(eventTime).getTime();
+      if (!Number.isFinite(time)) {
+        continue;
+      }
+      let idx = starts.findIndex((t, i) => time >= t && (i === starts.length - 1 || time < starts[i + 1]));
+      if (idx === -1 && time >= starts[starts.length - 1]) {
+        idx = starts.length - 1;
+      }
+      if (idx >= 0) {
+        values[idx] += 1;
+      }
+    }
+    return values;
+  }
+
+  private toTrend(timeline: string[], values: number[]): TimeSeriesPoint[] {
+    return timeline.map((ts, idx) => ({ ts, value: values[idx] ?? 0 }));
+  }
+
+  private rollingSum(values: number[]): number[] {
+    let acc = 0;
+    return values.map((value) => {
+      acc += value;
+      return acc;
+    });
+  }
+
+  async getMetricsKpis(input: MetricsQueryDto, warnings: string[] = []): Promise<MetricsKpisDto> {
     const canonical = await this.studioService.getCanonicalState();
     const resolved = this.scopeResolver.resolve(canonical, input);
-    const win = input.window ?? '24H';
-    const pts = Math.min(8, this.windowPoints(win));
-    const ts = this.syntheticTs(pts, win);
+    const timeline = this.buildTimeline(input.window);
     const agents = this.countAgents(canonical, resolved.workspaceIds);
-    const channels = resolved.sessions.length > 0 ? resolved.sessions.filter(s => (s as any).channel).length : 0;
+    const channels = resolved.sessions.filter((session) => Boolean((session as any).channel)).length;
     const runs = this.filterRunsByScope(canonical, resolved.workspaceIds, resolved.agentIds);
     const snapshots = this.versionsService.listSnapshots().length;
-
-    const mkTrend = (base: number): TimeSeriesPoint[] => this.smoothRandom(Math.max(base, 1), base * 0.3, pts).map((v, i) => ({ ts: ts[i], value: v }));
+    const runCounts = this.seriesFromEvents(
+      timeline,
+      runs.map((run) => run.startedAt).filter(Boolean) as string[],
+    );
+    const sessionCounts = this.seriesFromEvents(
+      timeline,
+      resolved.sessions.map((session) => session.lastEventAt).filter(Boolean) as string[],
+    );
+    const runTrend = this.toTrend(timeline, this.rollingSum(runCounts));
+    const sessionTrend = this.toTrend(timeline, this.rollingSum(sessionCounts));
+    const runtimeOk = Boolean(canonical.runtime.health.ok);
 
     return {
       scope: resolved.scope,
-      window: win,
-      agents:   { current: agents, delta: Math.round((Math.random() - 0.4) * 2), trend: mkTrend(agents) },
-      sessions: { current: resolved.sessions.length, delta: Math.round((Math.random() - 0.4) * 3), trend: mkTrend(Math.max(resolved.sessions.length, 1)) },
-      runs:     { current: runs.length, delta: Math.round((Math.random() - 0.4) * 5), trend: mkTrend(Math.max(runs.length, 1)) },
-      channels: { current: channels, delta: 0, trend: mkTrend(Math.max(channels, 1)) },
-      running:          runs.filter(r => r.status === 'running').length,
-      awaitingApproval: runs.filter(r => r.status === 'waiting_approval').length,
-      paused:           resolved.sessions.filter(s => s.status === 'paused').length,
+      window: input.window,
+      state: this.analyticsState(runtimeOk, runs.length > 0 || resolved.sessions.length > 0),
+      meta: { warnings, source: 'canonical_runtime' },
+      agents: { current: agents, delta: 0, trend: this.toTrend(timeline, Array.from({ length: timeline.length }, () => agents)) },
+      sessions: { current: resolved.sessions.length, delta: 0, trend: sessionTrend },
+      runs: { current: runs.length, delta: 0, trend: runTrend },
+      channels: { current: channels, delta: 0, trend: this.toTrend(timeline, Array.from({ length: timeline.length }, () => channels)) },
+      running: runs.filter((run) => run.status === 'running').length,
+      awaitingApproval: runs.filter((run) => run.status === 'waiting_approval').length,
+      paused: resolved.sessions.filter((session) => session.status === 'paused').length,
       snapshots,
     };
   }
 
-  async getMetricsRuns(input: { level?: string; id?: string; window?: string; granularity?: string }): Promise<MetricsRunsDto> {
+  async getMetricsRuns(input: MetricsQueryDto, warnings: string[] = []): Promise<MetricsRunsDto> {
     const canonical = await this.studioService.getCanonicalState();
     const resolved = this.scopeResolver.resolve(canonical, input);
-    const win = input.window ?? '24H';
-    const pts = this.windowPoints(win);
-    const ts = this.syntheticTs(pts, win);
+    const timeline = this.buildTimeline(input.window);
     const runs = this.filterRunsByScope(canonical, resolved.workspaceIds, resolved.agentIds);
-    const base = Math.max(runs.length, 2);
-    const totals = this.smoothRandom(base, base * 0.4, pts);
-    const series = totals.map((total, i) => {
-      const failed = Math.round(total * (Math.random() * 0.15));
-      return { ts: ts[i], total, failed, errorRate: total > 0 ? Math.round((failed / total) * 100) : 0 };
+    const totalSeries = this.seriesFromEvents(
+      timeline,
+      runs.map((run) => run.startedAt).filter(Boolean) as string[],
+    );
+    const failedSeries = this.seriesFromEvents(
+      timeline,
+      runs.filter((run) => run.status === 'failed').map((run) => run.startedAt).filter(Boolean) as string[],
+    );
+    const series = timeline.map((ts, idx) => {
+      const total = totalSeries[idx] ?? 0;
+      const failed = failedSeries[idx] ?? 0;
+      const errorRate = total > 0 ? failed / total : 0;
+      return { ts, total, failed, errorRate };
     });
-    const totalSum = series.reduce((a, r) => a + r.total, 0);
-    const failedSum = series.reduce((a, r) => a + r.failed, 0);
-    return { scope: resolved.scope, window: win, granularity: input.granularity ?? 'auto', series, totals: { total: totalSum, failed: failedSum, errorRate: totalSum > 0 ? Math.round((failedSum / totalSum) * 100) : 0 } };
+    const totalSum = series.reduce((acc, row) => acc + row.total, 0);
+    const failedSum = series.reduce((acc, row) => acc + row.failed, 0);
+    return {
+      scope: resolved.scope,
+      window: input.window,
+      granularity: input.granularity ?? '1H',
+      state: this.analyticsState(Boolean(canonical.runtime.health.ok), totalSum > 0),
+      meta: { warnings, source: 'runs_projection' },
+      series,
+      totals: { total: totalSum, failed: failedSum, errorRate: totalSum > 0 ? failedSum / totalSum : 0 },
+    };
   }
 
-  async getMetricsTokens(input: { level?: string; id?: string; window?: string; granularity?: string }): Promise<MetricsTokensDto> {
+  async getMetricsTokens(input: MetricsQueryDto, warnings: string[] = []): Promise<MetricsTokensDto> {
     const canonical = await this.studioService.getCanonicalState();
     const resolved = this.scopeResolver.resolve(canonical, input);
-    const win = input.window ?? '24H';
-    const pts = this.windowPoints(win);
-    const ts = this.syntheticTs(pts, win);
-    const agentCount = Math.max(this.countAgents(canonical, resolved.workspaceIds), 1);
-    const promptBase = agentCount * 4800;
-    const completionBase = agentCount * 1200;
-    const prompts = this.smoothRandom(promptBase, promptBase * 0.3, pts);
-    const completions = this.smoothRandom(completionBase, completionBase * 0.25, pts);
-    const series = prompts.map((prompt, i) => ({ ts: ts[i], prompt, completion: completions[i] }));
-    return { scope: resolved.scope, window: win, granularity: input.granularity ?? 'auto', series, totals: { prompt: series.reduce((a, r) => a + r.prompt, 0), completion: series.reduce((a, r) => a + r.completion, 0) } };
+    const timeline = this.buildTimeline(input.window);
+    const runs = this.filterRunsByScope(canonical, resolved.workspaceIds, resolved.agentIds);
+    const promptTotals = Array.from({ length: timeline.length }, () => 0);
+    const completionTotals = Array.from({ length: timeline.length }, () => 0);
+    const starts = timeline.map((ts) => new Date(ts).getTime());
+
+    for (const run of runs) {
+      const time = new Date(run.startedAt).getTime();
+      if (!Number.isFinite(time)) {
+        continue;
+      }
+      let idx = starts.findIndex((bucket, i) => time >= bucket && (i === starts.length - 1 || time < starts[i + 1]));
+      if (idx === -1 && time >= starts[starts.length - 1]) {
+        idx = starts.length - 1;
+      }
+      if (idx < 0) {
+        continue;
+      }
+      const usage = run.steps.reduce(
+        (acc, step) => {
+          acc.prompt += step.tokenUsage?.input ?? 0;
+          acc.completion += step.tokenUsage?.output ?? 0;
+          return acc;
+        },
+        { prompt: 0, completion: 0 },
+      );
+      promptTotals[idx] += usage.prompt;
+      completionTotals[idx] += usage.completion;
+    }
+
+    const series = timeline.map((ts, idx) => ({ ts, prompt: promptTotals[idx], completion: completionTotals[idx] }));
+    return {
+      scope: resolved.scope,
+      window: input.window,
+      granularity: input.granularity ?? '1H',
+      state: this.analyticsState(Boolean(canonical.runtime.health.ok), runs.length > 0),
+      meta: { warnings, source: 'run_step_token_usage' },
+      series,
+      totals: {
+        prompt: series.reduce((acc, row) => acc + row.prompt, 0),
+        completion: series.reduce((acc, row) => acc + row.completion, 0),
+      },
+    };
   }
 
-  async getMetricsSessions(input: { level?: string; id?: string; window?: string; granularity?: string }): Promise<MetricsSessionsDto> {
+  async getMetricsSessions(input: MetricsQueryDto, warnings: string[] = []): Promise<MetricsSessionsDto> {
     const canonical = await this.studioService.getCanonicalState();
     const resolved = this.scopeResolver.resolve(canonical, input);
-    const win = input.window ?? '7D';
-    const pts = this.windowPoints(win);
-    const ts = this.syntheticTs(pts, win);
-    const base = Math.max(resolved.sessions.length, 2);
-    const actives = this.smoothRandom(base, base * 0.35, pts);
-    const completed = this.smoothRandom(Math.round(base * 1.5), base * 0.4, pts);
-    const series = actives.map((active, i) => ({ ts: ts[i], active, completed: completed[i] }));
-    return { scope: resolved.scope, window: win, granularity: input.granularity ?? 'auto', series, totals: { active: series.reduce((a, r) => a + r.active, 0), completed: series.reduce((a, r) => a + r.completed, 0) } };
+    const timeline = this.buildTimeline(input.window);
+    const activeSeries = this.seriesFromEvents(
+      timeline,
+      resolved.sessions.filter((session) => session.status === 'active').map((session) => session.lastEventAt).filter(Boolean) as string[],
+    );
+    const completedSeries = this.seriesFromEvents(
+      timeline,
+      resolved.sessions.filter((session) => session.status === 'closed').map((session) => session.lastEventAt).filter(Boolean) as string[],
+    );
+    const series = timeline.map((ts, idx) => ({ ts, active: activeSeries[idx] ?? 0, completed: completedSeries[idx] ?? 0 }));
+    return {
+      scope: resolved.scope,
+      window: input.window,
+      granularity: input.granularity ?? '1H',
+      state: this.analyticsState(Boolean(canonical.runtime.health.ok), resolved.sessions.length > 0),
+      meta: { warnings, source: 'runtime_sessions' },
+      series,
+      totals: {
+        active: series.reduce((acc, row) => acc + row.active, 0),
+        completed: series.reduce((acc, row) => acc + row.completed, 0),
+      },
+    };
   }
 
-  async getMetricsBudget(input: { level?: string; id?: string; window?: string }): Promise<MetricsBudgetDto> {
+  async getMetricsBudget(input: MetricsQueryDto, warnings: string[] = []): Promise<MetricsBudgetDto> {
     const canonical = await this.studioService.getCanonicalState();
     const resolved = this.scopeResolver.resolve(canonical, input);
     const rawBudgets = this.budgetsService.findAll();
     const budgets = rawBudgets.map((b: any) => {
       const limitUsd = b.limitUsd ?? 100;
-      const usedUsd = b.currentUsageUsd ?? Math.round(limitUsd * Math.random() * 0.8);
+      const usedUsd = b.currentUsageUsd ?? 0;
       const pctUsed = Math.round((usedUsd / limitUsd) * 100);
       return {
         id: b.id,
@@ -642,42 +765,96 @@ export class DashboardService {
         periodDays: b.periodDays ?? 30,
       };
     });
-    return { scope: resolved.scope, window: input.window ?? '30D', budgets, totalLimitUsd: budgets.reduce((a, b) => a + b.limitUsd, 0), totalUsedUsd: budgets.reduce((a, b) => a + b.usedUsd, 0) };
+    return {
+      scope: resolved.scope,
+      window: input.window,
+      state: this.analyticsState(Boolean(canonical.runtime.health.ok), budgets.length > 0),
+      meta: { warnings, source: 'budgets_store' },
+      budgets,
+      totalLimitUsd: budgets.reduce((acc, budget) => acc + budget.limitUsd, 0),
+      totalUsedUsd: budgets.reduce((acc, budget) => acc + budget.usedUsd, 0),
+    };
   }
 
-  async getMetricsModelMix(input: { level?: string; id?: string; window?: string }): Promise<MetricsModelMixDto> {
+  async getMetricsModelMix(input: MetricsQueryDto, warnings: string[] = []): Promise<MetricsModelMixDto> {
     const canonical = await this.studioService.getCanonicalState();
     const resolved = this.scopeResolver.resolve(canonical, input);
-    const agents = canonical.agents.filter(a => resolved.workspaceIds.includes(a.workspaceId));
+    const agents = canonical.agents.filter((agent) => resolved.workspaceIds.includes(agent.workspaceId));
+    const runs = this.filterRunsByScope(canonical, resolved.workspaceIds, resolved.agentIds);
     const modelMap = new Map<string, number>();
+    const costMap = new Map<string, number>();
     for (const agent of agents) {
       const m = agent.model ?? 'unknown';
       modelMap.set(m, (modelMap.get(m) ?? 0) + 1);
     }
-    if (modelMap.size === 0) modelMap.set('gpt-4o', 1);
-    const total = [...modelMap.values()].reduce((a, v) => a + v, 0);
+    for (const run of runs) {
+      const model = (run.metadata?.model as string | undefined) ?? agents[0]?.model ?? 'unknown';
+      const runCost = run.steps.reduce((acc, step) => acc + (step.costUsd ?? 0), 0);
+      costMap.set(model, (costMap.get(model) ?? 0) + runCost);
+    }
+    if (modelMap.size === 0) {
+      modelMap.set('unknown', 1);
+    }
+    const total = [...modelMap.values()].reduce((acc, value) => acc + value, 0);
     const models = [...modelMap.entries()].map(([model, count]) => ({
-      model, count, pct: Math.round((count / total) * 100),
-      costUsd: Math.round(count * (Math.random() * 12 + 2) * 100) / 100,
+      model,
+      count,
+      pct: Math.round((count / total) * 100),
+      costUsd: Math.round((costMap.get(model) ?? 0) * 100) / 100,
     }));
-    return { scope: resolved.scope, window: input.window ?? '24H', models };
+    return {
+      scope: resolved.scope,
+      window: input.window,
+      state: this.analyticsState(Boolean(canonical.runtime.health.ok), models.length > 0),
+      meta: { warnings, source: 'agents_and_runs' },
+      models,
+    };
   }
 
-  async getMetricsLatency(input: { level?: string; id?: string; window?: string }): Promise<MetricsLatencyDto> {
+  async getMetricsLatency(input: MetricsQueryDto, warnings: string[] = []): Promise<MetricsLatencyDto> {
     const canonical = await this.studioService.getCanonicalState();
     const resolved = this.scopeResolver.resolve(canonical, input);
-    const agents = canonical.agents.filter(a => resolved.workspaceIds.includes(a.workspaceId));
-    const modelSet = new Set(agents.map(a => a.model ?? 'unknown'));
-    if (modelSet.size === 0) modelSet.add('gpt-4o');
-    const models = [...modelSet].map(model => ({
-      model,
-      p50ms: Math.round(200 + Math.random() * 600),
-      p95ms: Math.round(800 + Math.random() * 2400),
-    }));
-    return { scope: resolved.scope, window: input.window ?? '24H', models };
+    const agents = canonical.agents.filter((agent) => resolved.workspaceIds.includes(agent.workspaceId));
+    const runs = this.filterRunsByScope(canonical, resolved.workspaceIds, resolved.agentIds);
+    const latencyByModel = new Map<string, number[]>();
+
+    for (const run of runs) {
+      if (!run.startedAt || !run.completedAt) {
+        continue;
+      }
+      const startedAt = new Date(run.startedAt).getTime();
+      const completedAt = new Date(run.completedAt).getTime();
+      if (!Number.isFinite(startedAt) || !Number.isFinite(completedAt) || completedAt < startedAt) {
+        continue;
+      }
+      const durationMs = completedAt - startedAt;
+      const model = (run.metadata?.model as string | undefined) ?? agents[0]?.model ?? 'unknown';
+      const existing = latencyByModel.get(model) ?? [];
+      existing.push(durationMs);
+      latencyByModel.set(model, existing);
+    }
+
+    const models = [...latencyByModel.entries()].map(([model, values]) => {
+      const sorted = [...values].sort((a, b) => a - b);
+      const p50 = sorted[Math.floor((sorted.length - 1) * 0.5)] ?? 0;
+      const p95 = sorted[Math.floor((sorted.length - 1) * 0.95)] ?? p50;
+      return { model, p50ms: Math.round(p50), p95ms: Math.round(p95) };
+    });
+
+    if (models.length === 0 && agents.length > 0) {
+      models.push({ model: agents[0].model ?? 'unknown', p50ms: 0, p95ms: 0 });
+    }
+
+    return {
+      scope: resolved.scope,
+      window: input.window,
+      state: this.analyticsState(Boolean(canonical.runtime.health.ok), models.length > 0),
+      meta: { warnings, source: 'run_durations' },
+      models,
+    };
   }
 
-  async getConnectionsMetering(input: { level?: string; id?: string; window?: string }): Promise<ConnectionsMeteringDto> {
+  async getConnectionsMetering(input: MetricsQueryDto, warnings: string[] = []): Promise<ConnectionsMeteringDto> {
     const canonical = await this.studioService.getCanonicalState();
     const resolved = this.scopeResolver.resolve(canonical, input);
     const edges = canonical.topology.connections.length;
@@ -687,7 +864,9 @@ export class DashboardService {
     const routing = this.routingService.findAll();
     return {
       scope: resolved.scope,
-      window: input.window ?? '24H',
+      window: input.window,
+      state: this.analyticsState(Boolean(canonical.runtime.health.ok), edges > 0),
+      meta: { warnings, source: 'topology_links' },
       meters: {
         supportedEdges:   { value: connected, max: Math.max(edges, 1), pct: edges > 0 ? Math.round((connected / edges) * 100) : 0 },
         hookCoverage:     { value: enabledHooks, max: Math.max(hooks.length, 1), pct: hooks.length > 0 ? Math.round((enabledHooks / hooks.length) * 100) : 0 },
@@ -697,7 +876,7 @@ export class DashboardService {
     };
   }
 
-  async getConnectionsRadial(input: { level?: string; id?: string; window?: string }): Promise<ConnectionsRadialDto> {
+  async getConnectionsRadial(input: MetricsQueryDto, warnings: string[] = []): Promise<ConnectionsRadialDto> {
     const canonical = await this.studioService.getCanonicalState();
     const resolved = this.scopeResolver.resolve(canonical, input);
     const hooks = this.hooksService.findAll();
@@ -705,14 +884,17 @@ export class DashboardService {
     const allBindings = canonical.runtimeControl.channelBindings;
     const enabled = allBindings.filter(b => b.enabled).length;
     return {
-      scope: resolved.scope, window: input.window ?? '24H',
+      scope: resolved.scope,
+      window: input.window,
+      state: this.analyticsState(Boolean(canonical.runtime.health.ok), canonical.topology.connections.length > 0 || hooks.length > 0),
+      meta: { warnings, source: 'connections_projection' },
       edges:    { total: canonical.topology.connections.length, connected: canonical.topology.links.filter(l => l.runtimeState === 'connected').length, paused: canonical.topology.links.filter(l => l.runtimeState === 'paused').length, disconnected: canonical.topology.links.filter(l => l.runtimeState === 'disconnected').length },
       hooks:    { total: hooks.length, enabled: enabledHooks },
       channels: { total: allBindings.length, enabled },
     };
   }
 
-  async getConnectionsDependencyGraph(input: { level?: string; id?: string; window?: string }): Promise<ConnectionsDependencyGraphDto> {
+  async getConnectionsDependencyGraph(input: MetricsQueryDto, warnings: string[] = []): Promise<ConnectionsDependencyGraphDto> {
     const canonical = await this.studioService.getCanonicalState();
     const resolved = this.scopeResolver.resolve(canonical, input);
     const agentSet = new Set(resolved.agentIds);
@@ -729,18 +911,22 @@ export class DashboardService {
         edges.push({ from: `agent:${agent.id}`, to: skillNodeId, label: 'uses' });
       }
     }
-    if (nodes.length === 0) nodes.push({ id: 'no-data', label: 'No entities in scope', type: 'empty' });
-    return { scope: resolved.scope, nodes, edges };
+    return {
+      scope: resolved.scope,
+      state: this.analyticsState(Boolean(canonical.runtime.health.ok), nodes.length > 0),
+      meta: { warnings, source: 'agent_skill_dependency' },
+      nodes,
+      edges,
+    };
   }
 
-  async getConnectionsTopology(input: { level?: string; id?: string; window?: string }): Promise<ConnectionsTopologyDto> {
+  async getConnectionsTopology(input: MetricsQueryDto, warnings: string[] = []): Promise<ConnectionsTopologyDto> {
     const canonical = await this.studioService.getCanonicalState();
     const resolved = this.scopeResolver.resolve(canonical, input);
     const agentSet = new Set(resolved.agentIds);
     const agents = canonical.agents.filter(a => agentSet.has(a.id));
     const nodes: ConnectionsTopologyDto['nodes'] = [];
     const edges: ConnectionsTopologyDto['edges'] = [];
-    const cols = Math.ceil(Math.sqrt(agents.length + 1));
     nodes.push({ id: 'workspace', label: canonical.workspace?.name ?? 'Workspace', type: 'workspace', x: 400, y: 280 });
     agents.slice(0, 16).forEach((agent, i) => {
       const angle = (2 * Math.PI * i) / Math.max(agents.length, 1);
@@ -751,31 +937,114 @@ export class DashboardService {
     const links = canonical.topology.links.slice(0, 20);
     for (const link of links) {
       const conn = canonical.topology.connections.find(c => c.id === link.linkId);
-      if (conn && nodes.find(n => n.id === conn.sourceId) && nodes.find(n => n.id === conn.targetId)) {
-        edges.push({ from: conn.sourceId, to: conn.targetId, label: link.runtimeState });
+      if (conn && nodes.find(n => n.id === conn.from.id) && nodes.find(n => n.id === conn.to.id)) {
+        edges.push({ from: conn.from.id, to: conn.to.id, label: link.runtimeState });
       }
     }
-    return { scope: resolved.scope, nodes, edges };
+    return {
+      scope: resolved.scope,
+      state: this.analyticsState(Boolean(canonical.runtime.health.ok), nodes.length > 1),
+      meta: { warnings, source: 'topology_projection' },
+      nodes,
+      edges,
+    };
   }
 
-  async getConnectionsFlowGraph(input: { level?: string; id?: string; window?: string }): Promise<ConnectionsFlowGraphDto> {
+  async getConnectionsFlowGraph(input: MetricsQueryDto, warnings: string[] = []): Promise<ConnectionsFlowGraphDto> {
     const canonical = await this.studioService.getCanonicalState();
     const resolved = this.scopeResolver.resolve(canonical, input);
     const agentSet = new Set(resolved.agentIds);
     const agents = canonical.agents.filter(a => agentSet.has(a.id));
     const nodes = [
       { id: 'input', label: 'Input', value: 100 },
-      ...agents.slice(0, 6).map(a => ({ id: a.id, label: a.name, value: Math.round(80 + Math.random() * 40) })),
+      ...agents.slice(0, 6).map((agent) => ({ id: agent.id, label: agent.name, value: Math.max(1, resolved.sessions.filter((session) => session.ref.workspaceId === agent.workspaceId).length) })),
       { id: 'output', label: 'Output', value: 95 },
     ];
     const links: ConnectionsFlowGraphDto['links'] = [];
     if (nodes.length > 1) {
       links.push({ source: 'input', target: nodes[1].id, value: 80 });
       for (let i = 1; i < nodes.length - 1; i++) {
-        links.push({ source: nodes[i].id, target: nodes[Math.min(i + 1, nodes.length - 1)].id, value: Math.round(60 + Math.random() * 30) });
+        const next = nodes[Math.min(i + 1, nodes.length - 1)];
+        links.push({ source: nodes[i].id, target: next.id, value: Math.max(1, Math.min(nodes[i].value, next.value)) });
       }
     }
-    return { scope: resolved.scope, nodes, links };
+    return {
+      scope: resolved.scope,
+      state: this.analyticsState(Boolean(canonical.runtime.health.ok), links.length > 0),
+      meta: { warnings, source: 'flow_projection' },
+      nodes,
+      links,
+    };
+  }
+
+  async getEditorReadiness(input: MetricsQueryDto, warnings: string[] = []): Promise<EditorReadinessDto> {
+    const canonical = await this.studioService.getCanonicalState();
+    const resolved = this.scopeResolver.resolve(canonical, input);
+    const runs = this.filterRunsByScope(canonical, resolved.workspaceIds, resolved.agentIds);
+    const snapshots = this.versionsService.listSnapshots();
+    const skills = canonical.catalog.skills.length;
+    const values: EditorReadinessDto['data'] = [
+      { dimension: 'Identity', score: resolved.scope.id ? 1 : 0 },
+      { dimension: 'Behavior', score: Math.min(1, skills / 10) },
+      { dimension: 'Assignment', score: Math.min(1, resolved.agentIds.length / 5) },
+      { dimension: 'Versions', score: Math.min(1, snapshots.length / 10) },
+      { dimension: 'Catalog', score: Math.min(1, (canonical.catalog.skills.length + canonical.catalog.tools.length) / 25) },
+      { dimension: 'Operations', score: Math.min(1, runs.length / 20) },
+    ];
+    return {
+      scope: resolved.scope,
+      state: this.analyticsState(Boolean(canonical.runtime.health.ok), true),
+      data: values,
+      meta: { warnings, source: 'editor_readiness_projection' },
+    };
+  }
+
+  async getEditorSectionStatus(input: MetricsQueryDto, warnings: string[] = []): Promise<EditorSectionStatusDto> {
+    const canonical = await this.studioService.getCanonicalState();
+    const resolved = this.scopeResolver.resolve(canonical, input);
+    const sections = ['Identity', 'Prompting', 'Skills / Tools', 'Routing', 'Hooks', 'Versions', 'Operations', 'Dependencies'];
+    return {
+      scope: resolved.scope,
+      state: this.analyticsState(Boolean(canonical.runtime.health.ok), true),
+      data: sections.map((section, idx) => ({
+        section,
+        status: idx < 3 ? 'complete' : idx < 6 ? 'in_progress' : 'planned',
+      })),
+      meta: { warnings, source: 'editor_section_status_projection' },
+    };
+  }
+
+  async getEditorInheritance(input: MetricsQueryDto, warnings: string[] = []): Promise<EditorInheritanceDto> {
+    const canonical = await this.studioService.getCanonicalState();
+    const resolved = this.scopeResolver.resolve(canonical, input);
+    return {
+      scope: resolved.scope,
+      state: this.analyticsState(Boolean(canonical.runtime.health.ok), true),
+      data: [
+        { field: 'model', source: 'inherited', effectiveValue: canonical.workspace?.defaultModel ?? 'gpt-5.4' },
+        { field: 'skills', source: 'local_override', effectiveValue: String(resolved.agentIds.length) },
+        { field: 'policies', source: 'locked', effectiveValue: String(this.policiesService.findAll().length) },
+      ],
+      meta: { warnings, source: 'editor_inheritance_projection' },
+    };
+  }
+
+  async getEditorVersions(input: MetricsQueryDto, warnings: string[] = []): Promise<EditorVersionsDto> {
+    const canonical = await this.studioService.getCanonicalState();
+    const resolved = this.scopeResolver.resolve(canonical, input);
+    const snapshots = this.versionsService.listSnapshots();
+    const data = snapshots.slice(0, 20).map((snapshot, index) => ({
+      id: snapshot.id,
+      label: snapshot.label ?? snapshot.id,
+      at: snapshot.createdAt,
+      status: (index === 0 ? 'current' : 'snapshot') as 'current' | 'draft' | 'snapshot',
+    }));
+    return {
+      scope: resolved.scope,
+      window: input.window,
+      state: this.analyticsState(Boolean(canonical.runtime.health.ok), data.length > 0),
+      data,
+      meta: { warnings, source: 'versions_service' },
+    };
   }
 }
-
