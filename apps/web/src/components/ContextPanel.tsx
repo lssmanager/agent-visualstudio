@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, FolderTree, Search } from 'lucide-react';
+import { ChevronDown, ChevronRight, FolderTree, Plus, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import { type HierarchyLevel, type HierarchyNode, useHierarchy } from '../lib/HierarchyContext';
@@ -30,6 +30,35 @@ function routeForNode(node: HierarchyNode, selectedBuilderTab: AgencyBuilderTab)
     return buildStudioHref({ surface: 'entity-editor', nodeKey: node.key });
   }
   return buildStudioHref({ surface: 'agency-builder', tab: selectedBuilderTab ?? 'overview', nodeKey: node.key });
+}
+
+function resolveWorkspaceIdForNode(nodeKey: string, nodes: Record<string, HierarchyNode>): string | null {
+  let current: HierarchyNode | undefined = nodes[nodeKey];
+  while (current) {
+    if (current.level === 'workspace') {
+      return current.id;
+    }
+    current = current.parentKey ? nodes[current.parentKey] : undefined;
+  }
+  return null;
+}
+
+function createAgentRouteForNode(nodeKey: string, nodes: Record<string, HierarchyNode>): string | null {
+  const node = nodes[nodeKey];
+  if (!node) return null;
+  const workspaceId = resolveWorkspaceIdForNode(nodeKey, nodes);
+
+  if (node.level === 'workspace') {
+    return workspaceId
+      ? `/entity-editor?mode=create&type=agent&parentWorkspaceId=${encodeURIComponent(workspaceId)}`
+      : '/entity-editor?mode=create&type=agent';
+  }
+  if (node.level === 'agent') {
+    return workspaceId
+      ? `/entity-editor?mode=create&type=subagent&parentWorkspaceId=${encodeURIComponent(workspaceId)}`
+      : '/entity-editor?mode=create&type=subagent';
+  }
+  return null;
 }
 
 export function ContextPanel({ onNavigate }: { onNavigate?: () => void }) {
@@ -269,6 +298,11 @@ export function ContextPanel({ onNavigate }: { onNavigate?: () => void }) {
                 if (!node) return;
                 go(routeForNode(node, selectedBuilderTab));
               }}
+              onCreate={(key) => {
+                const href = createAgentRouteForNode(key, tree.nodes);
+                if (!href) return;
+                go(href);
+              }}
             />
           </div>
         ) : (
@@ -289,6 +323,7 @@ function HierarchyBranch({
   selectNode,
   matches,
   onOpen,
+  onCreate,
 }: {
   nodeKey: string;
   depth: number;
@@ -299,6 +334,7 @@ function HierarchyBranch({
   selectNode: (key: string) => void;
   matches: Map<string, boolean>;
   onOpen: (key: string) => void;
+  onCreate: (key: string) => void;
 }) {
   const node = nodes[nodeKey];
   if (!node) return null;
@@ -400,22 +436,49 @@ function HierarchyBranch({
           )}
         </div>
 
-        <span
-          style={{
-            borderRadius: 'var(--radius-full)',
-            border: '1px solid color-mix(in srgb, var(--shell-chip-border) 80%, transparent)',
-            color: LEVEL_COLOR[node.level],
-            background: 'var(--shell-chip-bg)',
-            fontSize: 10,
-            fontWeight: 800,
-            letterSpacing: '0.04em',
-            textTransform: 'uppercase',
-            padding: '2px 7px',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {LEVEL_LABEL[node.level]}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {(node.level === 'workspace' || node.level === 'agent') && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onCreate(nodeKey);
+              }}
+              title={node.level === 'workspace' ? 'Add Agent' : 'Add Subagent'}
+              aria-label={node.level === 'workspace' ? 'Add Agent' : 'Add Subagent'}
+              style={{
+                width: 18,
+                height: 18,
+                borderRadius: 6,
+                border: '1px solid color-mix(in srgb, var(--shell-chip-border) 80%, transparent)',
+                background: 'var(--shell-chip-bg)',
+                color: 'var(--text-muted)',
+                display: 'grid',
+                placeItems: 'center',
+                padding: 0,
+                cursor: 'pointer',
+              }}
+            >
+              <Plus size={12} />
+            </button>
+          )}
+          <span
+            style={{
+              borderRadius: 'var(--radius-full)',
+              border: '1px solid color-mix(in srgb, var(--shell-chip-border) 80%, transparent)',
+              color: LEVEL_COLOR[node.level],
+              background: 'var(--shell-chip-bg)',
+              fontSize: 10,
+              fontWeight: 800,
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
+              padding: '2px 7px',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {LEVEL_LABEL[node.level]}
+          </span>
+        </div>
       </div>
 
       {expanded && (
@@ -432,6 +495,7 @@ function HierarchyBranch({
               selectNode={selectNode}
               matches={matches}
               onOpen={onOpen}
+              onCreate={onCreate}
             />
           ))}
         </div>
