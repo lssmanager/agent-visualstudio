@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { SquarePen, Save, Lock, Users, BookOpen, Wrench, GitBranch, Zap, History, Activity, ChevronRight, Target } from 'lucide-react';
+import { SquarePen, Save, Lock, Users, GitBranch, Zap, History, Activity, ChevronRight, Target } from 'lucide-react';
 
 import { PageHeader } from '../../../components';
 import { useHierarchy } from '../../../lib/HierarchyContext';
@@ -58,25 +58,19 @@ const SECTION_LABEL: Record<EntitySection, string> = {
   readiness: 'Readiness',
 };
 
-const SECTION_ICON: Record<EntitySection, typeof SquarePen> = {
-  identity: SquarePen,
-  catalog: BookOpen,
-  'prompts-behavior': BookOpen,
-  'skills-tools': Wrench,
-  'routing-channels': GitBranch,
-  handoffs: ChevronRight,
-  hooks: Zap,
-  versions: History,
-  operations: Activity,
-  readiness: Target,
+const MATRIX: Record<EntityLevel, EntitySection[]> = {
+  agency:     ['identity', 'prompts-behavior', 'skills-tools', 'handoffs', 'routing-channels', 'hooks', 'versions', 'operations', 'readiness'],
+  department: ['identity', 'prompts-behavior', 'skills-tools', 'handoffs', 'routing-channels', 'hooks', 'versions', 'operations', 'readiness'],
+  workspace:  ['identity', 'prompts-behavior', 'skills-tools', 'handoffs', 'routing-channels', 'hooks', 'versions', 'operations', 'readiness'],
+  agent:      ['identity', 'prompts-behavior', 'skills-tools', 'handoffs', 'routing-channels', 'hooks', 'versions', 'operations', 'readiness'],
+  subagent:   ['identity', 'prompts-behavior', 'skills-tools', 'handoffs', 'routing-channels', 'hooks', 'versions', 'operations', 'readiness'],
 };
 
-const MATRIX: Record<EntityLevel, EntitySection[]> = {
-  agency:     ['identity', 'catalog', 'routing-channels', 'hooks', 'versions', 'operations', 'readiness'],
-  department: ['identity', 'routing-channels', 'hooks', 'versions', 'operations'],
-  workspace:  ['identity', 'prompts-behavior', 'skills-tools', 'routing-channels', 'hooks', 'versions', 'operations', 'readiness'],
-  agent:      ['identity', 'prompts-behavior', 'skills-tools', 'handoffs', 'routing-channels', 'hooks', 'versions', 'operations', 'readiness'],
-  subagent:   ['identity', 'prompts-behavior', 'skills-tools', 'handoffs', 'hooks', 'versions', 'operations', 'readiness'],
+type BuilderPrimaryTab = 'profile' | 'governance';
+
+const PRIMARY_TAB_SECTIONS: Record<BuilderPrimaryTab, EntitySection[]> = {
+  profile: ['identity', 'prompts-behavior', 'skills-tools', 'handoffs', 'routing-channels', 'hooks', 'operations'],
+  governance: ['versions', 'readiness'],
 };
 
 // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1307,6 +1301,7 @@ export default function EntityEditorPage() {
   const { tree, selectedNode, selectedLineage, scope, selectByEntity } = useHierarchy();
   const { state, refresh } = useStudioState();
   const [activeSection, setActiveSection] = useState<EntitySection>('identity');
+  const [activePrimaryTab, setActivePrimaryTab] = useState<BuilderPrimaryTab>('profile');
   const [createName, setCreateName] = useState('');
   const [createModel, setCreateModel] = useState('');
   const [createRole, setCreateRole] = useState('');
@@ -1331,6 +1326,7 @@ export default function EntityEditorPage() {
   const [createSafetyApproval, setCreateSafetyApproval] = useState(true);
   const [createHorizontalLinks, setCreateHorizontalLinks] = useState('');
   const [createSection, setCreateSection] = useState<EntitySection>('identity');
+  const [createPrimaryTab, setCreatePrimaryTab] = useState<BuilderPrimaryTab>('profile');
 
   const createMode = searchParams.get('mode') === 'create';
   const createTypeRaw = searchParams.get('type');
@@ -1353,6 +1349,14 @@ export default function EntityEditorPage() {
 
   const sections = useMemo(() => (entityLevel ? MATRIX[entityLevel] : []), [entityLevel]);
   const contextLabel = selectedLineage.map((node) => node.label).join(' / ');
+  const activePrimarySections = useMemo(
+    () => PRIMARY_TAB_SECTIONS[activePrimaryTab].filter((section) => sections.includes(section)),
+    [activePrimaryTab, sections],
+  );
+  const createPrimarySections = useMemo(
+    () => PRIMARY_TAB_SECTIONS[createPrimaryTab],
+    [createPrimaryTab],
+  );
 
   // Ensure active section is valid for current level
   useEffect(() => {
@@ -1360,6 +1364,26 @@ export default function EntityEditorPage() {
       setActiveSection(sections[0]);
     }
   }, [sections, activeSection]);
+
+  useEffect(() => {
+    const nextPrimaryTab = (Object.entries(PRIMARY_TAB_SECTIONS).find(([, sectionList]) => sectionList.includes(activeSection))?.[0] ?? 'profile') as BuilderPrimaryTab;
+    if (nextPrimaryTab !== activePrimaryTab) {
+      setActivePrimaryTab(nextPrimaryTab);
+    }
+  }, [activePrimaryTab, activeSection]);
+
+  useEffect(() => {
+    if (!activePrimarySections.includes(activeSection)) {
+      setActiveSection(activePrimarySections[0] ?? 'identity');
+    }
+  }, [activePrimarySections, activeSection]);
+
+  useEffect(() => {
+    const nextPrimaryTab = (Object.entries(PRIMARY_TAB_SECTIONS).find(([, sectionList]) => sectionList.includes(createSection))?.[0] ?? 'profile') as BuilderPrimaryTab;
+    if (nextPrimaryTab !== createPrimaryTab) {
+      setCreatePrimaryTab(nextPrimaryTab);
+    }
+  }, [createPrimaryTab, createSection]);
 
   // Resolve entity data
   const agent = useMemo<AgentSpec | null>(() => {
@@ -1450,8 +1474,9 @@ export default function EntityEditorPage() {
     setCreateBusy(true);
     setCreateError(null);
     try {
-      await saveAgent({
+      await saveAgent(({
         id: nextId,
+        parentWorkspaceId,
         workspaceId: parentWorkspaceId,
         name: createName.trim(),
         role: createRole || 'Agent',
@@ -1548,7 +1573,7 @@ export default function EntityEditorPage() {
           },
         },
         isEnabled: true,
-      });
+      }) as AgentSpec & { parentWorkspaceId: string });
       await refresh();
       selectByEntity(createKind === 'subagent' ? 'subagent' : 'agent', nextId);
       navigate(`/entity-editor?${NODE_QUERY_KEY}=${createKind === 'subagent' ? 'subagent' : 'agent'}:${nextId}`, { replace: true });
@@ -1597,29 +1622,25 @@ export default function EntityEditorPage() {
           icon={SquarePen}
           description="Single create surface with explicit context, hierarchy-aware defaults, and 9 builder sections."
         />
-        <div className="grid grid-cols-1 xl:grid-cols-[220px_minmax(0,1fr)_280px] gap-4">
-          <aside className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}>
-            <div style={{ padding: '10px 12px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', borderBottom: '1px solid var(--border-primary)' }}>
-              Builder Sections
+        <div className="space-y-4">
+          <div className="rounded-xl border p-3 space-y-3" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(120px, max-content))', gap: 8 }}>
+              <button type="button" onClick={() => setCreatePrimaryTab('profile')} style={{ ...buttonStyle, background: createPrimaryTab === 'profile' ? 'var(--color-primary-soft)' : 'var(--bg-primary)', color: createPrimaryTab === 'profile' ? 'var(--color-primary)' : 'var(--text-primary)' }}>Profile</button>
+              <button type="button" onClick={() => setCreatePrimaryTab('governance')} style={{ ...buttonStyle, background: createPrimaryTab === 'governance' ? 'var(--color-primary-soft)' : 'var(--bg-primary)', color: createPrimaryTab === 'governance' ? 'var(--color-primary)' : 'var(--text-primary)' }}>Governance</button>
             </div>
-            <nav className="py-1">
-              {createSections.map((section) => (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
+              {createSections.filter((section) => createPrimarySections.includes(section)).map((section) => (
                 <button
                   key={section}
                   type="button"
                   onClick={() => setCreateSection(section)}
-                  className="w-full text-left px-3 py-2 text-sm"
-                  style={{
-                    color: createSection === section ? 'var(--color-primary)' : 'var(--text-muted)',
-                    background: createSection === section ? 'var(--color-primary-soft)' : 'transparent',
-                    borderLeft: createSection === section ? '2px solid var(--color-primary)' : '2px solid transparent',
-                  }}
+                  style={{ ...buttonStyle, background: createSection === section ? 'var(--color-primary-soft)' : 'var(--bg-primary)', color: createSection === section ? 'var(--color-primary)' : 'var(--text-primary)' }}
                 >
                   {SECTION_LABEL[section]}
                 </button>
               ))}
-            </nav>
-          </aside>
+            </div>
+          </div>
 
           <div className="rounded-xl border p-5 space-y-4" style={{ borderColor: 'var(--border-primary)', background: 'var(--card-bg)' }}>
             <div className="rounded-lg border p-3 space-y-2" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}>
@@ -1758,7 +1779,7 @@ ${createLocalNotes || '<empty>'}
             </div>
           </div>
 
-          <aside className="rounded-xl border p-4 space-y-3" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}>
+          <div className="rounded-xl border p-4 space-y-3" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}>
             <p className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: '0.07em' }}>Readiness</p>
             {readinessItems.map((item) => (
               <div key={item.key} className="flex items-center gap-2 text-sm" style={{ color: item.ok ? 'var(--tone-success-text)' : 'var(--text-muted)' }}>
@@ -1769,7 +1790,7 @@ ${createLocalNotes || '<empty>'}
             <div className="pt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
               Status: {readinessItems.every((item) => item.ok) ? 'ready_to_publish' : 'incomplete'}
             </div>
-          </aside>
+          </div>
         </div>
       </div>
     );
@@ -1859,56 +1880,27 @@ ${createLocalNotes || '<empty>'}
         </div>
       </div>
 
-      {/* Editor Layout: Section Nav + Content */}
-      <div className="flex gap-0 rounded-xl border overflow-hidden" style={{ borderColor: 'var(--card-border)', background: 'var(--card-bg)' }}>
-        {/* Left Section Navigation */}
-        <div
-          className="flex-shrink-0"
-          style={{
-            width: 200,
-            borderRight: '1px solid var(--border-primary)',
-            background: 'var(--bg-secondary)',
-          }}
-        >
-          <div
-            style={{
-              padding: '10px 12px',
-              fontSize: 11,
-              fontWeight: 700,
-              color: 'var(--text-muted)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.08em',
-              borderBottom: '1px solid var(--border-primary)',
-            }}
-          >
-            {selectedNode.label}
-          </div>
-          <nav className="py-1">
-            {sections.map((section) => {
-              const Icon = SECTION_ICON[section];
-              const isActive = activeSection === section;
-              return (
-                <button
-                  key={section}
-                  type="button"
-                  onClick={() => setActiveSection(section)}
-                  className="w-full text-left flex items-center gap-2.5 px-3 py-2.5 text-sm font-medium transition-colors"
-                  style={{
-                    background: isActive ? 'var(--color-primary-soft)' : 'transparent',
-                    color: isActive ? 'var(--color-primary)' : 'var(--text-muted)',
-                    borderLeft: isActive ? `2px solid var(--color-primary)` : '2px solid transparent',
-                  }}
-                >
-                  <Icon size={14} />
-                  {SECTION_LABEL[section]}
-                </button>
-              );
-            })}
-          </nav>
+      <div className="rounded-xl border p-3 space-y-3" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(120px, max-content))', gap: 8 }}>
+          <button type="button" onClick={() => setActivePrimaryTab('profile')} style={{ ...buttonStyle, background: activePrimaryTab === 'profile' ? 'var(--color-primary-soft)' : 'var(--bg-primary)', color: activePrimaryTab === 'profile' ? 'var(--color-primary)' : 'var(--text-primary)' }}>Profile</button>
+          <button type="button" onClick={() => setActivePrimaryTab('governance')} style={{ ...buttonStyle, background: activePrimaryTab === 'governance' ? 'var(--color-primary-soft)' : 'var(--bg-primary)', color: activePrimaryTab === 'governance' ? 'var(--color-primary)' : 'var(--text-primary)' }}>Governance</button>
         </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
+          {sections.filter((section) => activePrimarySections.includes(section)).map((section) => (
+            <button
+              key={section}
+              type="button"
+              onClick={() => setActiveSection(section)}
+              style={{ ...buttonStyle, background: activeSection === section ? 'var(--color-primary-soft)' : 'var(--bg-primary)', color: activeSection === section ? 'var(--color-primary)' : 'var(--text-primary)' }}
+            >
+              {SECTION_LABEL[section]}
+            </button>
+          ))}
+        </div>
+      </div>
 
-        {/* Right Section Content */}
-        <div className="flex-1 min-w-0 p-6">
+      <div className="rounded-xl border p-6" style={{ borderColor: 'var(--card-border)', background: 'var(--card-bg)' }}>
+        <div className="min-w-0">
           {activeSection === 'identity' && (
             <IdentitySection level={entityLevel} agent={activeAgent} workspace={workspace} onSaved={() => { void refresh(); }} />
           )}

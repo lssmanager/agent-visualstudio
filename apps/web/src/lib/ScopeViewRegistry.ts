@@ -16,18 +16,18 @@ export interface ScopeViewDefinition {
 
 export const SCOPE_VIEW_REGISTRY: Record<CanonicalNodeLevel, ScopeViewDefinition> = {
   agency: {
-    adminTabs: ['overview', 'connections', 'operations', 'runs', 'sessions', 'settings'],
+    adminTabs: ['overview', 'connections', 'operations', 'runs', 'sessions', 'profile', 'settings'],
     canEnterStudio: false,
-    showProfileTab: false,
+    showProfileTab: true,
     settingsScope: 'global/defaults',
     operations: true,
     sessionsMode: 'aggregated',
     runsMode: 'aggregated',
   },
   department: {
-    adminTabs: ['overview', 'connections', 'operations', 'runs', 'sessions', 'settings'],
+    adminTabs: ['overview', 'connections', 'operations', 'runs', 'sessions', 'profile', 'settings'],
     canEnterStudio: false,
-    showProfileTab: false,
+    showProfileTab: true,
     settingsScope: 'partial',
     operations: true,
     sessionsMode: 'aggregated',
@@ -61,4 +61,3 @@ export const SCOPE_VIEW_REGISTRY: Record<CanonicalNodeLevel, ScopeViewDefinition
     runsMode: 'scoped',
   },
 };
-

@@ -365,17 +365,30 @@ export async function updateWorkspace(input: Partial<WorkspaceSpec>) {
 }
 
 export async function saveAgent(agent: AgentSpec) {
+  const normalized = {
+    ...agent,
+    parentWorkspaceId: (agent as unknown as { parentWorkspaceId?: string }).parentWorkspaceId ?? agent.workspaceId,
+    identity: agent.identity ?? {
+      name: agent.name,
+      role: agent.role,
+      description: agent.description,
+      creature: '',
+      vibe: '',
+      emoji: '',
+      avatar: '',
+    },
+  };
   const response = await fetch(`${API_BASE}/agents/${agent.id}`, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(agent),
+    body: JSON.stringify(normalized),
   });
 
   if (response.status === 404) {
     const created = await fetch(`${API_BASE}/agents`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(agent),
+      body: JSON.stringify(normalized),
     });
     return parseJson<AgentSpec>(created);
   }
