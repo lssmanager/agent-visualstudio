@@ -49,12 +49,12 @@ export function AgentIdentitySection({ value, onChange, profileSource = 'blank' 
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <input value={identity.creature ?? ''} onChange={(e) => update({ creature: e.target.value })} placeholder="AI assistant, orchestrator, dev agent, familiar…" className="rounded-md border px-3 py-2 text-sm" />
+        <input value={identity.creature ?? ''} onChange={(e) => update({ creature: e.target.value })} placeholder="AI assistant, orchestrator, dev agent, familiarâ€¦" className="rounded-md border px-3 py-2 text-sm" />
         <input value={identity.role ?? ''} onChange={(e) => update({ role: e.target.value })} placeholder="What kind of agent is this?" className="rounded-md border px-3 py-2 text-sm" />
         <input value={identity.emoji ?? ''} onChange={(e) => update({ emoji: e.target.value })} placeholder="Signature emoji" className="rounded-md border px-3 py-2 text-sm" />
       </div>
 
-      <input value={identity.vibe ?? ''} onChange={(e) => update({ vibe: e.target.value })} placeholder="warm, sharp, calm, direct, playful…" className="w-full rounded-md border px-3 py-2 text-sm" />
+      <input value={identity.vibe ?? ''} onChange={(e) => update({ vibe: e.target.value })} placeholder="warm, sharp, calm, direct, playfulâ€¦" className="w-full rounded-md border px-3 py-2 text-sm" />
       <textarea rows={3} value={identity.description ?? ''} onChange={(e) => update({ description: e.target.value })} placeholder="Short identity description" className="w-full rounded-md border px-3 py-2 text-sm" />
     </section>
   );
