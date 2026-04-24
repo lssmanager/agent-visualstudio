@@ -1,6 +1,14 @@
 // â”€â”€ Agent â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export type AgentKind = 'agent' | 'subagent' | 'orchestrator';
+export type AgentReadinessState =
+  | 'missing_identity'
+  | 'missing_behavior'
+  | 'missing_model'
+  | 'missing_channel_binding'
+  | 'missing_memory_policy'
+  | 'missing_safety_policy'
+  | 'ready_to_publish';
 
 export interface AgentSpec {
   id: string;
@@ -22,6 +30,108 @@ export interface AgentSpec {
   handoffRules: Array<{ id: string; targetAgentId: string; when: string; description?: string; priority?: number }>;
   channelBindings: Array<{ id: string; channel: string; route: string; enabled: boolean }>;
   isEnabled: boolean;
+  identity?: {
+    name: string;
+    creature?: string;
+    role?: string;
+    description?: string;
+    vibe?: string;
+    emoji?: string;
+    avatar?: string;
+  };
+  behavior?: {
+    systemPrompt?: string;
+    personalityGuide?: string;
+    operatingPrinciples?: string[];
+    boundaries?: string[];
+    privacyRules?: string[];
+    continuityRules?: string[];
+    responseStyle?: string;
+  };
+  humanContext?: {
+    humanName?: string;
+    addressAs?: string;
+    pronouns?: string;
+    timezone?: string;
+    notes?: string;
+    context?: string;
+  };
+  skillsTools?: {
+    assignedSkills?: string[];
+    enabledTools?: string[];
+    localNotes?: string;
+    deviceAliases?: Record<string, string>;
+    sshAliases?: Record<string, string>;
+    ttsPreferences?: Record<string, string>;
+    environmentNotes?: string;
+  };
+  handoffs?: {
+    allowedTargets?: string[];
+    fallbackAgent?: string;
+    escalationPolicy?: string;
+    approvalLane?: string;
+    delegationNotes?: string;
+    internalActionsAllowed?: string[];
+    externalActionsRequireApproval?: string[];
+    publicPostingRequiresApproval?: boolean;
+  };
+  routingChannels?: {
+    allowedChannels?: string[];
+    defaultChannel?: string;
+    fallbackChannel?: string;
+    groupChatMode?: 'silent_by_default' | 'respond_when_mentioned' | 'active';
+    reactionPolicy?: 'enabled' | 'disabled' | 'limited';
+    maxReactionsPerMessage?: number;
+    avoidTripleTap?: boolean;
+    platformFormattingRules?: string;
+    responseTriggerPolicy?: string;
+  };
+  hooks?: {
+    heartbeat?: {
+      enabled: boolean;
+      promptSource: 'HEARTBEAT.md' | 'inline' | 'disabled';
+      checkEmail?: boolean;
+      checkCalendar?: boolean;
+      checkWeather?: boolean;
+      checkMentions?: boolean;
+      quietHoursStart?: string;
+      quietHoursEnd?: string;
+    };
+    lifecycleHooks?: string[];
+    cronHooks?: Array<{ schedule: string; task: string }>;
+    proactiveChecks?: string[];
+  };
+  operations?: {
+    startup?: {
+      readSoul: boolean;
+      readUser: boolean;
+      readDailyMemory: boolean;
+      readLongTermMemoryInMainSessionOnly: boolean;
+    };
+    memoryPolicy?: {
+      dailyNotesEnabled: boolean;
+      longTermMemoryEnabled: boolean;
+      memoryScope: 'main_session_only' | 'shared_safe' | 'disabled';
+      compactionPolicy?: string;
+    };
+    safety?: {
+      destructiveCommandsRequireApproval: boolean;
+      externalActionsRequireApproval: boolean;
+      privateDataProtection: boolean;
+      recoverableDeletePreferred: boolean;
+    };
+    retryPolicy?: string;
+    runtimeHealthNotes?: string;
+  };
+  readiness?: {
+    identityComplete: boolean;
+    behaviorComplete: boolean;
+    toolsAssigned: boolean;
+    routingConfigured: boolean;
+    hooksConfigured: boolean;
+    operationsConfigured: boolean;
+    versionsReady: boolean;
+  };
 }
 
 // â”€â”€ Workspace â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

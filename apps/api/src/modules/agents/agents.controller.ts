@@ -22,6 +22,22 @@ export function registerAgentsRoutes(router: Router) {
     return res.json(item);
   });
 
+  router.get('/agents/:id/readiness', (req, res) => {
+    const readiness = service.getReadiness(req.params.id);
+    if (!readiness) {
+      return res.status(404).json({ ok: false, error: 'Agent not found' });
+    }
+    return res.json(readiness);
+  });
+
+  router.post('/agents/:id/core-files/generate', (req, res) => {
+    const generated = service.generateCoreFiles(req.params.id);
+    if (!generated) {
+      return res.status(404).json({ ok: false, error: 'Agent not found' });
+    }
+    return res.json(generated);
+  });
+
   router.post('/agents', (req, res) => {
     try {
       res.status(201).json(service.create(req.body));
@@ -31,6 +47,18 @@ export function registerAgentsRoutes(router: Router) {
   });
 
   router.put('/agents/:id', (req, res) => {
+    try {
+      const updated = service.update(req.params.id, req.body);
+      if (!updated) {
+        return res.status(404).json({ ok: false, error: 'Agent not found' });
+      }
+      return res.json(updated);
+    } catch (error) {
+      return res.status(422).json({ ok: false, error: (error as Error).message });
+    }
+  });
+
+  router.patch('/agents/:id', (req, res) => {
     try {
       const updated = service.update(req.params.id, req.body);
       if (!updated) {

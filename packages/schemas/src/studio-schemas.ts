@@ -139,11 +139,11 @@ export const agentSpecSchema = z.object({
   id: z.string().min(1),
   workspaceId: z.string().min(1),
   name: z.string().min(1),
-  role: z.string().min(1),
-  description: z.string().min(1),
-  instructions: z.string().min(1),
+  role: z.string().min(1).default('Agent'),
+  description: z.string().default(''),
+  instructions: z.string().optional(),
   model: z.string().min(1),
-  skillRefs: z.array(z.string()),
+  skillRefs: z.array(z.string()).optional(),
   tags: z.array(z.string()),
   visibility: z.enum(['private', 'workspace', 'public']),
   executionMode: z.enum(['direct', 'orchestrated', 'handoff']),
@@ -174,7 +174,7 @@ export const agentSpecSchema = z.object({
       description: z.string().optional(),
       priority: z.number().int().optional(),
     }),
-  ),
+  ).optional(),
   channelBindings: z.array(
     z.object({
       id: z.string().min(1),
@@ -182,7 +182,7 @@ export const agentSpecSchema = z.object({
       route: z.string().min(1),
       enabled: z.boolean(),
     }),
-  ),
+  ).optional(),
   policyBindings: z
     .array(
       z.object({
@@ -192,6 +192,134 @@ export const agentSpecSchema = z.object({
     )
     .optional(),
   isEnabled: z.boolean(),
+  identity: z
+    .object({
+      name: z.string().min(1),
+      creature: z.string().optional(),
+      role: z.string().optional(),
+      description: z.string().optional(),
+      vibe: z.string().optional(),
+      emoji: z.string().optional(),
+      avatar: z.string().optional(),
+    })
+    .optional(),
+  behavior: z
+    .object({
+      systemPrompt: z.string().optional(),
+      personalityGuide: z.string().optional(),
+      operatingPrinciples: z.array(z.string()).optional(),
+      boundaries: z.array(z.string()).optional(),
+      privacyRules: z.array(z.string()).optional(),
+      continuityRules: z.array(z.string()).optional(),
+      responseStyle: z.string().optional(),
+    })
+    .optional(),
+  humanContext: z
+    .object({
+      humanName: z.string().optional(),
+      addressAs: z.string().optional(),
+      pronouns: z.string().optional(),
+      timezone: z.string().optional(),
+      notes: z.string().optional(),
+      context: z.string().optional(),
+    })
+    .optional(),
+  skillsTools: z
+    .object({
+      assignedSkills: z.array(z.string()).optional(),
+      enabledTools: z.array(z.string()).optional(),
+      localNotes: z.string().optional(),
+      deviceAliases: z.record(z.string(), z.string()).optional(),
+      sshAliases: z.record(z.string(), z.string()).optional(),
+      ttsPreferences: z.record(z.string(), z.string()).optional(),
+      environmentNotes: z.string().optional(),
+    })
+    .optional(),
+  handoffs: z
+    .object({
+      allowedTargets: z.array(z.string()).optional(),
+      fallbackAgent: z.string().optional(),
+      escalationPolicy: z.string().optional(),
+      approvalLane: z.string().optional(),
+      delegationNotes: z.string().optional(),
+      internalActionsAllowed: z.array(z.string()).optional(),
+      externalActionsRequireApproval: z.array(z.string()).optional(),
+      publicPostingRequiresApproval: z.boolean().optional(),
+    })
+    .optional(),
+  routingChannels: z
+    .object({
+      allowedChannels: z.array(z.string()).optional(),
+      defaultChannel: z.string().optional(),
+      fallbackChannel: z.string().optional(),
+      groupChatMode: z.enum(['silent_by_default', 'respond_when_mentioned', 'active']).optional(),
+      reactionPolicy: z.enum(['enabled', 'disabled', 'limited']).optional(),
+      maxReactionsPerMessage: z.number().int().positive().optional(),
+      avoidTripleTap: z.boolean().optional(),
+      platformFormattingRules: z.string().optional(),
+      responseTriggerPolicy: z.string().optional(),
+    })
+    .optional(),
+  hooks: z
+    .object({
+      heartbeat: z
+        .object({
+          enabled: z.boolean(),
+          promptSource: z.enum(['HEARTBEAT.md', 'inline', 'disabled']),
+          checkEmail: z.boolean().optional(),
+          checkCalendar: z.boolean().optional(),
+          checkWeather: z.boolean().optional(),
+          checkMentions: z.boolean().optional(),
+          quietHoursStart: z.string().optional(),
+          quietHoursEnd: z.string().optional(),
+        })
+        .optional(),
+      lifecycleHooks: z.array(z.string()).optional(),
+      cronHooks: z.array(z.object({ schedule: z.string().min(1), task: z.string().min(1) })).optional(),
+      proactiveChecks: z.array(z.string()).optional(),
+    })
+    .optional(),
+  operations: z
+    .object({
+      startup: z
+        .object({
+          readSoul: z.boolean(),
+          readUser: z.boolean(),
+          readDailyMemory: z.boolean(),
+          readLongTermMemoryInMainSessionOnly: z.boolean(),
+        })
+        .optional(),
+      memoryPolicy: z
+        .object({
+          dailyNotesEnabled: z.boolean(),
+          longTermMemoryEnabled: z.boolean(),
+          memoryScope: z.enum(['main_session_only', 'shared_safe', 'disabled']),
+          compactionPolicy: z.string().optional(),
+        })
+        .optional(),
+      safety: z
+        .object({
+          destructiveCommandsRequireApproval: z.boolean(),
+          externalActionsRequireApproval: z.boolean(),
+          privateDataProtection: z.boolean(),
+          recoverableDeletePreferred: z.boolean(),
+        })
+        .optional(),
+      retryPolicy: z.string().optional(),
+      runtimeHealthNotes: z.string().optional(),
+    })
+    .optional(),
+  readiness: z
+    .object({
+      identityComplete: z.boolean(),
+      behaviorComplete: z.boolean(),
+      toolsAssigned: z.boolean(),
+      routingConfigured: z.boolean(),
+      hooksConfigured: z.boolean(),
+      operationsConfigured: z.boolean(),
+      versionsReady: z.boolean(),
+    })
+    .optional(),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
 });

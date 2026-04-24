@@ -373,6 +373,28 @@ export async function saveAgent(agent: AgentSpec) {
   return parseJson<AgentSpec>(response);
 }
 
+export async function getAgentReadiness(agentId: string) {
+  const response = await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}/readiness`);
+  return parseJson<{
+    agentId: string;
+    state: import('./types').AgentReadinessState;
+    checks: Record<string, boolean>;
+    missingFields: string[];
+    score: number;
+  }>(response);
+}
+
+export async function generateAgentCoreFiles(agentId: string) {
+  const response = await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}/core-files/generate`, {
+    method: 'POST',
+  });
+  return parseJson<{
+    artifacts: DeployPreview['artifacts'];
+    diagnostics: string[];
+    diff: DeployPreview['diff'];
+  }>(response);
+}
+
 export async function saveFlow(flow: FlowSpec) {
   const response = await fetch(`${API_BASE}/flows/${flow.id}`, {
     method: 'PUT',

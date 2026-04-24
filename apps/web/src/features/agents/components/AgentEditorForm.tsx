@@ -1,13 +1,15 @@
-import { useMemo } from 'react';
-import { useForm } from 'react-hook-form';
+import { useMemo, useState } from 'react';
 
 import { saveAgent } from '../../../lib/api';
-import { AgentKind, AgentSpec, SkillSpec } from '../../../lib/types';
-import { AgentHandoffEditor } from './AgentHandoffEditor';
-import { AgentInstructionEditor } from './AgentInstructionEditor';
-import { AgentKindSelector } from './AgentKindSelector';
-import { AgentModelSelector } from './AgentModelSelector';
-import { AgentSkillSelector } from './AgentSkillSelector';
+import { AgentSpec, SkillSpec } from '../../../lib/types';
+import { AgentBehaviorSection } from './sections/AgentBehaviorSection';
+import { AgentHandoffsSection } from './sections/AgentHandoffsSection';
+import { AgentHooksSection } from './sections/AgentHooksSection';
+import { AgentIdentitySection } from './sections/AgentIdentitySection';
+import { AgentOperationsSection } from './sections/AgentOperationsSection';
+import { AgentReadinessPanel } from './sections/AgentReadinessPanel';
+import { AgentRoutingSection } from './sections/AgentRoutingSection';
+import { AgentSkillsToolsSection } from './sections/AgentSkillsToolsSection';
 
 interface AgentEditorFormProps {
   workspaceId: string;
@@ -18,14 +20,37 @@ interface AgentEditorFormProps {
   onError?: (err: Error) => void;
 }
 
-export function AgentEditorForm({ workspaceId, agent, agents = [], skills, onSaved, onError }: AgentEditorFormProps) {
+function computeReadiness(agent: AgentSpec) {
+  const checks = {
+    identityComplete: Boolean(agent.identity?.name && agent.identity?.creature && agent.identity?.vibe),
+    behaviorComplete: Boolean(agent.behavior?.systemPrompt?.trim()),
+    toolsAssigned: Boolean((agent.skillsTools?.assignedSkills?.length ?? 0) + (agent.skillsTools?.enabledTools?.length ?? 0) > 0),
+    routingConfigured: Boolean(agent.routingChannels?.allowedChannels?.length),
+    hooksConfigured: agent.hooks?.heartbeat?.promptSource !== undefined,
+    operationsConfigured: Boolean(agent.operations?.startup && agent.operations?.safety),
+    versionsReady: true,
+  };
+
+  const score = Math.round((Object.values(checks).filter(Boolean).length / Object.keys(checks).length) * 100);
+  const state =
+    !checks.identityComplete ? 'missing_identity'
+    : !checks.behaviorComplete ? 'missing_behavior'
+    : !agent.model ? 'missing_model'
+    : !checks.routingConfigured ? 'missing_channel_binding'
+    : !agent.operations?.memoryPolicy ? 'missing_memory_policy'
+    : !agent.operations?.safety ? 'missing_safety_policy'
+    : 'ready_to_publish';
+  return { checks, score, state } as const;
+}
+
+export function AgentEditorForm({ workspaceId, agent, onSaved, onError }: AgentEditorFormProps) {
   const defaults = useMemo<AgentSpec>(
     () =>
       agent ?? {
         id: crypto.randomUUID(),
         workspaceId,
         name: '',
-        role: '',
+        role: 'Agent',
         description: '',
         instructions: '',
         model: 'openai/gpt-5.4-mini',
@@ -36,88 +61,112 @@ export function AgentEditorForm({ workspaceId, agent, agents = [], skills, onSav
         kind: 'agent',
         handoffRules: [],
         channelBindings: [],
+        identity: {
+          name: '',
+          creature: '',
+          vibe: '',
+          role: 'Agent',
+          description: '',
+          emoji: '',
+          avatar: '',
+        },
+        behavior: {
+          systemPrompt: '',
+          personalityGuide: '',
+          operatingPrinciples: [],
+          boundaries: [],
+          privacyRules: [],
+          continuityRules: [],
+          responseStyle: '',
+        },
+        skillsTools: {
+          assignedSkills: [],
+          enabledTools: [],
+          localNotes: '',
+        },
+        handoffs: {
+          allowedTargets: [],
+          escalationPolicy: '',
+          approvalLane: '',
+          internalActionsAllowed: [],
+          externalActionsRequireApproval: [],
+          publicPostingRequiresApproval: true,
+        },
+        routingChannels: {
+          allowedChannels: [],
+          groupChatMode: 'respond_when_mentioned',
+          reactionPolicy: 'limited',
+          maxReactionsPerMessage: 1,
+          avoidTripleTap: true,
+          platformFormattingRules: '',
+          responseTriggerPolicy: '',
+        },
+        hooks: {
+          heartbeat: { enabled: false, promptSource: 'disabled' },
+          lifecycleHooks: [],
+          cronHooks: [],
+          proactiveChecks: [],
+        },
+        operations: {
+          startup: {
+            readSoul: true,
+            readUser: true,
+            readDailyMemory: true,
+            readLongTermMemoryInMainSessionOnly: true,
+          },
+          memoryPolicy: {
+            dailyNotesEnabled: true,
+            longTermMemoryEnabled: true,
+            memoryScope: 'main_session_only',
+          },
+          safety: {
+            destructiveCommandsRequireApproval: true,
+            externalActionsRequireApproval: true,
+            privateDataProtection: true,
+            recoverableDeletePreferred: true,
+          },
+        },
         isEnabled: true,
       },
     [agent, workspaceId],
   );
 
-  const { register, handleSubmit, setValue, watch } = useForm<AgentSpec>({ defaultValues: defaults });
-
-  const currentKind = watch('kind') ?? 'agent';
-  const orchestrators = agents.filter((a) => a.id !== agent?.id && (a.kind === 'orchestrator' || a.executionMode === 'orchestrated'));
+  const [draft, setDraft] = useState<AgentSpec>(defaults);
+  const readiness = computeReadiness(draft);
 
   return (
     <form
-      className="space-y-4"
-      onSubmit={handleSubmit(async (values) => {
-        try {
-          const saved = await saveAgent(values);
-          onSaved(saved);
-        } catch (err) {
-          onError?.(err instanceof Error ? err : new Error(String(err)));
-        }
-      })}
+      className="grid grid-cols-1 xl:grid-cols-[1fr_280px] gap-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void (async () => {
+          try {
+            const saved = await saveAgent(draft);
+            onSaved(saved);
+          } catch (err) {
+            onError?.(err instanceof Error ? err : new Error(String(err)));
+          }
+        })();
+      }}
     >
-      <div className="grid grid-cols-2 gap-3">
-        <input {...register('name')} placeholder="Agent name" className="rounded border px-3 py-2" style={{ borderColor: 'var(--input-border)', background: 'var(--input-bg)', color: 'var(--input-text)' }} />
-        <input {...register('role')} placeholder="Role" className="rounded border px-3 py-2" style={{ borderColor: 'var(--input-border)', background: 'var(--input-bg)', color: 'var(--input-text)' }} />
+      <div className="space-y-4">
+        <AgentIdentitySection value={draft} onChange={setDraft} />
+        <AgentBehaviorSection value={draft} onChange={setDraft} />
+        <AgentSkillsToolsSection data={null} onPatch={async () => Promise.resolve()} />
+        <AgentHandoffsSection value={draft} />
+        <AgentRoutingSection value={draft} />
+        <AgentHooksSection value={draft} />
+        <AgentOperationsSection value={draft} />
+        <button
+          type="submit"
+          className="rounded px-3 py-2 text-sm font-medium"
+          style={{ background: 'var(--btn-primary-bg)', color: 'var(--btn-primary-text)' }}
+        >
+          Save Agent
+        </button>
       </div>
-
-      <input {...register('description')} placeholder="Description" className="w-full rounded border px-3 py-2" style={{ borderColor: 'var(--input-border)', background: 'var(--input-bg)', color: 'var(--input-text)' }} />
-
-      <AgentKindSelector value={currentKind as AgentKind} onChange={(kind) => setValue('kind', kind)} />
-
-      {currentKind === 'subagent' && (
-        <div className="space-y-1">
-          <label className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-            Parent Agent
-          </label>
-          <select
-            {...register('parentAgentId')}
-            className="w-full rounded border px-3 py-2 text-sm"
-            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}
-          >
-            <option value="">-- No parent --</option>
-            {orchestrators.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.name} ({o.kind ?? o.executionMode})
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-
-      {(currentKind === 'agent' || currentKind === 'orchestrator') && (
-        <div className="space-y-1">
-          <label className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-            Context Files
-          </label>
-          <input
-            {...register('context')}
-            placeholder="Comma-separated file paths (e.g. README.md, docs/api.md)"
-            className="w-full rounded border px-3 py-2 text-sm"
-            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}
-          />
-          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            Files the agent can access as context during execution.
-          </p>
-        </div>
-      )}
-
-      <AgentModelSelector value={watch('model')} onChange={(value) => setValue('model', value)} />
-      <AgentSkillSelector value={watch('skillRefs')} options={skills} onChange={(value) => setValue('skillRefs', value)} />
-      <AgentInstructionEditor value={watch('instructions')} onChange={(value) => setValue('instructions', value)} />
-      <AgentHandoffEditor value={watch('handoffRules')} onChange={(value) => setValue('handoffRules', value)} />
-
-      <button
-        type="submit"
-        className="rounded px-3 py-2 text-sm font-medium"
-        style={{ background: 'var(--btn-primary-bg)', color: 'var(--btn-primary-text)' }}
-        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--btn-primary-hover)'; }}
-        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--btn-primary-bg)'; }}
-      >
-        Save Agent
-      </button>
+      <AgentReadinessPanel state={readiness.state} score={readiness.score} checks={readiness.checks} />
     </form>
   );
 }
+
