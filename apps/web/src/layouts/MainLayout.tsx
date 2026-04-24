@@ -58,7 +58,7 @@ export function MainLayout() {
   const isStudioEnvironment = isStudioPath(location.pathname) && location.pathname.startsWith('/workspace-studio');
   const canOpenStudio = SCOPE_VIEW_REGISTRY[selectedLevel].canEnterStudio;
   const showContext = isDesktop && !isStudioEnvironment;
-  const showInspectorCapability = isDesktop;
+  const showInspectorCapability = isDesktop && isAdministration;
   const isStudioSurface = ['/workspace-studio', '/administration', '/agency-builder', '/entity-editor', '/runs', '/sessions', '/settings', '/profiles'].some((route) =>
     location.pathname.startsWith(route),
   );
@@ -131,7 +131,7 @@ export function MainLayout() {
         e.preventDefault();
         setPanelCollapsed((v) => !v);
       }
-      if (e.altKey && e.key === ']') {
+      if (showInspectorCapability && e.altKey && e.key === ']') {
         e.preventDefault();
         setInspectorCollapsed((v) => !v);
       }
@@ -156,7 +156,7 @@ export function MainLayout() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [navigate, selectedBuilderTab, selectedKey]);
+  }, [navigate, selectedBuilderTab, selectedKey, showInspectorCapability]);
 
   // ── Drag-to-resize ─────────────────────────────────────────────────────
   const isDragging = useRef(false);

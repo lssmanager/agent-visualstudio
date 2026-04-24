@@ -1,9 +1,9 @@
-import { Keyboard, Menu, Moon, RotateCw, Sun, Columns2 } from 'lucide-react';
+import { Keyboard, Menu, Moon, RotateCw, Sun } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 
 import { useStudioState } from '../lib/StudioStateContext';
+import { useHierarchy } from '../lib/HierarchyContext';
 import { useTheme } from '../lib/ThemeProvider';
-import { usePreferences } from '../lib/usePreferences';
 import { getSurfaceLabel, surfaceFromPath } from '../lib/studioRouting';
 import { RuntimeBadge } from './ui/RuntimeBadge';
 
@@ -16,12 +16,13 @@ interface HeaderProps {
 export function Header({ onToggleSidebar, showHamburger = false, onOpenShortcuts }: HeaderProps) {
   const location = useLocation();
   const { state, refresh } = useStudioState();
+  const { selectedNode } = useHierarchy();
   const { theme, toggleTheme } = useTheme();
-  const { layoutMode, setLayoutMode } = usePreferences();
 
   const workspace = state.workspace;
   const surfaceLabel = getSurfaceLabel(surfaceFromPath(location.pathname));
   const runtimeOk = state.runtime?.health?.ok ?? false;
+  const subtitleLabel = selectedNode?.label?.trim() || workspace?.name || 'No workspace selected';
 
   const iconButton: React.CSSProperties = {
     width: 36,
@@ -57,7 +58,7 @@ export function Header({ onToggleSidebar, showHamburger = false, onOpenShortcuts
           >
             {surfaceLabel}
           </span>
-          {workspace ? (
+          {selectedNode || workspace ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
               <span
                 style={{
@@ -70,9 +71,9 @@ export function Header({ onToggleSidebar, showHamburger = false, onOpenShortcuts
                   maxWidth: 220,
                 }}
               >
-                {workspace.name}
+                {subtitleLabel}
               </span>
-              {workspace.defaultModel && (
+              {!selectedNode && workspace?.defaultModel && (
                 <span
                   style={{
                     fontSize: 12,
@@ -113,14 +114,6 @@ export function Header({ onToggleSidebar, showHamburger = false, onOpenShortcuts
           title="Refresh state"
         >
           <RotateCw size={15} />
-        </button>
-
-        <button
-          onClick={() => setLayoutMode(layoutMode === 'compact' ? 'normal' : 'compact')}
-          style={{ ...iconButton, background: layoutMode === 'compact' ? 'var(--color-primary-soft)' : undefined, color: layoutMode === 'compact' ? 'var(--color-primary)' : undefined }}
-          title={layoutMode === 'compact' ? 'Switch to normal density' : 'Switch to compact density'}
-        >
-          <Columns2 size={15} />
         </button>
 
         {onOpenShortcuts && (

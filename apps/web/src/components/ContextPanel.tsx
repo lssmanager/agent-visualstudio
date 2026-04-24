@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, FolderTree, MinusSquare, Plus, PlusSquare } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { ChevronDown, ChevronRight, FolderTree, MinusSquare, Plus, PlusSquare, SquarePen } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { type HierarchyLevel, type HierarchyNode, useHierarchy } from '../lib/HierarchyContext';
 import { saveAgent, updateWorkspace } from '../lib/api';
 import type { AgencyBuilderTab, AgentSpec, WorkspaceSpec } from '../lib/types';
-import { buildStudioHref } from '../lib/studioRouting';
+import { buildStudioHref, parseBuilderTab } from '../lib/studioRouting';
 
 const LEVEL_LABEL: Record<HierarchyLevel, string> = {
   agency: 'Agency',
@@ -24,12 +24,6 @@ const LEVEL_COLOR: Record<HierarchyLevel, string> = {
 };
 
 function routeForNode(node: HierarchyNode, selectedBuilderTab: AgencyBuilderTab): string {
-  if (node.level === 'workspace') {
-    return buildStudioHref({ surface: 'workspace-studio', nodeKey: node.key });
-  }
-  if (node.level === 'agent' || node.level === 'subagent') {
-    return buildStudioHref({ surface: 'entity-editor', nodeKey: node.key });
-  }
   return buildStudioHref({ surface: 'agency-builder', tab: selectedBuilderTab ?? 'overview', nodeKey: node.key });
 }
 
@@ -70,6 +64,7 @@ function createAgentRouteForNode(nodeKey: string, nodes: Record<string, Hierarch
 
 export function ContextPanel({ onNavigate }: { onNavigate?: () => void }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const {
     tree,
     agencies,
@@ -82,9 +77,9 @@ export function ContextPanel({ onNavigate }: { onNavigate?: () => void }) {
     collapseAll,
     selectNode,
     loading,
-    selectedBuilderTab,
   } = useHierarchy();
   const [labelOverrides, setLabelOverrides] = useState<Record<string, string>>({});
+  const activeAdministrationTab = parseBuilderTab(location.search) ?? 'overview';
 
   const matches = useMemo(() => {
     const cache = new Map<string, boolean>();
@@ -265,7 +260,7 @@ export function ContextPanel({ onNavigate }: { onNavigate?: () => void }) {
               if (!nextAgency) return;
               const key = `agency:${nextAgency.id}`;
               selectNode(key);
-              go(buildStudioHref({ surface: 'agency-builder', tab: selectedBuilderTab, nodeKey: key }));
+              go(buildStudioHref({ surface: 'agency-builder', tab: activeAdministrationTab, nodeKey: key }));
             }}
             style={{
               width: '100%',
@@ -309,7 +304,12 @@ export function ContextPanel({ onNavigate }: { onNavigate?: () => void }) {
               onOpen={(key) => {
                 const node = tree.nodes[key];
                 if (!node) return;
-                go(routeForNode(node, selectedBuilderTab));
+                go(routeForNode(node, activeAdministrationTab));
+              }}
+              onOpenProfile={(key) => {
+                const node = tree.nodes[key];
+                if (!node) return;
+                go(buildStudioHref({ surface: 'agency-builder', tab: 'profile', nodeKey: node.key }));
               }}
               onCreate={(key) => {
                 const href = createAgentRouteForNode(key, tree.nodes);
@@ -353,6 +353,7 @@ function HierarchyBranch({
   selectNode,
   matches,
   onOpen,
+  onOpenProfile,
   onCreate,
   onRename,
 }: {
@@ -366,6 +367,7 @@ function HierarchyBranch({
   selectNode: (key: string) => void;
   matches: Map<string, boolean>;
   onOpen: (key: string) => void;
+  onOpenProfile: (key: string) => void;
   onCreate: (key: string) => void;
   onRename: (node: HierarchyNode, nextLabel: string) => Promise<void>;
 }) {
@@ -377,7 +379,7 @@ function HierarchyBranch({
   const hasChildren = node.childKeys.length > 0;
   const expanded = hasChildren && isExpanded(nodeKey);
   const selected = selectedKey === nodeKey;
-  const indent = 10 + depth * 13;
+  const indent = 6 + depth * 9;
   const levelColor = LEVEL_COLOR[node.level];
   const [editing, setEditing] = useState(false);
   const [draftLabel, setDraftLabel] = useState(shownLabel);
@@ -387,16 +389,20 @@ function HierarchyBranch({
   return (
     <div style={{ display: 'grid', gap: 4 }}>
       <div
-        onClick={() => selectNode(nodeKey)}
-        onDoubleClick={() => onOpen(nodeKey)}
+        onClick={() => {
+          selectNode(nodeKey);
+          onOpen(nodeKey);
+        }}
         onKeyDown={(event) => {
           if (event.key === 'Enter') {
             event.preventDefault();
+            selectNode(nodeKey);
             onOpen(nodeKey);
           }
           if (event.key === ' ') {
             event.preventDefault();
             selectNode(nodeKey);
+            onOpen(nodeKey);
           }
           if (event.key === 'ArrowRight' && hasChildren && !expanded) {
             event.preventDefault();
@@ -413,15 +419,15 @@ function HierarchyBranch({
         tabIndex={0}
         style={{
           display: 'grid',
-          gridTemplateColumns: '18px 1fr auto',
+          gridTemplateColumns: '16px 1fr auto',
           alignItems: 'center',
-          gap: 6,
+          gap: 4,
           borderRadius: 'var(--radius-sm)',
           border: `1px solid ${selected ? 'color-mix(in srgb, var(--color-primary) 35%, var(--shell-chip-border))' : 'transparent'}`,
           background: selected ? 'var(--color-primary-soft)' : 'transparent',
           color: selected ? 'var(--text-primary)' : 'var(--text-muted)',
           cursor: 'pointer',
-          padding: `6px 8px 6px ${indent}px`,
+          padding: `4px 6px 4px ${indent}px`,
           boxShadow: depth > 0 ? `inset 2px 0 0 0 color-mix(in srgb, ${levelColor} 28%, transparent)` : 'none',
         }}
       >
@@ -449,12 +455,12 @@ function HierarchyBranch({
         </button>
 
         <div style={{ minWidth: 0, display: 'grid' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
             <span
               aria-hidden="true"
               style={{
-                width: 7,
-                height: 7,
+                width: 6,
+                height: 6,
                 borderRadius: 'var(--radius-full)',
                 background: levelColor,
                 boxShadow: `0 0 0 3px color-mix(in srgb, ${levelColor} 18%, transparent)`,
@@ -520,9 +526,9 @@ function HierarchyBranch({
             ) : (
               <button
                 type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
+                onClick={() => {
                   selectNode(nodeKey);
+                  onOpen(nodeKey);
                 }}
                 onDoubleClick={(event) => {
                   event.stopPropagation();
@@ -555,6 +561,29 @@ function HierarchyBranch({
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenProfile(nodeKey);
+            }}
+            title={`Open ${shownLabel} profile`}
+            aria-label={`Open ${shownLabel} profile`}
+            style={{
+              width: 18,
+              height: 18,
+              borderRadius: 6,
+              border: '1px solid color-mix(in srgb, var(--shell-chip-border) 80%, transparent)',
+              background: 'var(--shell-chip-bg)',
+              color: 'var(--text-muted)',
+              display: 'grid',
+              placeItems: 'center',
+              padding: 0,
+              cursor: 'pointer',
+            }}
+          >
+            <SquarePen size={11} />
+          </button>
           {(node.level === 'agency' || node.level === 'department' || node.level === 'workspace' || node.level === 'agent') && (
             <button
               type="button"
@@ -603,9 +632,9 @@ function HierarchyBranch({
         <div
           style={{
             display: 'grid',
-            gap: 3,
-            marginLeft: 12,
-            paddingLeft: 8,
+            gap: 2,
+            marginLeft: 8,
+            paddingLeft: 6,
             borderLeft: `1px dashed color-mix(in srgb, ${levelColor} 42%, transparent)`,
           }}
         >
@@ -622,6 +651,7 @@ function HierarchyBranch({
               selectNode={selectNode}
               matches={matches}
               onOpen={onOpen}
+              onOpenProfile={onOpenProfile}
               onCreate={onCreate}
               onRename={onRename}
             />
