@@ -176,6 +176,7 @@ export function App() {
                   <Route path="/workspace-studio" element={<WorkspaceStudioPage />} />
                   <Route path="/agents-builder" element={<EntityEditorPage />} />
                   <Route path="/entity-editor" element={<LegacyEntityEditorRedirect />} />
+                  <Route path="/entity-editor/*" element={<LegacyEntityEditorRedirect />} />
                   <Route path="/create-subagent" element={<Navigate to="/agents-builder?mode=create&type=subagent" replace />} />
                   <Route path="/profiles"    element={<ProfilesPage />} />
                   <Route path="/sessions"    element={<SessionsPage />} />

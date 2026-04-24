@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { SquarePen, Save, Lock, Users, GitBranch, Zap, History, Activity, ChevronRight, Target } from 'lucide-react';
 
@@ -34,6 +34,7 @@ import { useAnalyticsMetric } from '../../analytics/hooks/useAnalyticsMetric';
 import type { AnalyticsWindow } from '../../analytics/types';
 import { NODE_QUERY_KEY } from '../../../lib/studioRouting';
 import { ProfileScopeTab } from '../../studio/components/admin/ProfileScopeTab';
+import { ErrorBoundary } from '../../../components/ErrorBoundary';
 
 type EntitySection =
   | 'identity'
@@ -1315,7 +1316,7 @@ function ReadinessSection({
 
 // â”€â”€ EntityEditorPage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-export default function EntityEditorPage() {
+function EntityEditorPageContent() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { tree, selectedNode, selectedLineage, scope, selectByEntity } = useHierarchy();
@@ -2017,5 +2018,74 @@ ${createLocalNotes || '<empty>'}
         </div>
       </div>
     </div>
+  );
+}
+
+type AgentsBuilderRuntimeBoundaryProps = {
+  children: ReactNode;
+};
+
+type AgentsBuilderRuntimeBoundaryState = {
+  hasError: boolean;
+  error: Error | null;
+};
+
+class AgentsBuilderRuntimeBoundary extends Component<
+  AgentsBuilderRuntimeBoundaryProps,
+  AgentsBuilderRuntimeBoundaryState
+> {
+  constructor(props: AgentsBuilderRuntimeBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): AgentsBuilderRuntimeBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, _errorInfo: ErrorInfo) {
+    console.error('[AgentsBuilderRuntimeBoundary] render crash', error);
+  }
+
+  private handleRetry = () => {
+    this.setState({ hasError: false, error: null });
+  };
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="max-w-5xl mx-auto py-6">
+          <ErrorBoundary error={this.state.error ?? new Error('Agents Builder crashed')} onRetry={this.handleRetry}>
+            <div className="flex gap-2 mt-2">
+              <button
+                type="button"
+                onClick={() => { window.location.href = '/agents-builder'; }}
+                className="px-3 py-1.5 rounded-md text-xs font-semibold"
+                style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
+              >
+                Reload Agents Builder
+              </button>
+              <button
+                type="button"
+                onClick={() => { window.location.href = '/administration?tab=profile'; }}
+                className="px-3 py-1.5 rounded-md text-xs font-semibold"
+                style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
+              >
+                Go to Administration
+              </button>
+            </div>
+          </ErrorBoundary>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function EntityEditorPage() {
+  return (
+    <AgentsBuilderRuntimeBoundary>
+      <EntityEditorPageContent />
+    </AgentsBuilderRuntimeBoundary>
   );
 }
