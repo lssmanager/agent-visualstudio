@@ -54,12 +54,12 @@ export function MainLayout() {
   const isMobile = !useMediaQuery('(min-width: 769px)');
   const activeSurface = surfaceFromPath(location.pathname);
   const isAdministration = isAdministrationPath(location.pathname);
-  const isEntityEditor = location.pathname.startsWith('/entity-editor');
+  const isEntityEditor = location.pathname.startsWith('/agents-builder') || location.pathname.startsWith('/entity-editor');
   const isStudioEnvironment = isStudioPath(location.pathname) && location.pathname.startsWith('/workspace-studio');
   const canOpenStudio = SCOPE_VIEW_REGISTRY[selectedLevel].canEnterStudio;
   const showContext = isDesktop && !isStudioEnvironment;
   const showInspectorCapability = isDesktop && isAdministration;
-  const isStudioSurface = ['/workspace-studio', '/administration', '/agency-builder', '/entity-editor', '/runs', '/sessions', '/settings', '/profiles'].some((route) =>
+  const isStudioSurface = ['/workspace-studio', '/administration', '/agency-builder', '/agents-builder', '/entity-editor', '/runs', '/sessions', '/settings', '/profiles'].some((route) =>
     location.pathname.startsWith(route),
   );
 

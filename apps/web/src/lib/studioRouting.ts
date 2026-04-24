@@ -17,6 +17,7 @@ export function surfaceFromPath(pathname: string): SurfaceId {
   if (pathname.startsWith('/workspace-studio')) return 'workspace-studio';
   if (pathname.startsWith('/agency-builder')) return 'agency-builder';
   if (pathname.startsWith('/administration')) return 'agency-builder';
+  if (pathname.startsWith('/agents-builder')) return 'entity-editor';
   if (pathname.startsWith('/entity-editor')) return 'entity-editor';
   if (pathname.startsWith('/profiles')) return 'profiles';
   if (pathname.startsWith('/runs')) return 'runs';
@@ -30,13 +31,19 @@ export function isAdministrationPath(pathname: string): boolean {
 }
 
 export function isStudioPath(pathname: string): boolean {
-  return pathname.startsWith('/workspace-studio') || pathname.startsWith('/entity-editor');
+  return (
+    pathname.startsWith('/workspace-studio') ||
+    pathname.startsWith('/agents-builder') ||
+    pathname.startsWith('/entity-editor')
+  );
 }
 
 export function isProductSurfacePath(pathname: string, surface: SurfaceId): boolean {
   if (surface === 'agency-builder') return isAdministrationPath(pathname);
   if (surface === 'workspace-studio') return pathname.startsWith('/workspace-studio');
-  if (surface === 'entity-editor') return pathname.startsWith('/entity-editor');
+  if (surface === 'entity-editor') {
+    return pathname.startsWith('/agents-builder') || pathname.startsWith('/entity-editor');
+  }
   if (surface === 'profiles') return pathname.startsWith('/profiles');
   if (surface === 'runs') return pathname.startsWith('/runs');
   if (surface === 'sessions') return pathname.startsWith('/sessions');
@@ -49,7 +56,7 @@ export function getSurfaceLabel(surface: SurfaceId): string {
 
 export function pathForSurface(surface: SurfaceId): string {
   if (surface === 'workspace-studio') return '/workspace-studio';
-  if (surface === 'entity-editor') return '/entity-editor';
+  if (surface === 'entity-editor') return '/agents-builder';
   if (surface === 'profiles') return '/profiles';
   if (surface === 'runs') return '/runs';
   if (surface === 'sessions') return '/sessions';

@@ -44,20 +44,20 @@ function createAgentRouteForNode(nodeKey: string, nodes: Record<string, Hierarch
   const workspaceId = resolveWorkspaceIdForNode(nodeKey, nodes);
 
   if (node.level === 'agency') {
-    return `/entity-editor?mode=create&type=department&parentAgencyId=${encodeURIComponent(node.id)}`;
+    return `/agents-builder?mode=create&type=department&parentAgencyId=${encodeURIComponent(node.id)}`;
   }
   if (node.level === 'department') {
-    return `/entity-editor?mode=create&type=workspace&parentDepartmentId=${encodeURIComponent(node.id)}`;
+    return `/agents-builder?mode=create&type=workspace&parentDepartmentId=${encodeURIComponent(node.id)}`;
   }
   if (node.level === 'workspace') {
     return workspaceId
-      ? `/entity-editor?mode=create&type=agent&parentWorkspaceId=${encodeURIComponent(workspaceId)}`
-      : '/entity-editor?mode=create&type=agent';
+      ? `/agents-builder?mode=create&type=agent&parentWorkspaceId=${encodeURIComponent(workspaceId)}`
+      : '/agents-builder?mode=create&type=agent';
   }
   if (node.level === 'agent') {
     return workspaceId
-      ? `/entity-editor?mode=create&type=subagent&parentWorkspaceId=${encodeURIComponent(workspaceId)}&parentAgentId=${encodeURIComponent(node.id)}`
-      : '/entity-editor?mode=create&type=subagent';
+      ? `/agents-builder?mode=create&type=subagent&parentWorkspaceId=${encodeURIComponent(workspaceId)}&parentAgentId=${encodeURIComponent(node.id)}`
+      : '/agents-builder?mode=create&type=subagent';
   }
   return null;
 }
@@ -204,7 +204,7 @@ export function ContextPanel({ onNavigate }: { onNavigate?: () => void }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <button
               type="button"
-              onClick={() => go('/entity-editor?mode=create&type=agency')}
+              onClick={() => go('/agents-builder?mode=create&type=agency')}
               style={{
                 borderRadius: 'var(--radius-md)',
                 border: '1px solid var(--shell-chip-border)',

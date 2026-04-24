@@ -1369,13 +1369,6 @@ export default function EntityEditorPage() {
   }, [sections, activeSection]);
 
   useEffect(() => {
-    const nextPrimaryTab = (Object.entries(PRIMARY_TAB_SECTIONS).find(([, sectionList]) => sectionList.includes(activeSection))?.[0] ?? 'builder') as BuilderPrimaryTab;
-    if (nextPrimaryTab !== activePrimaryTab) {
-      setActivePrimaryTab(nextPrimaryTab);
-    }
-  }, [activePrimaryTab, activeSection]);
-
-  useEffect(() => {
     if (activePrimaryTab !== 'profile' && !activePrimarySections.includes(activeSection)) {
       setActiveSection(activePrimarySections[0] ?? 'identity');
     }
@@ -1418,6 +1411,7 @@ export default function EntityEditorPage() {
   useEffect(() => {
     if (createMode || !entityLevel || !selectedNode?.id) return;
     let cancelled = false;
+    setProfilePanel(null);
     setProfileError(null);
     getEffectiveProfile(entityLevel, selectedNode.id)
       .then((next) => {
@@ -1971,7 +1965,9 @@ ${createLocalNotes || '<empty>'}
               />
             ) : (
               <div className="space-y-2">
-                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No profile data available for this scope.</p>
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                  {profileError ? 'No profile data available for this scope.' : 'Loading profile view...'}
+                </p>
                 {profileError && <p className="text-xs" style={{ color: 'var(--tone-danger-text)' }}>{profileError}</p>}
               </div>
             )

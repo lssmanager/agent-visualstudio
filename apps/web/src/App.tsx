@@ -26,6 +26,11 @@ function LegacyAgencyBuilderRedirect() {
   return <Navigate to={`/administration${location.search}`} replace />;
 }
 
+function LegacyEntityEditorRedirect() {
+  const location = useLocation();
+  return <Navigate to={`/agents-builder${location.search}`} replace />;
+}
+
 export function App() {
   const { theme, setTheme } = usePreferences();
   const [state, setState] = useState<StudioStateResponse | null>(null);
@@ -169,9 +174,9 @@ export function App() {
                   <Route path="/administration" element={<AdministrationPage />} />
                   <Route path="/agency-builder" element={<LegacyAgencyBuilderRedirect />} />
                   <Route path="/workspace-studio" element={<WorkspaceStudioPage />} />
-                  <Route path="/entity-editor" element={<EntityEditorPage />} />
-                  <Route path="/agents-builder" element={<Navigate to="/entity-editor" replace />} />
-                  <Route path="/create-subagent" element={<Navigate to="/entity-editor?mode=create&type=subagent" replace />} />
+                  <Route path="/agents-builder" element={<EntityEditorPage />} />
+                  <Route path="/entity-editor" element={<LegacyEntityEditorRedirect />} />
+                  <Route path="/create-subagent" element={<Navigate to="/agents-builder?mode=create&type=subagent" replace />} />
                   <Route path="/profiles"    element={<ProfilesPage />} />
                   <Route path="/sessions"    element={<SessionsPage />} />
                   <Route path="/runs"        element={<RunsPage />} />
@@ -180,12 +185,12 @@ export function App() {
                   <Route path="/agency-topology" element={<Navigate to="/administration?tab=connections" replace />} />
                   <Route path="/workspaces" element={<Navigate to="/administration?tab=overview" replace />} />
                   <Route path="/studio" element={<Navigate to="/workspace-studio" replace />} />
-                  <Route path="/agents" element={<Navigate to="/entity-editor" replace />} />
+                  <Route path="/agents" element={<Navigate to="/agents-builder" replace />} />
                   <Route
                     path="/agents/new"
-                    element={<Navigate to="/entity-editor?mode=create&type=agent" replace />}
+                    element={<Navigate to="/agents-builder?mode=create&type=agent" replace />}
                   />
-                  <Route path="/agents/:id" element={<Navigate to="/entity-editor" replace />} />
+                  <Route path="/agents/:id" element={<Navigate to="/agents-builder" replace />} />
                   <Route path="/routing" element={<Navigate to="/administration?tab=connections" replace />} />
                   <Route path="/hooks" element={<Navigate to="/administration?tab=connections" replace />} />
                   <Route path="/versions" element={<Navigate to="/administration?tab=operations" replace />} />
