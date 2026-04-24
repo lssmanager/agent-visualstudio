@@ -126,8 +126,8 @@ export class DashboardScopeResolver {
 
     const workspaceSet = new Set(workspaceIds);
     return [
-      ...canonical.agents.filter((item) => workspaceSet.has(item.workspaceId)).map((item) => item.id),
-      ...canonical.subagents.filter((item) => workspaceSet.has(item.workspaceId)).map((item) => item.id),
+      ...canonical.agents.filter((item) => workspaceSet.has(item.workspaceId ?? '')).map((item) => item.id),
+      ...canonical.subagents.filter((item) => workspaceSet.has(item.workspaceId ?? '')).map((item) => item.id),
     ];
   }
 

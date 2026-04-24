@@ -657,12 +657,12 @@ export class DashboardService {
 
   private countAgents(canonical: CanonicalStudioState, workspaceIds: string[]) {
     const workspaceSet = new Set(workspaceIds);
-    return canonical.agents.filter((item) => workspaceSet.has(item.workspaceId)).length;
+    return canonical.agents.filter((item) => workspaceSet.has(item.workspaceId ?? '')).length;
   }
 
   private countSubagents(canonical: CanonicalStudioState, workspaceIds: string[]) {
     const workspaceSet = new Set(workspaceIds);
-    return canonical.subagents.filter((item) => workspaceSet.has(item.workspaceId)).length;
+    return canonical.subagents.filter((item) => workspaceSet.has(item.workspaceId ?? '')).length;
   }
 
   private buildPendingActions(canonical: CanonicalStudioState, pendingApprovals: number) {
@@ -949,7 +949,7 @@ export class DashboardService {
   async getMetricsModelMix(input: MetricsQueryDto, warnings: string[] = []): Promise<MetricsModelMixDto> {
     const canonical = await this.studioService.getCanonicalState();
     const resolved = this.scopeResolver.resolve(canonical, input);
-    const agents = canonical.agents.filter((agent) => resolved.workspaceIds.includes(agent.workspaceId));
+    const agents = canonical.agents.filter((agent) => resolved.workspaceIds.includes(agent.workspaceId ?? ''));
     const runs = this.filterRunsByScope(canonical, resolved.workspaceIds, resolved.agentIds);
     const modelMap = new Map<string, number>();
     const costMap = new Map<string, number>();
@@ -984,7 +984,7 @@ export class DashboardService {
   async getMetricsLatency(input: MetricsQueryDto, warnings: string[] = []): Promise<MetricsLatencyDto> {
     const canonical = await this.studioService.getCanonicalState();
     const resolved = this.scopeResolver.resolve(canonical, input);
-    const agents = canonical.agents.filter((agent) => resolved.workspaceIds.includes(agent.workspaceId));
+    const agents = canonical.agents.filter((agent) => resolved.workspaceIds.includes(agent.workspaceId ?? ''));
     const runs = this.filterRunsByScope(canonical, resolved.workspaceIds, resolved.agentIds);
     const latencyByModel = new Map<string, number[]>();
 
@@ -1271,7 +1271,7 @@ export class DashboardService {
         .filterRunsByScope(canonical, resolved.workspaceIds, [agent.id])
         .length;
       const health = runCount > 20 ? 'critical' : runCount > 5 ? 'warning' : 'ok';
-      nodes.push({ id: `agent:${agent.id}`, label: agent.name, type: 'agent', meta: health });
+      nodes.push({ id: `agent:${agent.id}`, label: agent.name ?? agent.id, type: 'agent', meta: health });
       for (const skillRef of (agent.skillRefs ?? []).slice(0, 4)) {
         const skill = skills.find(s => s.id === skillRef);
         const skillNodeId = `skill:${skillRef}`;
@@ -1304,9 +1304,7 @@ export class DashboardService {
       const health = sessionsForAgentWorkspace > 10 ? 'critical' : sessionsForAgentWorkspace > 3 ? 'warning' : 'ok';
       nodes.push({
         id: agent.id,
-        label: agent.name,
-        type: agent.kind ?? 'agent',
-        x: Math.round(400 + r * Math.cos(angle)),
+        label: agent.name ?? agent.id,
         y: Math.round(280 + r * Math.sin(angle)),
         meta: health,
       });
@@ -1336,7 +1334,7 @@ export class DashboardService {
     const agents = canonical.agents.filter(a => agentSet.has(a.id));
     const nodes = [
       { id: 'input', label: 'Input', value: 100 },
-      ...agents.slice(0, 6).map((agent) => ({ id: agent.id, label: agent.name, value: Math.max(1, resolved.sessions.filter((session: SessionState) => session.ref.workspaceId === agent.workspaceId).length) })),
+      ...agents.slice(0, 6).map((agent) => ({ id: agent.id, label: agent.name ?? agent.id, value: Math.max(1, resolved.sessions.filter((session: SessionState) => session.ref.workspaceId === agent.workspaceId).length) })),
       { id: 'output', label: 'Output', value: 95 },
     ];
     const links: ConnectionsFlowGraphDto['links'] = [];
@@ -1585,7 +1583,7 @@ export class DashboardService {
     if (workspace) {
       nodes.push({ id: workspace.id, label: workspace.name, type: 'workspace' });
       for (const agent of canonical.agents.filter((item) => item.workspaceId === workspace.id).slice(0, 8)) {
-        nodes.push({ id: agent.id, label: agent.name, type: 'agent' });
+        nodes.push({ id: agent.id, label: agent.name ?? agent.id, type: 'agent' });
         edges.push({ from: workspace.id, to: agent.id, kind: 'inherits' });
         for (const skillId of (agent.skillRefs ?? []).slice(0, 3)) {
           nodes.push({ id: skillId, label: skillId, type: 'skill' });

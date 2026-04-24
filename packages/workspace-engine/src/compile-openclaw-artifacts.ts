@@ -98,7 +98,7 @@ function crossValidate(input: CompileOpenClawWorkspaceInput): string[] {
 }
 
 export function compileAgentsMd(agents: AgentSpec[]): string {
-  const sorted = [...agents].sort((a, b) => a.name.localeCompare(b.name));
+  const sorted = [...agents].sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
 
   return [
     '# AGENTS',
