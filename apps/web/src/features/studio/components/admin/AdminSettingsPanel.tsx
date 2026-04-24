@@ -31,10 +31,6 @@ interface AdminSettingsPanelProps {
 // ── Shared helpers ────────────────────────────────────────────────────────
 
 function PanelLoading() {
-  const createHref = workspace?.id
-    ? `/agents-builder?mode=create&type=agent&parentWorkspaceId=${encodeURIComponent(workspace.id)}`
-    : '/agents-builder?mode=create&type=agent';
-
   return (
     <div className="flex items-center gap-2 py-8 justify-center" style={{ color: 'var(--text-muted)' }}>
       <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
@@ -397,6 +393,9 @@ function ScopedSettingsSummary() {
   const { selectedNode, scope } = useHierarchy();
   const navigate = useNavigate();
   const workspace = state.workspace;
+  const createHref = workspace?.id
+    ? `/agents-builder?mode=create&type=agent&parentWorkspaceId=${encodeURIComponent(workspace.id)}`
+    : '/agents-builder?mode=create&type=agent';
 
   const agent = scope.agentId
     ? state.agents.find((a) => a.id === scope.agentId) ?? null

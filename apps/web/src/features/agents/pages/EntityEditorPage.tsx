@@ -76,6 +76,18 @@ const MATRIX: Record<EntityLevel, EntitySection[]> = {
 
 type BuilderPrimaryTab = 'builder' | 'profile';
 
+const BUILDER_SECTION_TABS: EntitySection[] = [
+  'identity',
+  'prompts-behavior',
+  'skills-tools',
+  'handoffs',
+  'routing-channels',
+  'hooks',
+  'versions',
+  'operations',
+  'readiness',
+];
+
 const PRIMARY_TAB_SECTIONS: Record<BuilderPrimaryTab, EntitySection[]> = {
   builder: ['identity', 'prompts-behavior', 'skills-tools', 'handoffs', 'routing-channels', 'hooks', 'versions', 'operations', 'readiness'],
   profile: [],
@@ -1358,7 +1370,7 @@ function ReadinessSection({
 
 function EntityEditorPageContent() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { tree, selectedNode, selectedLineage, scope, selectByEntity } = useHierarchy();
   const { state, refresh } = useStudioState();
   const [activeSection, setActiveSection] = useState<EntitySection>('identity');
@@ -1386,7 +1398,6 @@ function EntityEditorPageContent() {
   const [createMemoryScope, setCreateMemoryScope] = useState<'main_session_only' | 'shared_safe' | 'disabled'>('main_session_only');
   const [createSafetyApproval, setCreateSafetyApproval] = useState(true);
   const [createHorizontalLinks, setCreateHorizontalLinks] = useState('');
-  const [createSection, setCreateSection] = useState<EntitySection>('identity');
   const [profilePanel, setProfilePanel] = useState<EffectiveProfileDto | null>(null);
   const [profileBusy, setProfileBusy] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
@@ -1403,6 +1414,8 @@ function EntityEditorPageContent() {
   const requestedParentWorkspaceId = searchParams.get('parentWorkspaceId');
   const requestedParentAgentId = searchParams.get('parentAgentId');
   const requestedProfileId = searchParams.get('profileId');
+  const primaryFromQuery = searchParams.get('primary');
+  const sectionFromQuery = searchParams.get('section');
 
   const level = selectedNode?.level;
   const entityLevel: EntityLevel | null =
@@ -1426,10 +1439,66 @@ function EntityEditorPageContent() {
   }, [sections, activeSection]);
 
   useEffect(() => {
+    if (primaryFromQuery === 'builder' || primaryFromQuery === 'profile') {
+      setActivePrimaryTab(primaryFromQuery);
+    }
+  }, [primaryFromQuery]);
+
+  useEffect(() => {
+    if (
+      sectionFromQuery &&
+      BUILDER_SECTION_TABS.includes(sectionFromQuery as EntitySection) &&
+      sections.includes(sectionFromQuery as EntitySection)
+    ) {
+      setActiveSection(sectionFromQuery as EntitySection);
+    }
+  }, [sectionFromQuery, sections]);
+
+  useEffect(() => {
     if (activePrimaryTab !== 'profile' && !activePrimarySections.includes(activeSection)) {
       setActiveSection(activePrimarySections[0] ?? 'identity');
     }
   }, [activePrimarySections, activePrimaryTab, activeSection]);
+
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    let changed = false;
+
+    if (activePrimaryTab === 'builder') {
+      if (next.get('primary') !== 'builder') {
+        next.set('primary', 'builder');
+        changed = true;
+      }
+      if (next.get('section') !== activeSection) {
+        next.set('section', activeSection);
+        changed = true;
+      }
+    } else {
+      if (next.get('primary') !== 'profile') {
+        next.set('primary', 'profile');
+        changed = true;
+      }
+      if (next.has('section')) {
+        next.delete('section');
+        changed = true;
+      }
+    }
+
+    if (createMode) {
+      if (next.get('mode') !== 'create') {
+        next.set('mode', 'create');
+        changed = true;
+      }
+      if (!next.get('type')) {
+        next.set('type', createTypeFromQuery);
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      setSearchParams(next, { replace: true });
+    }
+  }, [activePrimaryTab, activeSection, createMode, createTypeFromQuery, searchParams, setSearchParams]);
 
   // Resolve entity data
   const agent = useMemo<AgentSpec | null>(() => {
@@ -1466,7 +1535,7 @@ function EntityEditorPageContent() {
   const [createKind, setCreateKind] = useState<BuilderCreateType>(createTypeFromQuery);
 
   useEffect(() => {
-    if (createMode || !entityLevel || !selectedNode?.id) return;
+    if (!entityLevel || !selectedNode?.id) return;
     let cancelled = false;
     setProfilePanel(null);
     setProfileError(null);
@@ -1483,7 +1552,7 @@ function EntityEditorPageContent() {
     return () => {
       cancelled = true;
     };
-  }, [createMode, entityLevel, selectedNode?.id]);
+  }, [entityLevel, selectedNode?.id]);
 
   useEffect(() => {
     if (!createMode) return;
@@ -1734,15 +1803,22 @@ function EntityEditorPageContent() {
       { key: 'ops', ok: readinessChecks.operationsConfigured, label: 'Operations' },
       { key: 'versions', ok: readinessChecks.versionsReady, label: 'Versions Preview' },
     ];
+    const createSection = activeSection;
+    const setCreateSection = setActiveSection;
 
     return (
-      <div className="max-w-7xl mx-auto space-y-6">
+      <div className="max-w-7xl mx-auto h-full min-h-0 flex flex-col gap-6">
         <PageHeader
           title={`Agents Builder · Create ${createKind.charAt(0).toUpperCase()}${createKind.slice(1)}`}
           icon={SquarePen}
           description="Single create surface with explicit context, hierarchy-aware defaults, and 9 builder sections."
         />
-        <div className="space-y-4">
+        <div className="space-y-4 min-h-0 flex-1 overflow-y-auto app-scrollbar">
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button type="button" onClick={() => setActivePrimaryTab('builder')} style={primaryTabStyle(activePrimaryTab === 'builder')}>Builder</button>
+            <button type="button" onClick={() => setActivePrimaryTab('profile')} style={primaryTabStyle(activePrimaryTab === 'profile')}>Profile</button>
+          </div>
+          {activePrimaryTab === 'builder' && (
           <div className="rounded-xl border p-3 space-y-3" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
               {createSections.map((section) => (
@@ -1757,7 +1833,25 @@ function EntityEditorPageContent() {
               ))}
             </div>
           </div>
+          )}
 
+          {activePrimaryTab === 'profile' && (
+            <div className="space-y-4">
+              <ProfileScopeTab
+                profile={profilePanel ?? buildFallbackEffectiveProfile()}
+                profiles={profileCatalog}
+                busy={profileBusy}
+                onBind={(profileId) => void handleBindProfilePanel(profileId)}
+                onUnbind={() => void handleUnbindProfilePanel()}
+                onSaveOverride={(payload) => void handleSaveProfileOverridePanel(payload)}
+              />
+              <section className="rounded-xl border p-4" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}>
+                <AdminSettingsPanel settingsScope={settingsScope} />
+              </section>
+            </div>
+          )}
+
+          {activePrimaryTab === 'builder' && (
           <div className="rounded-xl border p-5 space-y-4" style={{ borderColor: 'var(--border-primary)', background: 'var(--card-bg)' }}>
             <div className="rounded-lg border p-3 space-y-2" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}>
               <p className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: '0.07em' }}>Creation Context</p>
@@ -1894,7 +1988,9 @@ ${createLocalNotes || '<empty>'}
               </button>
             </div>
           </div>
+          )}
 
+          {activePrimaryTab === 'builder' && (
           <div className="rounded-xl border p-4 space-y-3" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}>
             <p className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: '0.07em' }}>Readiness</p>
             {readinessItems.map((item) => (
@@ -1907,6 +2003,7 @@ ${createLocalNotes || '<empty>'}
               Status: {readinessItems.every((item) => item.ok) ? 'ready_to_publish' : 'incomplete'}
             </div>
           </div>
+          )}
         </div>
       </div>
     );
@@ -1951,7 +2048,7 @@ ${createLocalNotes || '<empty>'}
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="max-w-6xl mx-auto h-full min-h-0 flex flex-col gap-6">
       <PageHeader
         title="Agents Builder"
         icon={SquarePen}
@@ -2017,7 +2114,7 @@ ${createLocalNotes || '<empty>'}
         )}
       </div>
 
-      <div className="rounded-xl border p-4 md:p-5" style={{ borderColor: 'var(--card-border)', background: 'var(--card-bg)' }}>
+      <div className="rounded-xl border p-4 md:p-5 min-h-0 flex-1 overflow-y-auto app-scrollbar" style={{ borderColor: 'var(--card-border)', background: 'var(--card-bg)' }}>
         <div className="min-w-0">
           {activePrimaryTab === 'profile' && (
             profilePanel ? (
