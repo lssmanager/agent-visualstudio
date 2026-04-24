@@ -18,6 +18,7 @@ import { AgentOperationsSection } from './sections/AgentOperationsSection';
 import { AgentReadinessPanel } from './sections/AgentReadinessPanel';
 import { AgentRoutingSection } from './sections/AgentRoutingSection';
 import { AgentSkillsToolsSection } from './sections/AgentSkillsToolsSection';
+import { AgentVersionsSection } from './sections/AgentVersionsSection';
 
 type SectionKey =
   | 'identity'
@@ -26,6 +27,7 @@ type SectionKey =
   | 'handoffs'
   | 'routing-channels'
   | 'hooks'
+  | 'versions'
   | 'operations';
 
 const SECTION_LABEL: Record<SectionKey, string> = {
@@ -35,6 +37,7 @@ const SECTION_LABEL: Record<SectionKey, string> = {
   handoffs: 'Handoffs',
   'routing-channels': 'Routing & Channels',
   hooks: 'Hooks',
+  versions: 'Versions',
   operations: 'Operations',
 };
 
@@ -362,6 +365,7 @@ export function AgentEditorForm({ workspaceId, agent, onSaved, onError, agents =
           {activeSection === 'handoffs' && <AgentHandoffsSection value={draft} onChange={setDraft} availableTargets={availableTargets} />}
           {activeSection === 'routing-channels' && <AgentRoutingSection value={draft} onChange={setDraft} />}
           {activeSection === 'hooks' && <AgentHooksSection value={draft} onChange={setDraft} />}
+          {activeSection === 'versions' && <AgentVersionsSection agentId={draft.id} />}
           {activeSection === 'operations' && <AgentOperationsSection value={draft} onChange={setDraft} />}
 
           <button
