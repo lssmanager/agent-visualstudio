@@ -158,7 +158,7 @@ export default function ProfilesPage() {
                 workspaceName={workspaceName}
                 onWorkspaceNameChange={setWorkspaceName}
                 onCreateWorkspace={() => void handleCreateWorkspace()}
-                onUseProfileForAgent={() => navigate(`/entity-editor?mode=create&type=agent&profileId=${encodeURIComponent(selectedProfile.id)}`)}
+                    onUseProfileForAgent={() => navigate(`/agents-builder?mode=create&type=agent&profileId=${encodeURIComponent(selectedProfile.id)}`)}
                 busy={busy}
               />
             ) : (

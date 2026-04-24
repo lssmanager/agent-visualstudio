@@ -32,8 +32,8 @@ interface AdminSettingsPanelProps {
 
 function PanelLoading() {
   const createHref = workspace?.id
-    ? `/entity-editor?mode=create&type=agent&parentWorkspaceId=${encodeURIComponent(workspace.id)}`
-    : '/entity-editor?mode=create&type=agent';
+    ? `/agents-builder?mode=create&type=agent&parentWorkspaceId=${encodeURIComponent(workspace.id)}`
+    : '/agents-builder?mode=create&type=agent';
 
   return (
     <div className="flex items-center gap-2 py-8 justify-center" style={{ color: 'var(--text-muted)' }}>

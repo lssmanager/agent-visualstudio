@@ -137,6 +137,21 @@ function labelStyle(): React.CSSProperties {
   return { fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4, display: 'block' };
 }
 
+const buttonStyle: React.CSSProperties = {
+  borderRadius: 'var(--radius-md)',
+  border: '1px solid var(--border-primary)',
+  background: 'var(--bg-primary)',
+  color: 'var(--text-primary)',
+  padding: '8px 12px',
+  fontSize: 13,
+  fontWeight: 700,
+  lineHeight: 1.2,
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+};
+
 // â”€â”€ Identity Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function IdentitySection({
@@ -1583,7 +1598,7 @@ export default function EntityEditorPage() {
       }) as AgentSpec & { parentWorkspaceId: string });
       await refresh();
       selectByEntity(createKind === 'subagent' ? 'subagent' : 'agent', nextId);
-      navigate(`/entity-editor?${NODE_QUERY_KEY}=${createKind === 'subagent' ? 'subagent' : 'agent'}:${nextId}`, { replace: true });
+      navigate(`/agents-builder?${NODE_QUERY_KEY}=${createKind === 'subagent' ? 'subagent' : 'agent'}:${nextId}`, { replace: true });
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : 'Failed to create agent');
     } finally {
@@ -1823,7 +1838,7 @@ ${createLocalNotes || '<empty>'}
                   (createKind === 'subagent' && !(scope.agentId || selectedNode?.level === 'agent' || selectedNode?.level === 'subagent'))
                 }
               />
-              <button type="button" onClick={() => navigate('/entity-editor')} style={{ ...inputStyle(), width: 'auto', cursor: 'pointer' }}>
+              <button type="button" onClick={() => navigate('/agents-builder')} style={{ ...inputStyle(), width: 'auto', cursor: 'pointer' }}>
                 Cancel
               </button>
             </div>

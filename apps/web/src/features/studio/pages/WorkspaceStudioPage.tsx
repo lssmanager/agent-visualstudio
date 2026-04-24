@@ -273,7 +273,7 @@ export default function WorkspaceStudioPage() {
             description="Create your first agent so Studio can generate editable graph surfaces."
             actionLabel="Go to Agents"
             onAction={() => {
-              navigate(`/entity-editor?mode=create&type=agent&parentWorkspaceId=${encodeURIComponent(workspaceId)}`);
+    navigate(`/agents-builder?mode=create&type=agent&parentWorkspaceId=${encodeURIComponent(workspaceId)}`);
             }}
           />
         </StudioSectionCard>
