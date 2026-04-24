@@ -22,8 +22,7 @@ export function registerGatewayRoutes(router: Router) {
   router.get('/gateway/connection-status', async (req, res) => {
     const includeMasked =
       req.query.includeMasked === '1' ||
-      req.query.includeMasked === 'true' ||
-      req.query.includeMasked === true;
+      req.query.includeMasked === 'true';
     res.json(await gatewayConnectionStatusService.getConnectionStatus(Boolean(includeMasked)));
   });
 
