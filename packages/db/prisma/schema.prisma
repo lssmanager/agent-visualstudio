@@ -1,0 +1,332 @@
+// Prisma schema for Studio runtime database
+// Generator: prisma-client-js
+// Run `npx prisma generate` to generate the client.
+// Run `npx prisma migrate dev` to apply migrations.
+//
+// Hierarchy: Agency → Department → Workspace → Agent → Subagent
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Hierarchy ─────────────────────────────────────────────────────────────
+
+model Agency {
+  id          String       @id @default(cuid())
+  name        String
+  description String?
+  tags        String[]     @default([])
+  departments Department[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@map("agencies")
+}
+
+model Department {
+  id          String      @id @default(cuid())
+  agencyId    String
+  agency      Agency      @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  tags        String[]    @default([])
+  workspaces  Workspace[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([agencyId])
+  @@map("departments")
+}
+
+model Workspace {
+  id             String          @id @default(cuid())
+  departmentId   String
+  department     Department      @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  slug           String          @unique
+  name           String
+  description    String?
+  defaultModel   String?
+  tags           String[]        @default([])
+  agents         Agent[]
+  flows          Flow[]
+  runs           Run[]
+  channelConfigs ChannelConfig[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([departmentId])
+  @@map("workspaces")
+}
+
+// ── Agents ────────────────────────────────────────────────────────────────
+
+model Agent {
+  id              String          @id @default(cuid())
+  workspaceId     String
+  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// null means this is a top-level agent; non-null means subagent
+  parentAgentId   String?
+  parent          Agent?          @relation("AgentSubagents", fields: [parentAgentId], references: [id])
+  subagents       Agent[]         @relation("AgentSubagents")
+  profileId       String?
+  kind            AgentKind       @default(agent)
+  name            String
+  role            String?
+  description     String?
+  model           String?
+  instructions    String?
+  isEnabled       Boolean         @default(true)
+  visibility      AgentVisibility @default(workspace)
+  executionMode   AgentExecutionMode @default(direct)
+  /// JSON blob for identity, behavior, skillsTools, handoffs, routing, hooks, operations
+  extendedSpec    Json?
+  agentSkills     AgentSkill[]
+  channelBindings ChannelBinding[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([workspaceId])
+  @@index([parentAgentId])
+  @@map("agents")
+}
+
+enum AgentKind {
+  agent
+  subagent
+  orchestrator
+}
+
+enum AgentVisibility {
+  private
+  workspace
+  public
+}
+
+enum AgentExecutionMode {
+  direct
+  orchestrated
+  handoff
+}
+
+// ── Skills ────────────────────────────────────────────────────────────────
+
+model Skill {
+  id          String       @id @default(cuid())
+  name        String
+  description String
+  version     String
+  category    String
+  permissions String[]     @default([])
+  /// JSON array of SkillFunctionSpec
+  functions   Json         @default("[]")
+  /// JSON object for optional plugin metadata
+  plugin      Json?
+  files       String[]     @default([])
+  dependencies String[]    @default([])
+  agentSkills AgentSkill[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@map("skills")
+}
+
+/// Join table: Agent ↔ Skill with state tracking
+model AgentSkill {
+  id        String           @id @default(cuid())
+  agentId   String
+  agent     Agent            @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  skillId   String
+  skill     Skill            @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  state     AgentSkillState  @default(selected)
+  source    AgentSkillSource @default(local)
+  createdAt DateTime         @default(now())
+
+  @@unique([agentId, skillId])
+  @@index([agentId])
+  @@index([skillId])
+  @@map("agent_skills")
+}
+
+enum AgentSkillState {
+  available
+  selected
+  required
+  blocked
+  disabled
+}
+
+enum AgentSkillSource {
+  profile
+  agency
+  workspace
+  global
+  local
+}
+
+// ── Flows & Runs ──────────────────────────────────────────────────────────
+
+model Flow {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  version     String?
+  trigger     String
+  /// JSON array of FlowNode
+  nodes       Json      @default("[]")
+  /// JSON array of FlowEdge
+  edges       Json      @default("[]")
+  tags        String[]  @default([])
+  isEnabled   Boolean   @default(true)
+  runs        Run[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([workspaceId])
+  @@map("flows")
+}
+
+model Run {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  flowId      String
+  flow        Flow      @relation(fields: [flowId], references: [id], onDelete: Restrict)
+  status      RunStatus @default(queued)
+  /// JSON object for trigger type + payload
+  trigger     Json
+  steps       RunStep[]
+  /// Optional run-level metadata (topology events, replay info, etc.)
+  metadata    Json?
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  error       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([workspaceId])
+  @@index([flowId])
+  @@index([status])
+  @@map("runs")
+}
+
+enum RunStatus {
+  queued
+  running
+  waiting_approval
+  completed
+  failed
+  cancelled
+}
+
+model RunStep {
+  id          String     @id @default(cuid())
+  runId       String
+  run         Run        @relation(fields: [runId], references: [id], onDelete: Cascade)
+  nodeId      String
+  nodeType    String
+  agentId     String?
+  status      StepStatus @default(queued)
+  /// JSON input to this step
+  input       Json?
+  /// JSON output from this step
+  output      Json?
+  error       String?
+  /// { input: number, output: number }
+  tokenUsage  Json?
+  costUsd     Float?
+  retryCount  Int        @default(0)
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime   @default(now())
+
+  @@index([runId])
+  @@index([status])
+  @@map("run_steps")
+}
+
+enum StepStatus {
+  queued
+  running
+  waiting_approval
+  completed
+  failed
+  skipped
+}
+
+// ── Channels & Gateway ────────────────────────────────────────────────────
+
+/// Platform-level channel configuration (e.g. Discord, Slack, Email)
+model ChannelConfig {
+  id          String           @id @default(cuid())
+  workspaceId String
+  workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  channel     String
+  provider    String
+  isEnabled   Boolean          @default(true)
+  /// Provider-specific config blob (tokens, webhooks, etc.) — store encrypted in prod
+  config      Json             @default("{}")
+  bindings    ChannelBinding[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([workspaceId, channel])
+  @@index([workspaceId])
+  @@map("channel_configs")
+}
+
+/// Binding between an Agent and a ChannelConfig with a route
+model ChannelBinding {
+  id              String        @id @default(cuid())
+  channelConfigId String
+  channelConfig   ChannelConfig @relation(fields: [channelConfigId], references: [id], onDelete: Cascade)
+  agentId         String
+  agent           Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  route           String
+  isEnabled       Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([channelConfigId, agentId, route])
+  @@index([agentId])
+  @@index([channelConfigId])
+  @@map("channel_bindings")
+}
+
+/// Active gateway sessions for connected agents
+model GatewaySession {
+  id          String               @id @default(cuid())
+  agentId     String?
+  channel     String?
+  workspaceId String?
+  departmentId String?
+  agencyId    String?
+  status      GatewaySessionStatus @default(active)
+  lastEventAt DateTime?
+  /// Arbitrary metadata from the gateway
+  metadata    Json?
+  openedAt    DateTime             @default(now())
+  closedAt    DateTime?
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  @@index([agentId])
+  @@index([workspaceId])
+  @@index([status])
+  @@map("gateway_sessions")
+}
+
+enum GatewaySessionStatus {
+  active
+  idle
+  paused
+  closed
+  unknown
+}

@@ -1,5 +1,6 @@
 import { RuntimeAdapter } from './runtime-adapter.interface';
 import { OpenClawRuntimeAdapter } from './adapters/openclaw-runtime.adapter';
+import { NativeRuntimeAdapter } from './native-runtime.adapter';
 
 export class RuntimeAdapterRegistry {
   private readonly adapters = new Map<string, RuntimeAdapter>();
@@ -15,6 +16,10 @@ export class RuntimeAdapterRegistry {
     const openClawAdapter = new OpenClawRuntimeAdapter();
     this.register(openClawAdapter);
     this.activeAdapterName = openClawAdapter.name;
+
+    // Also register the native adapter so it can be selected without OpenClaw
+    const nativeAdapter = new NativeRuntimeAdapter();
+    this.register(nativeAdapter);
   }
 
   register(adapter: RuntimeAdapter): void {

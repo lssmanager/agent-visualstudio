@@ -27,6 +27,7 @@ import { registerBuilderAgentRoutes } from './modules/builder-agent/builder-agen
 import { registerRuntimeInspectionRoutes } from './modules/runtime/runtime-inspection.controller';
 import { registerDashboardRoutes } from './modules/dashboard/dashboard.controller';
 import { registerEditorRoutes } from './modules/editor/editor.controller';
+import { registerN8nRoutes } from './modules/n8n/n8n.controller';
 
 export function registerRoutes(app: Express) {
   const router = Router();
@@ -61,8 +62,7 @@ export function registerRoutes(app: Express) {
   registerRuntimeInspectionRoutes(router);
   registerEditorRoutes(router);
   registerDashboardRoutes(router);
+  registerN8nRoutes(router);
 
   app.use(studioConfig.apiPrefix, router);
 }
-
-
