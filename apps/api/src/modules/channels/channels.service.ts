@@ -1,183 +1,222 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import * as crypto from 'crypto';
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { PrismaService } from '../../lib/prisma.service';
+import type {
+  Channel,
+  LlmProvider,
+  ChannelKind,
+  ChannelStatus,
+} from '@prisma/client';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-export type ChannelKind = 'telegram' | 'whatsapp' | 'discord' | 'webchat';
-export type ChannelStatus = 'idle' | 'provisioning' | 'active' | 'error';
+// ─── DTOs ────────────────────────────────────────────────────────────────────
+export interface ProvisionChannelDto {
+  workspaceId: string;
+  kind: ChannelKind;
+  token: string;           // cleartext — se cifra aquí antes de persistir
+  meta?: Record<string, unknown>;
+}
+
+export interface BindChannelDto {
+  agentId: string;
+}
+
+export interface CreateLlmProviderDto {
+  workspaceId: string;
+  provider: string;
+  apiKey: string;          // cleartext
+  baseUrl?: string;
+  isDefault?: boolean;
+}
 
 export interface ChannelRecord {
   id: string;
   workspaceId: string;
   kind: ChannelKind;
-  name: string;
   status: ChannelStatus;
-  agentId: string | null;
-  createdAt: string;
-  updatedAt: string;
+  boundAgentId: string | null;
+  meta: Record<string, unknown>;
+  createdAt: Date;
+  updatedAt: Date;
+  // tokenEnc se omite — nunca se expone al cliente
 }
 
 export interface LlmProviderRecord {
   id: string;
   workspaceId: string;
   provider: string;
-  label: string;
-  maskedKey: string;
+  apiKeyMasked: string;    // solo los últimos 4 chars visibles
+  baseUrl: string | null;
   isDefault: boolean;
-  createdAt: string;
+  createdAt: Date;
 }
 
-// ─── In-memory store (replace with Prisma once schema lands) ─────────────────
-// Channels map: workspaceId → ChannelRecord[]
-const channelStore = new Map<string, ChannelRecord[]>();
-// LLM providers map: workspaceId → LlmProviderRecord[]
-const llmStore = new Map<string, LlmProviderRecord[]>();
-// Status SSE subscribers: channelId → Set of push fns
-const sseSubscribers = new Map<string, Set<(data: string) => void>>();
-
-const ENC_KEY = process.env['CHANNEL_ENC_KEY'] ??
-  'default-insecure-32-byte-key-dev!!'; // must be 32 chars in prod
-
-function encrypt(plain: string): string {
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv(
-    'aes-256-gcm',
-    Buffer.from(ENC_KEY.slice(0, 32)),
-    iv,
-  );
-  const enc = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return [iv.toString('hex'), enc.toString('hex'), tag.toString('hex')].join('.');
-}
-
-function maskKey(key: string): string {
-  if (key.length <= 8) return '****';
-  return key.slice(0, 4) + '…' + key.slice(-4);
-}
-
+// ─── Service ─────────────────────────────────────────────────────────────────
 @Injectable()
 export class ChannelsService {
   private readonly logger = new Logger(ChannelsService.name);
+  private readonly ENC_KEY: Buffer;
+  private readonly ALG = 'aes-256-gcm';
 
-  // ─── Channel lifecycle ───────────────────────────────────────────────
-  list(workspaceId: string): ChannelRecord[] {
-    return channelStore.get(workspaceId) ?? [];
-  }
+  // SSE subscribers: channelId → Set<(data: string) => void>
+  private readonly subs = new Map<string, Set<(d: string) => void>>();
 
-  provision(
-    workspaceId: string,
-    dto: { kind: ChannelKind; name: string; token?: string; appId?: string; secret?: string },
-  ): ChannelRecord {
-    const id = crypto.randomUUID();
-    const now = new Date().toISOString();
-    const record: ChannelRecord = {
-      id,
-      workspaceId,
-      kind: dto.kind,
-      name: dto.name,
-      status: 'provisioning',
-      agentId: null,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    // Encrypt & store credential if present (in-mem for now)
-    if (dto.token) {
-      const _encrypted = encrypt(dto.token);
-      this.logger.log(`Channel ${id} token encrypted (${dto.kind})`);
+  constructor(private readonly prisma: PrismaService) {
+    const key = process.env.CHANNEL_ENC_KEY ?? '';
+    if (key.length !== 32) {
+      this.logger.warn('CHANNEL_ENC_KEY debe tener exactamente 32 caracteres');
     }
-
-    const list = channelStore.get(workspaceId) ?? [];
-    list.push(record);
-    channelStore.set(workspaceId, list);
-
-    // Simulate async provisioning
-    setTimeout(() => this._setStatus(workspaceId, id, 'active'), 2000);
-
-    return record;
+    this.ENC_KEY = Buffer.from(key.padEnd(32, '0').slice(0, 32));
   }
 
-  bind(workspaceId: string, channelId: string, agentId: string): ChannelRecord {
-    const record = this._find(workspaceId, channelId);
-    record.agentId = agentId;
-    record.updatedAt = new Date().toISOString();
-    return record;
+  // ── Cifrado ──────────────────────────────────────────────────────────────
+  private encrypt(plaintext: string): string {
+    const iv  = randomBytes(12);
+    const cipher = createCipheriv(this.ALG, this.ENC_KEY, iv);
+    const enc  = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+    const tag  = cipher.getAuthTag();
+    return `${iv.toString('hex')}:${tag.toString('hex')}:${enc.toString('hex')}`;
   }
 
-  getStatus(workspaceId: string, channelId: string) {
-    const record = this._find(workspaceId, channelId);
-    return { status: record.status };
+  private decrypt(stored: string): string {
+    const [ivHex, tagHex, encHex] = stored.split(':');
+    const decipher = createDecipheriv(this.ALG, this.ENC_KEY, Buffer.from(ivHex, 'hex'));
+    decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+    return decipher.update(Buffer.from(encHex, 'hex')).toString('utf8') + decipher.final('utf8');
   }
 
-  delete(workspaceId: string, channelId: string): void {
-    const list = channelStore.get(workspaceId) ?? [];
-    channelStore.set(workspaceId, list.filter((c) => c.id !== channelId));
-    sseSubscribers.delete(channelId);
+  // ── Channels CRUD ────────────────────────────────────────────────────────
+  async provision(dto: ProvisionChannelDto): Promise<ChannelRecord> {
+    const tokenEnc = this.encrypt(dto.token);
+    const channel = await this.prisma.channel.create({
+      data: {
+        workspaceId: dto.workspaceId,
+        kind:        dto.kind,
+        tokenEnc,
+        meta:        (dto.meta ?? {}) as any,
+        status:      'provisioned',
+      },
+    });
+    this.logger.log(`Channel provisioned: ${channel.id} (${channel.kind})`);
+    this._emit(channel.id, { status: 'provisioned' });
+    return this._toRecord(channel);
   }
 
-  // SSE push
-  addSseSubscriber(channelId: string, fn: (data: string) => void): () => void {
-    let set = sseSubscribers.get(channelId);
-    if (!set) { set = new Set(); sseSubscribers.set(channelId, set); }
-    set.add(fn);
-    return () => set!.delete(fn);
+  async bind(channelId: string, dto: BindChannelDto): Promise<ChannelRecord> {
+    const channel = await this.prisma.channel.update({
+      where:  { id: channelId },
+      data:   { boundAgentId: dto.agentId, status: 'bound' },
+    }).catch(() => { throw new NotFoundException(`Channel ${channelId} not found`); });
+    this.logger.log(`Channel ${channelId} bound to agent ${dto.agentId}`);
+    this._emit(channelId, { status: 'bound', agentId: dto.agentId });
+    return this._toRecord(channel);
   }
 
-  private _find(workspaceId: string, channelId: string): ChannelRecord {
-    const record = (channelStore.get(workspaceId) ?? []).find((c) => c.id === channelId);
-    if (!record) throw new NotFoundException(`Channel ${channelId} not found`);
-    return record;
+  async getStatus(channelId: string): Promise<ChannelRecord> {
+    const channel = await this.prisma.channel.findUnique({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException(`Channel ${channelId} not found`);
+    return this._toRecord(channel);
   }
 
-  private _setStatus(workspaceId: string, channelId: string, status: ChannelStatus) {
-    try {
-      const record = this._find(workspaceId, channelId);
-      record.status = status;
-      record.updatedAt = new Date().toISOString();
-      const payload = JSON.stringify({ status, detail: `Channel ${status}` });
-      sseSubscribers.get(channelId)?.forEach((fn) => fn(payload));
-    } catch { /* already deleted */ }
+  async listByWorkspace(workspaceId: string): Promise<ChannelRecord[]> {
+    const channels = await this.prisma.channel.findMany({
+      where:   { workspaceId },
+      orderBy: { createdAt: 'desc' },
+    });
+    return channels.map((c) => this._toRecord(c));
   }
 
-  // ─── LLM Providers ───────────────────────────────────────────────────
-  listProviders(workspaceId: string): LlmProviderRecord[] {
-    return llmStore.get(workspaceId) ?? [];
+  async delete(channelId: string): Promise<void> {
+    await this.prisma.channel.delete({ where: { id: channelId } })
+      .catch(() => { throw new NotFoundException(`Channel ${channelId} not found`); });
+    this._emit(channelId, { status: 'deleted' });
+    this.subs.delete(channelId);
   }
 
-  upsertProvider(
-    workspaceId: string,
-    dto: { provider: string; label: string; apiKey: string; isDefault?: boolean },
-  ): LlmProviderRecord {
-    const list = llmStore.get(workspaceId) ?? [];
-    const existing = list.find((p) => p.provider === dto.provider);
-
+  // ── LLM Providers ────────────────────────────────────────────────────────
+  async createProvider(dto: CreateLlmProviderDto): Promise<LlmProviderRecord> {
+    const apiKeyEnc = this.encrypt(dto.apiKey);
+    // Si se marca como default, quitar default de los demás del workspace
     if (dto.isDefault) {
-      list.forEach((p) => { p.isDefault = false; });
+      await this.prisma.llmProvider.updateMany({
+        where: { workspaceId: dto.workspaceId },
+        data:  { isDefault: false },
+      });
     }
-
-    if (existing) {
-      existing.label = dto.label;
-      existing.maskedKey = maskKey(dto.apiKey);
-      existing.isDefault = dto.isDefault ?? existing.isDefault;
-      // encrypt(dto.apiKey) → store securely (Prisma/Vault in prod)
-      return existing;
-    }
-
-    const record: LlmProviderRecord = {
-      id: crypto.randomUUID(),
-      workspaceId,
-      provider: dto.provider,
-      label: dto.label,
-      maskedKey: maskKey(dto.apiKey),
-      isDefault: dto.isDefault ?? false,
-      createdAt: new Date().toISOString(),
-    };
-    list.push(record);
-    llmStore.set(workspaceId, list);
-    return record;
+    const prov = await this.prisma.llmProvider.upsert({
+      where:  { workspaceId_provider: { workspaceId: dto.workspaceId, provider: dto.provider } },
+      update: { apiKeyEnc, baseUrl: dto.baseUrl ?? null, isDefault: dto.isDefault ?? false },
+      create: {
+        workspaceId: dto.workspaceId,
+        provider:    dto.provider,
+        apiKeyEnc,
+        baseUrl:     dto.baseUrl ?? null,
+        isDefault:   dto.isDefault ?? false,
+      },
+    });
+    return this._toProviderRecord(prov);
   }
 
-  deleteProvider(workspaceId: string, providerId: string): void {
-    const list = llmStore.get(workspaceId) ?? [];
-    llmStore.set(workspaceId, list.filter((p) => p.id !== providerId));
+  async listProviders(workspaceId: string): Promise<LlmProviderRecord[]> {
+    const provs = await this.prisma.llmProvider.findMany({
+      where:   { workspaceId },
+      orderBy: { createdAt: 'asc' },
+    });
+    return provs.map((p) => this._toProviderRecord(p));
+  }
+
+  async deleteProvider(providerId: string): Promise<void> {
+    await this.prisma.llmProvider.delete({ where: { id: providerId } })
+      .catch(() => { throw new NotFoundException(`LlmProvider ${providerId} not found`); });
+  }
+
+  // Expone la API key descifrada — solo para uso interno del runtime
+  async resolveApiKey(providerId: string): Promise<string> {
+    const prov = await this.prisma.llmProvider.findUnique({ where: { id: providerId } });
+    if (!prov) throw new NotFoundException(`LlmProvider ${providerId} not found`);
+    return this.decrypt(prov.apiKeyEnc);
+  }
+
+  // ── SSE ──────────────────────────────────────────────────────────────────
+  subscribe(channelId: string, cb: (data: string) => void): () => void {
+    if (!this.subs.has(channelId)) this.subs.set(channelId, new Set());
+    this.subs.get(channelId)!.add(cb);
+    return () => this.subs.get(channelId)?.delete(cb);
+  }
+
+  private _emit(channelId: string, payload: object) {
+    const data = `data: ${JSON.stringify(payload)}\n\n`;
+    this.subs.get(channelId)?.forEach((cb) => cb(data));
+  }
+
+  // ── Mappers ──────────────────────────────────────────────────────────────
+  private _toRecord(c: Channel): ChannelRecord {
+    return {
+      id:           c.id,
+      workspaceId:  c.workspaceId,
+      kind:         c.kind,
+      status:       c.status,
+      boundAgentId: c.boundAgentId,
+      meta:         c.meta as Record<string, unknown>,
+      createdAt:    c.createdAt,
+      updatedAt:    c.updatedAt,
+    };
+  }
+
+  private _toProviderRecord(p: LlmProvider): LlmProviderRecord {
+    // Desciframos solo para enmascarar — nunca exponemos el plaintext
+    let masked = '••••';
+    try {
+      const plain = this.decrypt(p.apiKeyEnc);
+      masked = plain.length > 4 ? `••••${plain.slice(-4)}` : '••••';
+    } catch { /* si falla el decrypt, mostramos placeholder */ }
+    return {
+      id:          p.id,
+      workspaceId: p.workspaceId,
+      provider:    p.provider,
+      apiKeyMasked: masked,
+      baseUrl:     p.baseUrl,
+      isDefault:   p.isDefault,
+      createdAt:   p.createdAt,
+    };
   }
 }

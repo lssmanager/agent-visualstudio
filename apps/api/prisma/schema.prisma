@@ -1,0 +1,170 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Prisma schema — agent-visualstudio
+// Cubre: Workspace, Agent, Flow, Skill, Policy, Hook (WorkspaceStore contract)
+//        + Channel, LlmProvider (channels module)
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Workspace ────────────────────────────────────────────────────────────────
+model Workspace {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  config      Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  agents      Agent[]
+  flows       Flow[]
+  skills      Skill[]
+  policies    Policy[]
+  hooks       Hook[]
+  channels    Channel[]
+  llmProviders LlmProvider[]
+}
+
+// ── Agent ─────────────────────────────────────────────────────────────────────
+model Agent {
+  id          String   @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  role        String?
+  goal        String?
+  backstory   String?
+  model       String   @default("gpt-4o-mini")
+  tools       Json     @default("[]")
+  config      Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  boundChannels Channel[] @relation("ChannelAgent")
+
+  @@index([workspaceId])
+}
+
+// ── Flow ──────────────────────────────────────────────────────────────────────
+model Flow {
+  id          String   @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  nodes       Json     @default("[]")
+  edges       Json     @default("[]")
+  config      Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([workspaceId])
+}
+
+// ── Skill ─────────────────────────────────────────────────────────────────────
+model Skill {
+  id          String   @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  type        String   @default("function")
+  config      Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([workspaceId])
+}
+
+// ── Policy ────────────────────────────────────────────────────────────────────
+model Policy {
+  id          String   @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  rules       Json     @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([workspaceId])
+}
+
+// ── Hook ──────────────────────────────────────────────────────────────────────
+model Hook {
+  id          String   @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  name        String
+  event       String
+  action      Json     @default("{}")
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([workspaceId])
+}
+
+// ── Channel ───────────────────────────────────────────────────────────────────
+enum ChannelKind {
+  telegram
+  whatsapp
+  discord
+  webchat
+}
+
+enum ChannelStatus {
+  provisioned
+  bound
+  error
+  offline
+}
+
+model Channel {
+  id          String        @id @default(cuid())
+  workspaceId String
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  kind        ChannelKind
+  status      ChannelStatus @default(provisioned)
+  tokenEnc    String        // AES-256-GCM cifrado: iv:authTag:ciphertext
+  meta        Json          @default("{}")  // appId, webhookUrl, etc.
+
+  boundAgentId String?
+  boundAgent   Agent?        @relation("ChannelAgent", fields: [boundAgentId], references: [id])
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([boundAgentId])
+}
+
+// ── LlmProvider ───────────────────────────────────────────────────────────────
+model LlmProvider {
+  id          String   @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  provider    String   // openai | anthropic | qwen | deepseek | openrouter
+  apiKeyEnc   String   // AES-256-GCM cifrado
+  baseUrl     String?
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([workspaceId, provider])
+  @@index([workspaceId])
+}
