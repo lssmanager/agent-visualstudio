@@ -41,6 +41,44 @@ Cuando se agrega un nuevo agente a un nivel (ej: "Spotify Ads" al Department de 
 
 ---
 
+## Definición de Agentes — Formato YAML (CrewAI-inspired)
+
+Cada agente se define con tres campos semánticos que alimentan su system prompt automáticamente. La UI del Agent Editor mapea estos campos a formulario visual, y el backend serializa a DB:
+
+```yaml
+# Ejemplo: Agent Editor → agents.yaml interno → DB row
+research_agent:
+  role: >
+    Senior Investigador de Mercados
+  goal: >
+    Descubrir tendencias emergentes en {sector} con datos verificables
+  backstory: >
+    Analista con 10 años de experiencia en inteligencia de mercado.
+    Conocido por convertir datos complejos en insights accionables.
+  model: gpt-4o
+  channel: telegram
+  tools: [web_search, file_reader]
+```
+
+- **`role`** — Título y especialización. Define el scope de lo que sabe hacer.
+- **`goal`** — Objetivo principal. Guía cada decisión del agente.
+- **`backstory`** — Contexto narrativo. Mejora la consistencia del comportamiento.
+
+---
+
+## Modos de Ejecución de Crews
+
+Inspirado en `CrewAI Process`, el runtime soporta dos modos configurables desde el Agent Editor:
+
+| Modo | Descripción | Cuándo usar |
+|---|---|---|
+| **Sequential** | Los agentes ejecutan en orden, pasando output como input del siguiente | Pipelines lineales predecibles |
+| **Hierarchical** | Un agente Manager delega tareas, valida resultados y reintenta si es necesario | Tareas complejas que requieren coordinación |
+
+El modo **Hierarchical** usa un `SupervisorNode` en el Flow Builder que actúa como manager automático: recibe el objetivo, descompone en subtareas, asigna a los agentes disponibles en el scope y valida la salida antes de consolidar.
+
+---
+
 ## Stack Técnico
 
 ### Estado actual
@@ -65,7 +103,7 @@ Cloudflare → Traefik → NestJS API (port 3400)
                           ├── /channels/teams/*   Teams Webhook
                           ├── /*                  React SPA
                           │
-                          ├── PostgreSQL (Prisma)  ← Config + sessions + runs
+                          ├── PostgreSQL (Prisma)  ← Config + sessions + runs + checkpoints
                           ├── Redis                ← WS sessions + BullMQ queues
                           └── n8n (integración)    ← Workflow automation
 ```
@@ -77,6 +115,7 @@ Cloudflare → Traefik → NestJS API (port 3400)
 | Base de datos | Archivos `.md/.json` → **PostgreSQL + Prisma** | 📋 Planeado |
 | Auth | Sin auth → **Logto OIDC** | 📋 Planeado |
 | Task queues | Sin queues → **BullMQ + Redis** | 📋 Planeado |
+| Run persistence | Sin checkpoints → **LangGraph PostgresSaver pattern** | 📋 Planeado |
 | Config storage | `.env` / archivos → **GUI en DB cifrada** | 📋 Planeado |
 
 ---
@@ -110,12 +149,92 @@ Agency ──< Department ──< Workspace ──< Agent ──< Subagent
 ChannelConfig ──< ChannelBinding ──────────────────── ┘
 LlmProvider ──────────────────────────────────────────┘
 Flow ──< FlowNode ──< FlowEdge
-Run ──< RunStep
+Run ──< RunStep (checkpoint_data JSONB)   ← LangGraph PostgresSaver pattern
 BudgetConfig
 AuditEvent
+PendingApproval                           ← Human-in-the-loop interrupts
 ```
 
 Toda la configuración (credenciales de canales, API keys de proveedores LLM, configuración de agentes, historial de runs) vive en **PostgreSQL con Prisma**. Las credenciales sensibles se cifran con AES-256-GCM antes de persistir.
+
+### `RunStep` — Checkpointing (LangGraph-inspired)
+
+Cada paso de ejecución persiste su estado completo en `checkpoint_data` (JSONB). Si un run falla en el paso 15 de 20, el sistema **reanuda desde el paso 15** sin reejecutar los anteriores:
+
+```prisma
+model RunStep {
+  id              String   @id @default(cuid())
+  runId           String
+  stepIndex       Int
+  nodeId          String
+  status          StepStatus  // pending | running | completed | failed | interrupted
+  inputSnapshot   Json     // Estado de entrada del nodo
+  outputSnapshot  Json?    // Estado de salida (null si aún no completó)
+  checkpoint_data Json?    // Snapshot completo del grafo para reanudar (PostgresSaver pattern)
+  interruptReason String?  // Razón de pausa si status = interrupted
+  createdAt       DateTime @default(now())
+  completedAt     DateTime?
+
+  run             Run      @relation(fields: [runId], references: [id])
+  pendingApproval PendingApproval?
+
+  @@index([runId, stepIndex])
+}
+```
+
+---
+
+## Durable Execution — Runs que sobreviven fallos
+
+Inspirado en el patrón **LangGraph StateGraph + PostgresSaver**, el runtime implementa ejecución duradera:
+
+```
+Run creado
+    │
+    ▼
+RunStep 1 → checkpoint guardado en DB ✓
+    │
+    ▼
+RunStep 2 → checkpoint guardado en DB ✓
+    │
+    ▼
+RunStep 3 → fallo de red / crash del servidor
+    │
+    ▼ (reinicio del sistema)
+    │
+    ├── BullMQ detecta job sin ACK
+    ▼
+RunStep 3 → reanuda desde checkpoint_data del paso anterior ✓
+    │
+    ▼
+RunStep 4... continúa normalmente
+```
+
+**Beneficio clave:** Un run de análisis de 30 minutos que falla al minuto 28 no se reinicia desde cero — continúa desde el último checkpoint guardado.
+
+---
+
+## Human-in-the-Loop — Interrupts y Aprobaciones
+
+El nodo `HumanApprovalNode` en el Flow Builder implementa el patrón `interrupt()` de LangGraph. Cuando un agente llega a ese nodo:
+
+1. El `RunStep` cambia a `status: "interrupted"` con `interruptReason`
+2. Se crea un registro en `PendingApproval` con el contexto completo
+3. SSE notifica al frontend → aparece en el panel **Operations → Pending Actions**
+4. El usuario revisa, aprueba o rechaza con comentario desde la UI
+5. El run **reanuda exactamente desde ese punto** con la decisión incorporada al estado
+
+```
+Flow en ejecución:
+  [AgentNode] → [ToolNode] → [HumanApprovalNode] → PAUSA
+                                                        │
+                                  UI muestra: "¿Aprobar envío de email masivo?"
+                                  Context: {draft: "...", recipients: 1240}
+                                                        │
+                                    Usuario: [ Aprobar ] o [ Rechazar + nota ]
+                                                        │
+                                              [EmailSenderNode] → continúa
+```
 
 ---
 
@@ -127,11 +246,27 @@ Canvas React Flow para construir lógicas de automatización visual:
 |---|---|
 | `LLMCallNode` | Llamada a modelo con prompt configurable |
 | `ToolCallNode` | Ejecución de tool/skill del agente |
-| `ConditionNode` | Bifurcación por condición |
+| `ConditionNode` | Bifurcación por condición (`@router` pattern — CrewAI inspired) |
 | `LoopNode` | Iteración sobre colecciones |
 | `SubagentNode` | Delegación a subagente |
+| `SupervisorNode` | Manager jerárquico que delega y valida (`Process.hierarchical` — CrewAI inspired) |
 | `N8nWorkflowNode` | Trigger de workflow n8n |
-| `HumanApprovalNode` | Pausa para aprobación humana |
+| `HumanApprovalNode` | Pausa para aprobación humana (`interrupt()` — LangGraph inspired) |
+| `StateNode` | Nodo que lee/escribe variables del StateGraph global del run |
+
+### `ConditionNode` — Router condicional
+
+Inspirado en el decorador `@router` de CrewAI Flows. Evalúa el estado actual del run y emite a una de N ramas:
+
+```
+[AnálisisNode] → [ConditionNode: confianza del resultado]
+                      │
+            ┌─────────┼──────────┐
+            ▼         ▼          ▼
+       alta (>0.8)  media    baja (<0.4)
+            │         │          │
+    [EjecutarNode] [RevisarNode] [ReintentarNode]
+```
 
 ---
 
@@ -169,14 +304,18 @@ Step 4: Primer agente        → Nombre + prompt + asignar provider y canal
 ### S0 — Build Gate (3 días)
 - [ ] Resolver compile error en `dashboard.service.ts` (campo `priority` faltante)
 - [ ] Prisma schema completo + primera migración PostgreSQL
+- [ ] Incluir tabla `RunStep` con campo `checkpoint_data` (JSONB) desde el inicio
 
 ### S1 — Runtime Real (1 semana)
 - [ ] `LLMStepExecutor.executeAgent()` — agentes que hablan con LLMs de verdad
 - [ ] `RunRepository` migrado de JSON a PostgreSQL
+- [ ] `CheckpointService` — guardar/restaurar `checkpoint_data` en cada step
 
-### S2 — Jerarquía (1 semana)
+### S2 — Jerarquía + Supervisor (1 semana)
 - [ ] `HierarchyOrchestrator` — GroupChat pattern (AutoGen-inspired)
 - [ ] `ProfilePropagatorService` — auto-recálculo de prompts al agregar agentes
+- [ ] `SupervisorNode` — Process.hierarchical con manager agent (CrewAI-inspired)
+- [ ] Definición de agentes con campos `role`, `goal`, `backstory` en Agent Editor
 
 ### S3 — Gateway Propio (1 semana)
 - [ ] WebChat WebSocket + auto-bind
@@ -194,12 +333,17 @@ Step 4: Primer agente        → Nombre + prompt + asignar provider y canal
 
 ### S6 — Flow Builder funcional (2 semanas)
 - [ ] Nodos funcionales en React Flow canvas
-- [ ] Serialización a DB + ejecución real
+- [ ] `ConditionNode` con router condicional (CrewAI @router inspired)
+- [ ] `HumanApprovalNode` con interrupt/resume (LangGraph inspired)
+- [ ] `StateNode` para variables del run graph
+- [ ] Serialización a DB + ejecución real con checkpointing
 
 ### S7 — Control Plane completo (2 semanas)
 - [ ] Settings/Connections/Editor/Operations completamente funcionales
+- [ ] Panel **Pending Actions** en Operations — aprobaciones en tiempo real
 - [ ] Onboarding wizard completo
 - [ ] Dashboard con métricas consolidadas
+- [ ] Durable execution: BullMQ + checkpoint resume en fallos
 
 ---
 
@@ -214,6 +358,8 @@ Step 4: Primer agente        → Nombre + prompt + asignar provider y canal
 | [microsoft/agent-framework](https://github.com/microsoft/agent-framework) | AgentCapability interface contract |
 | [n8n-io/n8n](https://github.com/n8n-io/n8n) | Node structure, workflow serialization |
 | [openclaw.ai](https://docs.openclaw.ai) | Channel adapters, providers, tools/skills patterns |
+| [langchain-ai/langgraph](https://github.com/langchain-ai/langgraph) | **StateGraph** para runs tipados, **PostgresSaver** para durable execution, **`interrupt()`** para Human-in-the-loop |
+| [crewaiinc/crewai](https://github.com/crewaiinc/crewai) | **`role+goal+backstory`** YAML para definición de agentes, **`Process.hierarchical`** para SupervisorNode, **`@router`** para ConditionNode |
 
 ---
 
@@ -228,8 +374,9 @@ Step 4: Primer agente        → Nombre + prompt + asignar provider y canal
 │   │       ├── channels/          ← Gateway propio (Telegram, WhatsApp, Discord, Teams, WebChat)
 │   │       │   └── adapters/      ← Un adapter por canal
 │   │       ├── hierarchy/         ← HierarchyOrchestrator + ProfilePropagator
-│   │       ├── runtime/           ← BullMQ executor, LLMStepExecutor
-│   │       ├── flows/             ← Flow engine
+│   │       ├── runtime/           ← BullMQ executor, LLMStepExecutor, CheckpointService
+│   │       ├── flows/             ← Flow engine + StateGraph runtime
+│   │       ├── approvals/         ← PendingApproval + interrupt/resume logic
 │   │       ├── n8n/               ← N8nService + N8nStudioHelper
 │   │       ├── config/            ← EffectiveConfigService (lee de DB, no de .env)
 │   │       ├── crypto/            ← CredentialsCryptoService (AES-256-GCM)
@@ -246,9 +393,9 @@ Step 4: Primer agente        → Nombre + prompt + asignar provider y canal
 │           ├── studio/            ← StudioPage, Canvas, Sidebar, Toolbar
 │           ├── onboarding/        ← Wizard 4 pasos (ready to use)
 │           ├── settings/          ← ChannelSettingsTab, LLM providers GUI
-│           ├── agents/            ← AgentEditor con jerarquía
-│           ├── flows/             ← FlowCanvas (React Flow)
-│           ├── operations/        ← Runs, replay, tokens, costos
+│           ├── agents/            ← AgentEditor con jerarquía + role/goal/backstory
+│           ├── flows/             ← FlowCanvas (React Flow) con todos los nodos
+│           ├── operations/        ← Runs, Pending Actions, replay, tokens, costos
 │           ├── analytics/         ← Dashboard métricas consolidadas
 │           ├── canvas/
 │           ├── sessions/
