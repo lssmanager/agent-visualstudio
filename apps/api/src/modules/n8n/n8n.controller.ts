@@ -39,7 +39,7 @@ export function registerN8nRoutes(router: Router): void {
   // Converts a FlowSpec canvas to an n8n workflow and creates/updates it.
   router.post('/n8n/sync-flow/:flowId', async (req: Request, res: Response) => {
     try {
-      const flow = flowsService.findById(req.params.flowId);
+      const flow = await flowsService.findById(req.params.flowId);
       if (!flow) { res.status(404).json({ error: 'Flow not found' }); return; }
 
       const { workflowId } = req.body as { workflowId?: string };
@@ -123,8 +123,8 @@ export function registerN8nRoutes(router: Router): void {
   // ── Node-ID cross-reference ────────────────────────────────────────────────
 
   // GET /n8n/node-map/:flowId
-  router.get('/n8n/node-map/:flowId', (req: Request, res: Response) => {
-    const flow = flowsService.findById(req.params.flowId);
+  router.get('/n8n/node-map/:flowId', async (req: Request, res: Response) => {
+    const flow = await flowsService.findById(req.params.flowId);
     if (!flow) { res.status(404).json({ error: 'Flow not found' }); return; }
     const map = n8nService.getNodeIdMap(flow);
     res.json(Object.fromEntries(map));

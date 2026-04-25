@@ -41,10 +41,10 @@ export class StudioService {
 
     return {
       workspace: this.workspaces.getCurrent(),
-      agents: this.agents.findAll(),
-      skills: this.skills.findAll(),
-      flows: this.flows.findAll(),
-      policies: this.policies.findAll(),
+      agents: await this.agents.findAll(),
+      skills: await this.skills.findAll(),
+      flows: await this.flows.findAll(),
+      policies: await this.policies.findAll(),
       profiles,
       compile,
       runtime: {
