@@ -1,4 +1,4 @@
-# OpenClaw Studio
+# Agents VisualStudio
 
 Plataforma de gestión de agentes IA, flujos, canales de mensajería y workspaces. Lista para usar **sin editar `.env` manualmente** gracias al Onboarding Wizard y al almacenamiento de API keys cifradas en base de datos.
 
