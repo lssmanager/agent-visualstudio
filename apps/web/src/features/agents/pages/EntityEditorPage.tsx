@@ -32,7 +32,7 @@ import { AnalyticsStateBoundary } from '../../analytics/components/AnalyticsStat
 import { TimeWindowSelector } from '../../analytics/components/TimeWindowSelector';
 import { useAnalyticsMetric } from '../../analytics/hooks/useAnalyticsMetric';
 import type { AnalyticsWindow } from '../../analytics/types';
-import { NODE_QUERY_KEY } from '../../../lib/studioRouting';
+import { buildCancelCreateHref, NODE_QUERY_KEY } from '../../../lib/studioRouting';
 import { ProfileScopeTab } from '../../studio/components/admin/ProfileScopeTab';
 import { ErrorBoundary } from '../../../components/ErrorBoundary';
 import { AdminSettingsPanel } from '../../studio/components/admin/AdminSettingsPanel';
@@ -48,7 +48,8 @@ type EntitySection =
   | 'hooks'
   | 'versions'
   | 'operations'
-  | 'readiness';
+  | 'readiness'
+  | 'profile-settings';
 
 type EntityLevel = 'agency' | 'department' | 'workspace' | 'agent' | 'subagent';
 type BuilderCreateType = 'agency' | 'department' | 'workspace' | 'agent' | 'subagent';
@@ -64,17 +65,16 @@ const SECTION_LABEL: Record<EntitySection, string> = {
   versions: 'Versions',
   operations: 'Operations',
   readiness: 'Readiness',
+  'profile-settings': 'Profile Settings',
 };
 
 const MATRIX: Record<EntityLevel, EntitySection[]> = {
   agency:     ['identity', 'prompts-behavior', 'skills-tools', 'handoffs', 'routing-channels', 'hooks', 'versions', 'operations', 'readiness'],
   department: ['identity', 'prompts-behavior', 'skills-tools', 'handoffs', 'routing-channels', 'hooks', 'versions', 'operations', 'readiness'],
-  workspace:  ['identity', 'prompts-behavior', 'skills-tools', 'handoffs', 'routing-channels', 'hooks', 'versions', 'operations', 'readiness'],
-  agent:      ['identity', 'prompts-behavior', 'skills-tools', 'handoffs', 'routing-channels', 'hooks', 'versions', 'operations', 'readiness'],
+  workspace:  ['identity', 'prompts-behavior', 'skills-tools', 'handoffs', 'routing-channels', 'hooks', 'versions', 'operations', 'readiness', 'profile-settings'],
+  agent:      ['identity', 'prompts-behavior', 'skills-tools', 'handoffs', 'routing-channels', 'hooks', 'versions', 'operations', 'readiness', 'profile-settings'],
   subagent:   ['identity', 'prompts-behavior', 'skills-tools', 'handoffs', 'routing-channels', 'hooks', 'versions', 'operations', 'readiness'],
 };
-
-type BuilderPrimaryTab = 'builder' | 'profile';
 
 const BUILDER_SECTION_TABS: EntitySection[] = [
   'identity',
@@ -86,12 +86,8 @@ const BUILDER_SECTION_TABS: EntitySection[] = [
   'versions',
   'operations',
   'readiness',
+  'profile-settings',
 ];
-
-const PRIMARY_TAB_SECTIONS: Record<BuilderPrimaryTab, EntitySection[]> = {
-  builder: ['identity', 'prompts-behavior', 'skills-tools', 'handoffs', 'routing-channels', 'hooks', 'versions', 'operations', 'readiness'],
-  profile: [],
-};
 
 // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -166,18 +162,6 @@ const buttonStyle: React.CSSProperties = {
   overflow: 'hidden',
   textOverflow: 'ellipsis',
 };
-
-function primaryTabStyle(active: boolean): React.CSSProperties {
-  return {
-    ...buttonStyle,
-    minWidth: 120,
-    padding: '8px 14px',
-    borderRadius: 'var(--radius-md)',
-    border: `1px solid ${active ? 'color-mix(in srgb, var(--color-primary) 45%, var(--border-primary))' : 'var(--border-primary)'}`,
-    background: active ? 'var(--color-primary-soft)' : 'var(--bg-primary)',
-    color: active ? 'var(--color-primary)' : 'var(--text-primary)',
-  };
-}
 
 function secondaryTabStyle(active: boolean): React.CSSProperties {
   return {
@@ -1401,7 +1385,6 @@ function EntityEditorPageContent() {
   const { tree, selectedNode, selectedLineage, scope, selectByEntity } = useHierarchy();
   const { state, refresh } = useStudioState();
   const [activeSection, setActiveSection] = useState<EntitySection>('identity');
-  const [activePrimaryTab, setActivePrimaryTab] = useState<BuilderPrimaryTab>('builder');
   const [createName, setCreateName] = useState('');
   const [createModel, setCreateModel] = useState('');
   const [createRole, setCreateRole] = useState('');
@@ -1432,7 +1415,6 @@ function EntityEditorPageContent() {
   // ── Params normalizados — única fuente de verdad ──────────────────────
   const mode               = (searchParams.get('mode') ?? 'edit') as 'edit' | 'create';
   const entityType         = (searchParams.get('type') ?? 'agent') as BuilderCreateType;
-  const primary            = (searchParams.get('primary') ?? 'builder') as BuilderPrimaryTab;
   const sectionFromQuery   = searchParams.get('section') ?? null;
   const agentId            = searchParams.get('agentId') ?? null;
   const parentAgentId      = searchParams.get('parentAgentId') ?? null;
@@ -1440,13 +1422,20 @@ function EntityEditorPageContent() {
   const requestedProfileId = searchParams.get('profileId') ?? null;
 
   const isCreateMode = mode === 'create';
+
+  // Param `node` para modo edición
+  const nodeParam = searchParams.get('node') ?? null;
+  const [nodeLevel, nodeId] = nodeParam ? (nodeParam.split(':') as [string, string]) : [null, null];
+
+  // Params padre faltantes (no se leían antes)
+  const parentDepartmentId = searchParams.get('parentDepartmentId') ?? null;
+  const parentAgencyId     = searchParams.get('parentAgencyId')     ?? null;
   // ─────────────────────────────────────────────────────────────────────
 
   // Preserve old variable names for compatibility while they're being refactored
   const createMode = isCreateMode;
   const createTypeFromQuery = entityType;
   const modeFromQuery = mode;
-  const primaryFromQuery = primary;
   const requestedParentWorkspaceId = parentWorkspaceId;
   const requestedParentAgentId = parentAgentId;
 
@@ -1459,23 +1448,12 @@ function EntityEditorPageContent() {
   const sections = useMemo(() => (entityLevel ? MATRIX[entityLevel] : []), [entityLevel]);
   const contextLabel = selectedLineage.map((node) => node.label).join(' / ');
   const settingsScope = entityLevel ? SCOPE_VIEW_REGISTRY[entityLevel].settingsScope : 'scoped';
-  const activePrimarySections = useMemo(
-    () => PRIMARY_TAB_SECTIONS[activePrimaryTab].filter((section) => sections.includes(section)),
-    [activePrimaryTab, sections],
-  );
-
   // Ensure active section is valid for current level
   useEffect(() => {
     if (sections.length && !sections.includes(activeSection)) {
       setActiveSection(sections[0]);
     }
   }, [sections, activeSection]);
-
-  useEffect(() => {
-    if (primaryFromQuery === 'builder' || primaryFromQuery === 'profile') {
-      setActivePrimaryTab(primaryFromQuery);
-    }
-  }, [primaryFromQuery]);
 
   useEffect(() => {
     if (sectionFromQuery && BUILDER_SECTION_TABS.includes(sectionFromQuery as EntitySection)) {
@@ -1487,34 +1465,20 @@ function EntityEditorPageContent() {
     }
   }, [sectionFromQuery, sections]);
 
+  // Sincronizar sidebar con el nodo indicado en la URL
   useEffect(() => {
-    if (activePrimaryTab !== 'profile' && !activePrimarySections.includes(activeSection)) {
-      setActiveSection(activePrimarySections[0] ?? 'identity');
+    if (nodeLevel && nodeId) {
+      selectByEntity(nodeLevel as EntityLevel, nodeId);
     }
-  }, [activePrimarySections, activePrimaryTab, activeSection]);
+  }, [nodeLevel, nodeId]); // selectByEntity es estable (memoized)
 
   useEffect(() => {
     const next = new URLSearchParams(searchParams);
     let changed = false;
 
-    if (activePrimaryTab === 'builder') {
-      if (next.get('primary') !== 'builder') {
-        next.set('primary', 'builder');
-        changed = true;
-      }
-      if (next.get('section') !== activeSection) {
-        next.set('section', activeSection);
-        changed = true;
-      }
-    } else {
-      if (next.get('primary') !== 'profile') {
-        next.set('primary', 'profile');
-        changed = true;
-      }
-      if (next.has('section')) {
-        next.delete('section');
-        changed = true;
-      }
+    if (next.get('section') !== activeSection) {
+      next.set('section', activeSection);
+      changed = true;
     }
 
     if (createMode) {
@@ -1531,7 +1495,7 @@ function EntityEditorPageContent() {
     if (changed) {
       setSearchParams(next, { replace: true });
     }
-  }, [activePrimaryTab, activeSection, createMode, createTypeFromQuery, searchParams, setSearchParams]);
+  }, [activeSection, createMode, createTypeFromQuery, searchParams, setSearchParams]);
 
   // Resolve entity data
   const agent = useMemo<AgentSpec | null>(() => {
@@ -1630,11 +1594,7 @@ function EntityEditorPageContent() {
       return;
     }
     const nextId = `${createKind}-${Date.now()}`;
-    const currentAgentId = requestedParentAgentId ?? (selectedNode?.level === 'agent'
-      ? selectedNode.id
-      : selectedNode?.level === 'subagent'
-        ? (selectedNode.parentKey?.split(':')[1] ?? scope.agentId ?? undefined)
-        : scope.agentId ?? undefined);
+    const currentAgentId = requestedParentAgentId ?? undefined;
     const parentAgentId = createKind === 'subagent' ? currentAgentId : undefined;
     if (createKind === 'subagent' && !parentAgentId) {
       setCreateError('To create a subagent, select an agent in hierarchy first.');
@@ -1826,249 +1786,21 @@ function EntityEditorPageContent() {
     { key: 'versions', ok: createReadinessChecks.versionsReady, label: 'Versions Preview' },
   ];
 
-  if (false && createMode) {
-    const createSections: EntitySection[] = [
-      'identity',
-      'prompts-behavior',
-      'skills-tools',
-      'handoffs',
-      'routing-channels',
-      'hooks',
-      'versions',
-      'operations',
-      'readiness',
-    ];
-    const readinessChecks = {
-      identityComplete: Boolean(createName.trim() && createCreature.trim() && createVibe.trim()),
-      behaviorComplete: Boolean(createSystemPrompt.trim()),
-      toolsAssigned: Boolean((profilePrefill?.defaultSkills?.length ?? 0) > 0 || createLocalNotes.trim()),
-      routingConfigured: Boolean(createAllowedChannels.split(',').map((item) => item.trim()).filter(Boolean).length > 0),
-      hooksConfigured: createHeartbeatEnabled || createQuietHoursStart.length > 0 || createQuietHoursEnd.length > 0,
-      operationsConfigured: createSafetyApproval && Boolean(createMemoryScope),
-      versionsReady: Boolean(createName.trim()),
-    };
-    const readinessItems: Array<{ key: string; ok: boolean; label: string }> = [
-      { key: 'identity', ok: readinessChecks.identityComplete, label: 'Identity' },
-      { key: 'behavior', ok: readinessChecks.behaviorComplete, label: 'Behavior' },
-      { key: 'tools', ok: readinessChecks.toolsAssigned, label: 'Skills / Tools' },
-      { key: 'routing', ok: readinessChecks.routingConfigured, label: 'Routing / Channels' },
-      { key: 'hooks', ok: readinessChecks.hooksConfigured, label: 'Hooks' },
-      { key: 'ops', ok: readinessChecks.operationsConfigured, label: 'Operations' },
-      { key: 'versions', ok: readinessChecks.versionsReady, label: 'Versions Preview' },
-    ];
-    const createSection = activeSection;
-    const setCreateSection = setActiveSection;
 
+  // Resolved parent IDs — derived from query params only (no selectedNode fallback)
+  const resolvedParentAgentId      = parentAgentId      ?? null;
+  const resolvedParentWorkspaceId  = parentWorkspaceId  ?? null;
+  const resolvedParentDepartmentId = parentDepartmentId ?? null;
+  const resolvedParentAgencyId     = parentAgencyId     ?? null;
+
+  // Guard: subagent creation requires parentWorkspaceId + parentAgentId in URL
+  if (isCreateMode && entityType === 'subagent' && (!resolvedParentWorkspaceId || !resolvedParentAgentId)) {
     return (
-      <div className="max-w-7xl mx-auto h-full min-h-0 flex flex-col gap-6">
-        <PageHeader
-          title={`Agents Builder · Create ${createKind.charAt(0).toUpperCase()}${createKind.slice(1)}`}
-          icon={SquarePen}
-          description="Single create surface with explicit context, hierarchy-aware defaults, and 9 builder sections."
-        />
-        <div className="space-y-4 min-h-0 flex-1 overflow-y-auto app-scrollbar">
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button type="button" onClick={() => setActivePrimaryTab('builder')} style={primaryTabStyle(activePrimaryTab === 'builder')}>Builder</button>
-            <button type="button" onClick={() => setActivePrimaryTab('profile')} style={primaryTabStyle(activePrimaryTab === 'profile')}>Profile</button>
-          </div>
-          {activePrimaryTab === 'builder' && (
-          <div className="rounded-xl border p-3 space-y-3" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', overflowX: 'hidden' }}>
-              {createSections.map((section) => (
-                <button
-                  key={section}
-                  type="button"
-                  onClick={() => setCreateSection(section)}
-                  style={{ ...buttonStyle, background: createSection === section ? 'var(--color-primary-soft)' : 'var(--bg-primary)', color: createSection === section ? 'var(--color-primary)' : 'var(--text-primary)' }}
-                >
-                  {SECTION_LABEL[section]}
-                </button>
-              ))}
-            </div>
-          </div>
-          )}
-
-          {activePrimaryTab === 'profile' && (
-            <div className="space-y-4">
-              <ConsolidatedProfileCard
-                title="Builder Draft (Consolidated)"
-                rows={[
-                  { label: 'Level', value: `${selectedCreateContextLevel ?? 'none'} / ${createKind}` },
-                  { label: 'Name', value: createName.trim() || selectedNode?.name || 'Draft' },
-                  { label: 'Role', value: createRole.trim() || 'Not set' },
-                  { label: 'Model', value: createModel.trim() || workspace?.defaultModel || 'Inherited' },
-                  { label: 'Channels', value: createAllowedChannels.trim() || 'Not set' },
-                  { label: 'Safety', value: createSafetyApproval ? 'Approval required' : 'Open' },
-                ]}
-              />
-              <ProfileScopeTab
-                profile={profilePanel ?? buildFallbackEffectiveProfile()}
-                profiles={profileCatalog}
-                busy={profileBusy}
-                onBind={(profileId) => void handleBindProfilePanel(profileId)}
-                onUnbind={() => void handleUnbindProfilePanel()}
-                onSaveOverride={(payload) => void handleSaveProfileOverridePanel(payload)}
-              />
-              <section className="rounded-xl border p-4" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}>
-                <AdminSettingsPanel settingsScope={settingsScope} />
-              </section>
-            </div>
-          )}
-
-          {activePrimaryTab === 'builder' && (
-          <div className="rounded-xl border p-5 space-y-4" style={{ borderColor: 'var(--border-primary)', background: 'var(--card-bg)' }}>
-            <div className="rounded-lg border p-3 space-y-2" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}>
-              <p className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: '0.07em' }}>Creation Context</p>
-              <p className="text-sm" style={{ color: 'var(--text-primary)' }}>
-                Selected level: <strong>{selectedCreateContextLevel ?? 'none'}</strong> · Creating: <strong>{createKind}</strong>
-              </p>
-              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                Vertical inheritance: Agency → Department → Workspace → Agent → Subagent. Horizontal links can be defined for shared dependencies between same-level entities.
-              </p>
-              <div>
-                <label style={labelStyle()}>Horizontal sharing links (same-level IDs, comma-separated)</label>
-                <input
-                  style={inputStyle()}
-                  value={createHorizontalLinks}
-                  onChange={(event) => setCreateHorizontalLinks(event.target.value)}
-                  placeholder="marketing, growth, ads-workspace, agent-copywriter"
-                />
-              </div>
-            </div>
-
-            {createSection === 'identity' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div><label style={labelStyle()}>Parent Workspace</label><select style={inputStyle()} value={selectedWorkspaceId} onChange={(e) => setSelectedWorkspaceId(e.target.value)}><option value="">Select workspace</option>{workspaceOptions.map((item) => (<option key={item.id} value={item.id}>{item.label}</option>))}</select></div>
-                <div><label style={labelStyle()}>Profile source</label><input style={inputStyle()} value={profilePrefill?.name ?? 'blank'} disabled /></div>
-                <div><label style={labelStyle()}>Name</label><input style={inputStyle()} value={createName} onChange={(e) => setCreateName(e.target.value)} placeholder="Pick a name for this agent" /></div>
-                <div><label style={labelStyle()}>Creature</label><input style={inputStyle()} value={createCreature} onChange={(e) => setCreateCreature(e.target.value)} placeholder="AI assistant, orchestrator, dev agent..." /></div>
-                <div><label style={labelStyle()}>Role</label><input style={inputStyle()} value={createRole} onChange={(e) => setCreateRole(e.target.value)} placeholder="What kind of agent is this?" /></div>
-                <div><label style={labelStyle()}>Vibe</label><input style={inputStyle()} value={createVibe} onChange={(e) => setCreateVibe(e.target.value)} placeholder="warm, sharp, calm, direct..." /></div>
-                <div><label style={labelStyle()}>Emoji</label><input style={inputStyle()} value={createEmoji} onChange={(e) => setCreateEmoji(e.target.value)} placeholder="Signature emoji" /></div>
-                <div><label style={labelStyle()}>Avatar URL</label><input style={inputStyle()} value={createAvatar} onChange={(e) => setCreateAvatar(e.target.value)} placeholder="Workspace path or URL" /></div>
-                <div className="md:col-span-2"><label style={labelStyle()}>Description</label><input style={inputStyle()} value={createDescription} onChange={(e) => setCreateDescription(e.target.value)} placeholder="Agent mission summary" /></div>
-              </div>
-            )}
-
-            {createSection === 'prompts-behavior' && (
-              <div className="space-y-4">
-                <div><label style={labelStyle()}>System Prompt</label><textarea rows={5} style={{ ...inputStyle(), resize: 'vertical' }} value={createSystemPrompt} onChange={(e) => setCreateSystemPrompt(e.target.value)} placeholder="Describe the agent's core mission and operating mode." /></div>
-                <div><label style={labelStyle()}>Personality Guide</label><textarea rows={3} style={{ ...inputStyle(), resize: 'vertical' }} value={createPersonalityGuide} onChange={(e) => setCreatePersonalityGuide(e.target.value)} placeholder="How should this agent sound and behave?" /></div>
-                <div><label style={labelStyle()}>Human Context</label><textarea rows={3} style={{ ...inputStyle(), resize: 'vertical' }} value={createHumanContext} onChange={(e) => setCreateHumanContext(e.target.value)} placeholder="Keep this useful and respectful, not invasive." /></div>
-              </div>
-            )}
-
-            {createSection === 'skills-tools' && (
-              <div className="space-y-3">
-                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Assignments come from catalog/inheritance/profile. No ad-hoc installation from this panel.</p>
-                <div><label style={labelStyle()}>Model</label><input style={inputStyle()} value={createModel} onChange={(e) => setCreateModel(e.target.value)} placeholder="Default model" /></div>
-                <div><label style={labelStyle()}>TOOLS.md local notes</label><textarea rows={5} style={{ ...inputStyle(), resize: 'vertical' }} value={createLocalNotes} onChange={(e) => setCreateLocalNotes(e.target.value)} placeholder="Device aliases, SSH aliases, TTS preferences, environment notes..." /></div>
-              </div>
-            )}
-
-            {createSection === 'handoffs' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div><label style={labelStyle()}>Escalation Policy</label><textarea rows={3} style={{ ...inputStyle(), resize: 'vertical' }} value={createEscalationPolicy} onChange={(e) => setCreateEscalationPolicy(e.target.value)} placeholder="When should this agent escalate?" /></div>
-                <div><label style={labelStyle()}>Approval Lane</label><textarea rows={3} style={{ ...inputStyle(), resize: 'vertical' }} value={createApprovalLane} onChange={(e) => setCreateApprovalLane(e.target.value)} placeholder="Which actions require human approval?" /></div>
-              </div>
-            )}
-
-            {createSection === 'routing-channels' && (
-              <div className="space-y-3">
-                <label style={labelStyle()}>Allowed Channels (comma-separated)</label>
-                <textarea rows={3} style={{ ...inputStyle(), resize: 'vertical' }} value={createAllowedChannels} onChange={(e) => setCreateAllowedChannels(e.target.value)} placeholder="discord-main, whatsapp-team, inbox-ops" />
-              </div>
-            )}
-
-            {createSection === 'hooks' && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="flex items-center gap-2"><input type="checkbox" checked={createHeartbeatEnabled} onChange={(e) => setCreateHeartbeatEnabled(e.target.checked)} /><span className="text-sm" style={{ color: 'var(--text-primary)' }}>Enable heartbeat</span></div>
-                <div><label style={labelStyle()}>Quiet start</label><input style={inputStyle()} value={createQuietHoursStart} onChange={(e) => setCreateQuietHoursStart(e.target.value)} placeholder="23:00" /></div>
-                <div><label style={labelStyle()}>Quiet end</label><input style={inputStyle()} value={createQuietHoursEnd} onChange={(e) => setCreateQuietHoursEnd(e.target.value)} placeholder="08:00" /></div>
-              </div>
-            )}
-
-            {createSection === 'versions' && (
-              <div className="space-y-3">
-                <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Core Files Preview (deterministic draft)</p>
-                <pre className="text-xs overflow-auto rounded-lg border p-3" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}>
-{`IDENTITY.md
-Name: ${createName || '<empty>'}
-Creature: ${createCreature || '<empty>'}
-Role: ${createRole || '<empty>'}
-Vibe: ${createVibe || '<empty>'}
-Emoji: ${createEmoji || '<empty>'}
-
-SOUL.md
-SystemPrompt: ${createSystemPrompt || '<empty>'}
-Personality: ${createPersonalityGuide || '<empty>'}
-
-TOOLS.md
-${createLocalNotes || '<empty>'}
-`}
-                </pre>
-              </div>
-            )}
-
-            {createSection === 'operations' && (
-              <div className="space-y-3">
-                <label style={labelStyle()}>Memory Scope</label>
-                <select style={inputStyle()} value={createMemoryScope} onChange={(e) => setCreateMemoryScope(e.target.value as 'main_session_only' | 'shared_safe' | 'disabled')}>
-                  <option value="main_session_only">main_session_only</option>
-                  <option value="shared_safe">shared_safe</option>
-                  <option value="disabled">disabled</option>
-                </select>
-                <div className="flex items-center gap-2"><input type="checkbox" checked={createSafetyApproval} onChange={(e) => setCreateSafetyApproval(e.target.checked)} /><span className="text-sm" style={{ color: 'var(--text-primary)' }}>Require approval for external/destructive actions</span></div>
-              </div>
-            )}
-
-            {createSection === 'readiness' && (
-              <div className="space-y-2">
-                {readinessItems.map((item) => (
-                  <div key={item.key} className="flex items-center gap-2 text-sm" style={{ color: item.ok ? 'var(--tone-success-text)' : 'var(--text-muted)' }}>
-                    <span>{item.ok ? '✓' : '✗'}</span>
-                    <span>{item.label}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {createError && <p className="text-xs" style={{ color: 'var(--tone-danger-text)' }}>{createError}</p>}
-            <div className="flex items-center gap-2">
-              <SaveButton
-                saving={createBusy}
-                onClick={() => { void handleCreateAgent(); }}
-                disabled={
-                  createKind === 'agency' ||
-                  createKind === 'department' ||
-                  createKind === 'workspace' ||
-                  !selectedWorkspaceId ||
-                  !createName.trim() ||
-                  (createKind === 'subagent' && !(scope.agentId || selectedNode?.level === 'agent' || selectedNode?.level === 'subagent'))
-                }
-              />
-              <button type="button" onClick={() => navigate('/agents-builder')} style={{ ...inputStyle(), width: 'auto', cursor: 'pointer' }}>
-                Cancel
-              </button>
-            </div>
-          </div>
-          )}
-
-          {activePrimaryTab === 'builder' && (
-          <div className="rounded-xl border p-4 space-y-3" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}>
-            <p className="text-xs font-semibold uppercase" style={{ color: 'var(--text-muted)', letterSpacing: '0.07em' }}>Readiness</p>
-            {readinessItems.map((item) => (
-              <div key={item.key} className="flex items-center gap-2 text-sm" style={{ color: item.ok ? 'var(--tone-success-text)' : 'var(--text-muted)' }}>
-                <span>{item.ok ? '✓' : '⚠'}</span>
-                <span>{item.label}</span>
-              </div>
-            ))}
-            <div className="pt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-              Status: {readinessItems.every((item) => item.ok) ? 'ready_to_publish' : 'incomplete'}
-            </div>
-          </div>
-          )}
-        </div>
+      <div style={{ padding: 32, textAlign: 'center' }}>
+        <p style={{ color: 'var(--tone-danger-text)' }}>
+          Para crear un subagente se requieren <code>parentWorkspaceId</code> y <code>parentAgentId</code> en la URL.
+        </p>
+        <button onClick={() => navigate('/agents-builder')}>Volver</button>
       </div>
     );
   }
@@ -2120,13 +1852,8 @@ ${createLocalNotes || '<empty>'}
       </div>
 
       <div className="rounded-xl border p-3 space-y-3" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button type="button" onClick={() => { setActivePrimaryTab('builder'); setSearchParams(prev => { prev.set('primary', 'builder'); return prev; }, { replace: true }); }} style={primaryTabStyle(activePrimaryTab === 'builder')}>Builder</button>
-          <button type="button" onClick={() => { setActivePrimaryTab('profile'); setSearchParams(prev => { prev.set('primary', 'profile'); return prev; }, { replace: true }); }} style={primaryTabStyle(activePrimaryTab === 'profile')}>Profile</button>
-        </div>
-        {activePrimaryTab === 'builder' && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', overflowX: 'hidden' }}>
-          {sections.filter((section) => activePrimarySections.includes(section)).map((section) => (
+          {sections.map((section) => (
             <button
               key={section}
               type="button"
@@ -2137,12 +1864,11 @@ ${createLocalNotes || '<empty>'}
             </button>
           ))}
         </div>
-        )}
       </div>
 
       <div className="rounded-xl border p-4 md:p-5 min-h-0 flex-1 overflow-y-auto app-scrollbar" style={{ borderColor: 'var(--card-border)', background: 'var(--card-bg)' }}>
         <div className="min-w-0">
-          {activePrimaryTab === 'profile' && (
+          {activeSection === 'profile-settings' && (
             profilePanel ? (
               <section className="space-y-3">
                 {profileError && (
@@ -2196,7 +1922,7 @@ ${createLocalNotes || '<empty>'}
               </div>
             )
           )}
-          {activePrimaryTab === 'builder' && (
+          {activeSection !== 'profile-settings' && (
             createMode ? (
               <section className="space-y-4">
                 <div className="rounded-lg border p-3 space-y-2" style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}>
@@ -2321,7 +2047,7 @@ ${createLocalNotes || '<empty>'}
                       (createKind === 'subagent' && !(scope.agentId || selectedNode?.level === 'agent' || selectedNode?.level === 'subagent'))
                     }
                   />
-                  <button type="button" onClick={() => navigate('/agents-builder')} style={{ ...inputStyle(), width: 'auto', cursor: 'pointer' }}>
+                  <button type="button" onClick={() => navigate(buildCancelCreateHref(entityType, { parentAgencyId: resolvedParentAgencyId, parentDepartmentId: resolvedParentDepartmentId, parentWorkspaceId: resolvedParentWorkspaceId, parentAgentId: resolvedParentAgentId }))} style={{ ...inputStyle(), width: 'auto', cursor: 'pointer' }}>
                     Cancel
                   </button>
                 </div>

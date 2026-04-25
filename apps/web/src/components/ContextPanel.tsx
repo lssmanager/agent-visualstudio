@@ -5,7 +5,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { type HierarchyLevel, type HierarchyNode, useHierarchy } from '../lib/HierarchyContext';
 import { saveAgent, updateWorkspace } from '../lib/api';
 import type { AgencyBuilderTab, AgentSpec, WorkspaceSpec } from '../lib/types';
-import { buildStudioHref, parseBuilderTab } from '../lib/studioRouting';
+import { buildEditNodeHref, buildStudioHref, parseBuilderTab } from '../lib/studioRouting';
 
 const LEVEL_LABEL: Record<HierarchyLevel, string> = {
   agency: 'Agency',
@@ -309,7 +309,7 @@ export function ContextPanel({ onNavigate }: { onNavigate?: () => void }) {
               onOpenProfile={(key) => {
                 const node = tree.nodes[key];
                 if (!node) return;
-                go(buildStudioHref({ surface: 'agency-builder', tab: 'profile', nodeKey: node.key }));
+                go(buildEditNodeHref(node.level, node.id));
               }}
               onCreate={(key) => {
                 const href = createAgentRouteForNode(key, tree.nodes);

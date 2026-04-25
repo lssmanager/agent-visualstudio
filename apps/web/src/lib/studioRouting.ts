@@ -110,3 +110,46 @@ export function parseBuilderTab(search: string): AgencyBuilderTab | null {
   return null;
 }
 
+// URL para editar un nodo existente
+export function buildEditNodeHref(level: string, id: string, section = 'identity'): string {
+  const params = new URLSearchParams({ node: `${level}:${id}`, section });
+  return `/agents-builder?${params.toString()}`;
+}
+
+// URL para crear un hijo de un nodo
+export function buildCreateChildHref(options: {
+  type: string;
+  parentAgencyId?: string;
+  parentDepartmentId?: string;
+  parentWorkspaceId?: string;
+  parentAgentId?: string;
+}): string {
+  const params = new URLSearchParams({ mode: 'create', type: options.type, section: 'identity' });
+  if (options.parentAgencyId)     params.set('parentAgencyId', options.parentAgencyId);
+  if (options.parentDepartmentId) params.set('parentDepartmentId', options.parentDepartmentId);
+  if (options.parentWorkspaceId)  params.set('parentWorkspaceId', options.parentWorkspaceId);
+  if (options.parentAgentId)      params.set('parentAgentId', options.parentAgentId);
+  return `/agents-builder?${params.toString()}`;
+}
+
+// URL de Cancel (regresa al nodo padre según el tipo creado)
+export function buildCancelCreateHref(
+  type: string,
+  parentIds: {
+    parentAgencyId?: string | null;
+    parentDepartmentId?: string | null;
+    parentWorkspaceId?: string | null;
+    parentAgentId?: string | null;
+  }
+): string {
+  if (type === 'subagent' && parentIds.parentAgentId)
+    return buildEditNodeHref('agent', parentIds.parentAgentId);
+  if (type === 'agent' && parentIds.parentWorkspaceId)
+    return buildEditNodeHref('workspace', parentIds.parentWorkspaceId);
+  if (type === 'workspace' && parentIds.parentDepartmentId)
+    return buildEditNodeHref('department', parentIds.parentDepartmentId);
+  if (type === 'department' && parentIds.parentAgencyId)
+    return buildEditNodeHref('agency', parentIds.parentAgencyId);
+  return '/agents-builder';
+}
+
