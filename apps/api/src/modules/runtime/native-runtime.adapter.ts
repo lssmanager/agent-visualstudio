@@ -63,7 +63,7 @@ export class NativeRuntimeAdapter implements RuntimeAdapter {
 
   async getCapabilities(): Promise<RuntimeCapabilityMatrix> {
     return {
-      source: 'unknown',
+      source: 'status_inference',
       topology: {
         connect: true,
         disconnect: true,

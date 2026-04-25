@@ -63,7 +63,7 @@ export class N8nWorkflowService {
       default: {
         return {
           ok: false,
-          message: `Unknown target type: ${String((payload.target as { type: string }).type)}`,
+          message: `Unknown target type: ${String(target.type)}`,
         };
       }
     }

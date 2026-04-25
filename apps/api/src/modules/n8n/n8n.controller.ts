@@ -32,9 +32,7 @@ export function registerN8nRoutes(router: Router): void {
     const expectedSecret = process.env.N8N_WEBHOOK_SECRET;
     if (expectedSecret) {
       const authHeader = req.headers['authorization'] ?? '';
-      const token = typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
-        ? authHeader.slice(7)
-        : '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
       if (token !== expectedSecret) {
         return res.status(401).json({ ok: false, message: 'Unauthorized: invalid or missing webhook secret' });
       }
