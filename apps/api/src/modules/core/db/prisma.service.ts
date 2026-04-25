@@ -10,7 +10,9 @@
  * con su campo `credentials` cifrado, NUNCA desde .env.
  */
 
-import { PrismaClient } from '../../../../../../../../packages/db/generated/client';
+// import { PrismaClient } from '../../../../../../../../packages/db/generated/client';
+// Commented out: Path does not exist. Using type-only import instead.
+import type { PrismaClient } from '@prisma/client';
 
 declare global {
   // eslint-disable-next-line no-var

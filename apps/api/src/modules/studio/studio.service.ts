@@ -33,18 +33,22 @@ export class StudioService {
   ) {}
 
   async getState(): Promise<LegacyStudioStateDto> {
-    const [runtimeSnapshot, profiles, compile] = await Promise.all([
+    const [runtimeSnapshot, profiles, compile, agents, skills, flows, policies] = await Promise.all([
       this.runtimeAdapter.getRuntimeSnapshot(),
       this.profiles.getAll(),
       this.compiler.compileCurrent(),
+      this.agents.findAll(),
+      this.skills.findAll(),
+      this.flows.findAll(),
+      this.policies.findAll(),
     ]);
 
     return {
       workspace: this.workspaces.getCurrent(),
-      agents: await this.agents.findAll(),
-      skills: await this.skills.findAll(),
-      flows: await this.flows.findAll(),
-      policies: await this.policies.findAll(),
+      agents,
+      skills,
+      flows,
+      policies,
       profiles,
       compile,
       runtime: {

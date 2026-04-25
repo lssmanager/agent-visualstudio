@@ -9,7 +9,9 @@
 
 import type { RunSpec, RunStep } from '../../../../../packages/core-types/src';
 import { prisma } from '../core/db/prisma.service';
-import type { Prisma } from '../../../../../../../../packages/db/generated/client';
+// import type { Prisma } from '../../../../../../../../packages/db/generated/client';
+// Commented out: Path does not exist. Using type-only import from @prisma/client instead.
+import type { Prisma } from '@prisma/client';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 

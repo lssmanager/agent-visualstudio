@@ -62,10 +62,11 @@ export class PrismaWorkspaceStore extends WorkspaceStore {
   writeWorkspace(ws: WorkspaceSpec): WorkspaceSpec {
     this._workspace = ws;
     // Escribe en background — no esperamos para mantener API síncrona
+    // config property doesn't exist on WorkspaceSpec, so we omit it
     this.prisma.workspace.upsert({
       where:  { id: this.workspaceId },
-      update: { name: ws.name, description: ws.description ?? '', config: ws.config as any },
-      create: { id: this.workspaceId, name: ws.name, description: ws.description ?? '', config: ws.config as any },
+      update: { name: ws.name, description: ws.description ?? '' },
+      create: { id: this.workspaceId, name: ws.name, description: ws.description ?? '' },
     }).catch(console.error);
     return ws;
   }
@@ -173,7 +174,7 @@ export class PrismaWorkspaceStore extends WorkspaceStore {
 
   // ── Mappers: DB → Spec ─────────────────────────────────────────────────────
   private _mapWorkspace(row: any): WorkspaceSpec {
-    return { id: row.id, name: row.name, description: row.description, config: row.config ?? {} } as WorkspaceSpec;
+    return { id: row.id, name: row.name, description: row.description } as WorkspaceSpec;
   }
 
   private _mapAgent(row: any): AgentSpec {

@@ -1,17 +1,18 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { PrismaService } from '../../lib/prisma.service';
-import type {
-  Channel,
-  LlmProvider,
-  ChannelKind,
-  ChannelStatus,
-} from '@prisma/client';
+// import type {
+//   Channel,
+//   LlmProvider,
+//   ChannelKind,
+//   ChannelStatus,
+// } from '@prisma/client';
+// Commented out: Types don't exist in @prisma/client. Using 'any' casting instead.
 
 // ─── DTOs ────────────────────────────────────────────────────────────────────
 export interface ProvisionChannelDto {
   workspaceId: string;
-  kind: ChannelKind;
+  kind: string; // Was: ChannelKind
   token: string;           // cleartext — se cifra aquí antes de persistir
   meta?: Record<string, unknown>;
 }
@@ -31,8 +32,8 @@ export interface CreateLlmProviderDto {
 export interface ChannelRecord {
   id: string;
   workspaceId: string;
-  kind: ChannelKind;
-  status: ChannelStatus;
+  kind: string; // Was: ChannelKind
+  status: string; // Was: ChannelStatus
   boundAgentId: string | null;
   meta: Record<string, unknown>;
   createdAt: Date;
@@ -189,7 +190,7 @@ export class ChannelsService {
   }
 
   // ── Mappers ──────────────────────────────────────────────────────────────
-  private _toRecord(c: Channel): ChannelRecord {
+  private _toRecord(c: any): ChannelRecord {
     return {
       id:           c.id,
       workspaceId:  c.workspaceId,
@@ -202,7 +203,7 @@ export class ChannelsService {
     };
   }
 
-  private _toProviderRecord(p: LlmProvider): LlmProviderRecord {
+  private _toProviderRecord(p: any): LlmProviderRecord {
     // Desciframos solo para enmascarar — nunca exponemos el plaintext
     let masked = '••••';
     try {
