@@ -5,8 +5,8 @@ import { AgentsService } from './agents.service';
 export function registerAgentsRoutes(router: Router) {
   const service = new AgentsService();
 
-  router.get('/agents', (req, res) => {
-    let agents = service.findAll();
+  router.get('/agents', async (req, res) => {
+    let agents = await service.findAll();
     const kind = req.query.kind as string | undefined;
     if (kind) {
       agents = agents.filter((a) => (a.kind ?? 'agent') === kind);
@@ -14,25 +14,25 @@ export function registerAgentsRoutes(router: Router) {
     res.json(agents);
   });
 
-  router.get('/agents/:id', (req, res) => {
-    const item = service.findById(req.params.id);
+  router.get('/agents/:id', async (req, res) => {
+    const item = await service.findById(req.params.id);
     if (!item) {
       return res.status(404).json({ ok: false, error: 'Agent not found' });
     }
     return res.json(item);
   });
 
-  router.post('/agents', (req, res) => {
+  router.post('/agents', async (req, res) => {
     try {
-      res.status(201).json(service.create(req.body));
+      res.status(201).json(await service.create(req.body));
     } catch (error) {
       res.status(422).json({ ok: false, error: (error as Error).message });
     }
   });
 
-  router.put('/agents/:id', (req, res) => {
+  router.put('/agents/:id', async (req, res) => {
     try {
-      const updated = service.update(req.params.id, req.body);
+      const updated = await service.update(req.params.id, req.body);
       if (!updated) {
         return res.status(404).json({ ok: false, error: 'Agent not found' });
       }
@@ -42,8 +42,8 @@ export function registerAgentsRoutes(router: Router) {
     }
   });
 
-  router.delete('/agents/:id', (req, res) => {
-    const removed = service.remove(req.params.id);
+  router.delete('/agents/:id', async (req, res) => {
+    const removed = await service.remove(req.params.id);
     if (!removed) {
       return res.status(404).json({ ok: false, error: 'Agent not found' });
     }

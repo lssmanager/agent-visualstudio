@@ -6,28 +6,28 @@ import { AgentsRepository } from './agents.repository';
 export class AgentsService {
   private readonly repository = new AgentsRepository();
 
-  findAll() {
-    return this.repository.list();
+  async findAll() {
+    return await this.repository.list();
   }
 
-  findById(id: string) {
-    return this.repository.findById(id);
+  async findById(id: string) {
+    return await this.repository.findById(id);
   }
 
-  create(agent: AgentSpec) {
+  async create(agent: AgentSpec) {
     const parsed = agentSpecSchema.parse(agent) as AgentSpec;
-    const agents = this.repository.list();
+    const agents = await this.repository.list();
 
     if (agents.some((item) => item.id === parsed.id)) {
       throw new Error(`Agent already exists: ${parsed.id}`);
     }
 
-    this.repository.saveAll([...agents, parsed]);
+    await this.repository.saveAll([...agents, parsed]);
     return parsed;
   }
 
-  update(id: string, updates: Partial<AgentSpec>) {
-    const agents = this.repository.list();
+  async update(id: string, updates: Partial<AgentSpec>) {
+    const agents = await this.repository.list();
     const index = agents.findIndex((agent) => agent.id === id);
     if (index < 0) {
       return null;
@@ -35,17 +35,17 @@ export class AgentsService {
 
     const parsed = agentSpecSchema.parse({ ...agents[index], ...updates, id }) as AgentSpec;
     agents[index] = parsed;
-    this.repository.saveAll(agents);
+    await this.repository.saveAll(agents);
     return parsed;
   }
 
-  remove(id: string) {
-    const agents = this.repository.list();
+  async remove(id: string) {
+    const agents = await this.repository.list();
     const next = agents.filter((item) => item.id !== id);
     if (next.length === agents.length) {
       return false;
     }
-    this.repository.saveAll(next);
+    await this.repository.saveAll(next);
     return true;
   }
 }

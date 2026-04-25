@@ -23,11 +23,11 @@ export class WorkspacesCompiler {
 
     return compileOpenClawWorkspace({
       workspace,
-      agents: this.agentsRepo.list(),
-      skills: this.skillsRepo.list(),
-      flows: this.flowsRepo.list(),
+      agents: await this.agentsRepo.list(),
+      skills: await this.skillsRepo.list(),
+      flows: await this.flowsRepo.list(),
       profiles: await this.profilesService.getAll(),
-      policies: this.policiesRepo.list(),
+      policies: await this.policiesRepo.list(),
     });
   }
 }
