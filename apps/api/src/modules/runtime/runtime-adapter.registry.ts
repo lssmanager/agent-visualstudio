@@ -1,20 +1,39 @@
+/**
+ * runtime-adapter.registry.ts — Registro de RuntimeAdapters
+ *
+ * Cuando NATIVE_RUNTIME=true, registra NativeRuntimeAdapter como default.
+ * Mantiene OpenClawRuntimeAdapter como fallback para transición.
+ */
+
 import { RuntimeAdapter } from './runtime-adapter.interface';
 import { OpenClawRuntimeAdapter } from './adapters/openclaw-runtime.adapter';
+import { NativeRuntimeAdapter } from './adapters/native-runtime.adapter';
 
 export class RuntimeAdapterRegistry {
   private readonly adapters = new Map<string, RuntimeAdapter>();
   private activeAdapterName: string;
 
   constructor(defaultAdapter?: RuntimeAdapter) {
+    // Registrar siempre ambos adaptadores
+    const openClawAdapter = new OpenClawRuntimeAdapter();
+    const nativeAdapter = new NativeRuntimeAdapter();
+    this.register(openClawAdapter);
+    this.register(nativeAdapter);
+
     if (defaultAdapter) {
       this.register(defaultAdapter);
       this.activeAdapterName = defaultAdapter.name;
       return;
     }
 
-    const openClawAdapter = new OpenClawRuntimeAdapter();
-    this.register(openClawAdapter);
-    this.activeAdapterName = openClawAdapter.name;
+    // Seleccionar adaptador activo según env
+    if (process.env.NATIVE_RUNTIME === 'true') {
+      this.activeAdapterName = nativeAdapter.name;
+      console.info('[RuntimeAdapterRegistry] Using NativeRuntimeAdapter (NATIVE_RUNTIME=true)');
+    } else {
+      this.activeAdapterName = openClawAdapter.name;
+      console.info('[RuntimeAdapterRegistry] Using OpenClawRuntimeAdapter (NATIVE_RUNTIME not set)');
+    }
   }
 
   register(adapter: RuntimeAdapter): void {
