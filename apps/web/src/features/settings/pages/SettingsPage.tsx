@@ -6,8 +6,10 @@ import { useStudioState } from '../../../lib/StudioStateContext';
 import { BudgetPanel } from '../components/BudgetPanel';
 import { AuditLogPanel } from '../components/AuditLogPanel';
 import { McpRegistryPanel } from '../components/McpRegistryPanel';
+import { ChannelsSettingsTab } from '../components/ChannelsSettingsTab';
+import { LlmProvidersTab } from '../components/LlmProvidersTab';
 
-const TABS = ['General', 'Budgets', 'Audit', 'MCP'] as const;
+const TABS = ['General', 'Budgets', 'Audit', 'MCP', 'Channels', 'LLM Keys'] as const;
 type Tab = typeof TABS[number];
 
 export default function SettingsPage() {
@@ -26,9 +28,7 @@ export default function SettingsPage() {
             key={tab}
             onClick={() => setActiveTab(tab)}
             className="px-4 py-2 text-sm font-medium transition-colors relative"
-            style={{
-              color: activeTab === tab ? 'var(--color-primary)' : 'var(--text-muted)',
-            }}
+            style={{ color: activeTab === tab ? 'var(--color-primary)' : 'var(--text-muted)' }}
           >
             {tab}
             {activeTab === tab && (
@@ -67,34 +67,27 @@ export default function SettingsPage() {
                   <span className="font-medium" style={{ color: 'var(--text-muted)' }}>ID</span>
                   <p className="font-mono" style={{ color: 'var(--text-primary)' }}>{workspace.id}</p>
                 </div>
-                <div>
-                  <span className="font-medium" style={{ color: 'var(--text-muted)' }}>Agents</span>
-                  <p style={{ color: 'var(--text-primary)' }}>{state.agents.length}</p>
-                </div>
-                <div>
-                  <span className="font-medium" style={{ color: 'var(--text-muted)' }}>Flows</span>
-                  <p style={{ color: 'var(--text-primary)' }}>{state.flows.length}</p>
-                </div>
-                <div>
-                  <span className="font-medium" style={{ color: 'var(--text-muted)' }}>Skills</span>
-                  <p style={{ color: 'var(--text-primary)' }}>{state.skills.length}</p>
-                </div>
-                <div>
-                  <span className="font-medium" style={{ color: 'var(--text-muted)' }}>Runtime</span>
-                  <p style={{ color: state.runtime?.health?.ok ? '#059669' : '#dc2626' }}>
-                    {state.runtime?.health?.ok ? 'Online' : 'Offline'}
-                  </p>
-                </div>
               </div>
             ) : (
-              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>No workspace loaded.</p>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>No workspace selected.</p>
             )}
           </div>
         )}
-
         {activeTab === 'Budgets' && <BudgetPanel />}
-        {activeTab === 'Audit' && <AuditLogPanel />}
-        {activeTab === 'MCP' && <McpRegistryPanel />}
+        {activeTab === 'Audit'   && <AuditLogPanel />}
+        {activeTab === 'MCP'     && <McpRegistryPanel />}
+        {activeTab === 'Channels' && workspace && (
+          <ChannelsSettingsTab
+            workspaceId={workspace.id}
+            agents={state.agents}
+          />
+        )}
+        {activeTab === 'LLM Keys' && workspace && (
+          <LlmProvidersTab workspaceId={workspace.id} />
+        )}
+        {(activeTab === 'Channels' || activeTab === 'LLM Keys') && !workspace && (
+          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Select a workspace first.</p>
+        )}
       </div>
     </div>
   );
