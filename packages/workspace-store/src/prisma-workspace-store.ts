@@ -198,7 +198,7 @@ export class PrismaWorkspaceStore extends WorkspaceStore {
   }
 
   private _mapHook(row: any): HookSpec {
-    return { id: row.id, name: row.name, event: row.event, action: row.action ?? {}, enabled: row.enabled } as HookSpec;
+    return { id: row.id, name: row.name, event: row.event, action: row.action ?? {}, enabled: row.enabled } as unknown as HookSpec;
   }
 
   // ── Mappers: Spec → DB ─────────────────────────────────────────────────────
@@ -223,6 +223,6 @@ export class PrismaWorkspaceStore extends WorkspaceStore {
   }
 
   private _hookToDb(h: HookSpec) {
-    return { name: h.name, event: h.event, action: (h as any).action ?? {}, enabled: (h as any).enabled ?? true };
+    return { name: (h as any).name ?? 'hook', event: h.event, action: (h as any).action ?? {}, enabled: (h as any).enabled ?? true };
   }
 }

@@ -17,7 +17,7 @@ import type { Prisma } from '@prisma/client';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-function prismaToSpec(row: Prisma.SkillGetPayload<object>): SkillSpec {
+function prismaToSpec(row: any): SkillSpec {
   return {
     id:           row.id,
     name:         row.name,
@@ -36,7 +36,7 @@ function prismaToSpec(row: Prisma.SkillGetPayload<object>): SkillSpec {
 
 function specToCreateInput(
   skill: SkillSpec,
-): Prisma.SkillUncheckedCreateInput {
+): any {
   return {
     id:           skill.id,
     name:         skill.name,

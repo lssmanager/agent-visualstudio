@@ -123,7 +123,7 @@ export class ChannelsService {
       where:   { workspaceId },
       orderBy: { createdAt: 'desc' },
     });
-    return channels.map((c) => this._toRecord(c));
+    return channels.map((c: any) => this._toRecord(c));
   }
 
   async delete(channelId: string): Promise<void> {
@@ -162,7 +162,7 @@ export class ChannelsService {
       where:   { workspaceId },
       orderBy: { createdAt: 'asc' },
     });
-    return provs.map((p) => this._toProviderRecord(p));
+    return provs.map((p: any) => this._toProviderRecord(p));
   }
 
   async deleteProvider(providerId: string): Promise<void> {

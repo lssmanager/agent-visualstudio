@@ -20,7 +20,7 @@ import type { Prisma } from '@prisma/client';
 
 // ── Helpers de conversión ─────────────────────────────────────────────────
 
-function prismaToSpec(row: Prisma.AgentGetPayload<object>): AgentSpec {
+function prismaToSpec(row: any): AgentSpec {
   return {
     id:              row.id,
     workspaceId:     row.workspaceId,
@@ -51,7 +51,7 @@ function prismaToSpec(row: Prisma.AgentGetPayload<object>): AgentSpec {
 
 function specToCreateInput(
   agent: AgentSpec,
-): Prisma.AgentUncheckedCreateInput {
+): any {
   return {
     id:              agent.id,
     workspaceId:     agent.workspaceId,

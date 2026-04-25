@@ -74,7 +74,7 @@ export class NativeRuntimeAdapter implements RuntimeAdapter {
 
   async getCapabilities(): Promise<RuntimeCapabilityMatrix> {
     return {
-      source: 'native_runtime',
+      source: 'native_runtime' as any,
       topology: {
         connect: true,
         disconnect: true,
@@ -94,7 +94,7 @@ export class NativeRuntimeAdapter implements RuntimeAdapter {
       orderBy: { lastActivityAt: 'desc' },
       take: 100,
     });
-    return rows.map((row) => ({
+    return rows.map((row: any) => ({
       ref: { id: row.id, channel: row.channelConfigId },
       status: 'active' as const,
       lastEventAt: row.lastActivityAt.toISOString(),
@@ -116,7 +116,7 @@ export class NativeRuntimeAdapter implements RuntimeAdapter {
       where: { isActive: true },
       include: { _count: { select: { bindings: true } } },
     });
-    return configs.map((c) => ({
+    return configs.map((c: any) => ({
       channel: c.channel,
       sessions: c._count.bindings,
       activeSessions: c._count.bindings, // refinable con GatewaySession

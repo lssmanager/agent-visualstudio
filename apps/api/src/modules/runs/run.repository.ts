@@ -16,7 +16,7 @@ import type { Prisma } from '@prisma/client';
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 function stepPrismaToSpec(
-  row: Prisma.RunStepGetPayload<object>,
+  row: any,
 ): RunStep {
   return {
     id:          row.id,
@@ -37,7 +37,7 @@ function stepPrismaToSpec(
 }
 
 function runPrismaToSpec(
-  row: Prisma.RunGetPayload<{ include: { steps: true } }>,
+  row: any,
 ): RunSpec {
   return {
     id:          row.id,

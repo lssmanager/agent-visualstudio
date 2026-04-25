@@ -11,8 +11,8 @@
  */
 
 // import { PrismaClient } from '../../../../../../../../packages/db/generated/client';
-// Commented out: Path does not exist. Using type-only import instead.
-import type { PrismaClient } from '@prisma/client';
+// Commented out: Path does not exist. Using import instead.
+import { PrismaClient } from '@prisma/client';
 
 declare global {
   // eslint-disable-next-line no-var

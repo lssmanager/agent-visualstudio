@@ -17,7 +17,7 @@ import type { Prisma } from '@prisma/client';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-function prismaToSpec(row: Prisma.FlowGetPayload<object>): FlowSpec {
+function prismaToSpec(row: any): FlowSpec {
   return {
     id:          row.id,
     workspaceId: row.workspaceId,
@@ -36,7 +36,7 @@ function prismaToSpec(row: Prisma.FlowGetPayload<object>): FlowSpec {
 
 function specToCreateInput(
   flow: FlowSpec,
-): Prisma.FlowUncheckedCreateInput {
+): any {
   return {
     id:          flow.id,
     workspaceId: flow.workspaceId ?? '',

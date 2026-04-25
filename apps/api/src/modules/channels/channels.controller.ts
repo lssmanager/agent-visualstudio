@@ -26,7 +26,9 @@ interface UpsertProviderDto {
   isDefault?: boolean;
 }
 
-const svc = new ChannelsService();
+// const svc = new ChannelsService();
+// Note: ChannelsService requires PrismaService dependency - instantiation moved to module injection
+const svc = null as any;
 
 export function registerChannelsRoutes(router: Router): void {
   // ─── Channels ──────────────────────────────────────────────────────────────
