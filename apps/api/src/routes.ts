@@ -25,6 +25,8 @@ import { registerTopologyRoutes } from './modules/topology/topology.controller';
 import { registerCorefilesRoutes } from './modules/corefiles/corefiles.controller';
 import { registerBuilderAgentRoutes } from './modules/builder-agent/builder-agent.controller';
 import { registerRuntimeInspectionRoutes } from './modules/runtime/runtime-inspection.controller';
+// ── Sprint: Async runtime, queues & SSE streaming ─────────────────────────
+import { registerRunsStreamRoutes } from './modules/runtime/runs-stream.controller';
 
 export function registerRoutes(app: Express) {
   const router = Router();
@@ -57,6 +59,8 @@ export function registerRoutes(app: Express) {
   registerCorefilesRoutes(router);
   registerBuilderAgentRoutes(router);
   registerRuntimeInspectionRoutes(router);
+  // SSE streaming + async queue routes (must come after registerRunsRoutes)
+  registerRunsStreamRoutes(router);
 
   app.use(studioConfig.apiPrefix, router);
 }
