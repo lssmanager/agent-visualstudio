@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   getAgentReadiness,
@@ -30,7 +30,8 @@ type SectionKey =
   | 'routing-channels'
   | 'hooks'
   | 'versions'
-  | 'operations';
+  | 'operations'
+  | 'readiness';
 
 const SECTION_LABEL: Record<SectionKey, string> = {
   identity: 'Identity',
@@ -41,6 +42,7 @@ const SECTION_LABEL: Record<SectionKey, string> = {
   hooks: 'Hooks',
   versions: 'Versions',
   operations: 'Operations',
+  readiness: 'Readiness',
 };
 
 interface AgentEditorFormProps {
@@ -235,6 +237,8 @@ export function AgentEditorForm({ workspaceId, agent, onSaved, onError, agents =
   const [persistedAgentId, setPersistedAgentId] = useState<string | null>(agent?.id ?? null);
   const [remoteReadiness, setRemoteReadiness] = useState<{ state: AgentReadinessState; score: number; checks: Record<string, boolean>; missingFields: string[] } | null>(null);
   const [publishBusy, setPublishBusy] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const localReadiness = computeReadiness(draft);
   const readinessView = remoteReadiness ?? {
@@ -243,6 +247,12 @@ export function AgentEditorForm({ workspaceId, agent, onSaved, onError, agents =
     checks: localReadiness.checks,
     missingFields: [],
   };
+
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -321,6 +331,46 @@ export function AgentEditorForm({ workspaceId, agent, onSaved, onError, agents =
 
   const publishEnabled = readinessView.state === 'ready_to_publish' && Boolean(persistedAgentId);
 
+  const handlePublish = () => {
+    if (!persistedAgentId || readinessView.state !== 'ready_to_publish') return;
+    void (async () => {
+      setPublishBusy(true);
+      try {
+        await publishVersion(`agent-${persistedAgentId}-publish`, 'Published from Agent Builder readiness gate');
+      } catch (err) {
+        onError?.(err instanceof Error ? err : new Error(String(err)));
+      } finally {
+        setPublishBusy(false);
+      }
+    })();
+  };
+
+  const switchSection = (key: SectionKey) => {
+    setActiveSection(key);
+    const hasContent = persistedAgentId || draft.identity?.name?.trim() || draft.name?.trim();
+    if (!hasContent) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    setAutoSaveStatus('saving');
+    void saveAgent(draft)
+      .then((saved) => {
+        setPersistedAgentId(saved.id);
+        setDraft(saved);
+        onSaved(saved);
+        setAutoSaveStatus('saved');
+        autoSaveTimerRef.current = setTimeout(() => setAutoSaveStatus('idle'), 2000);
+      })
+      .catch(() => setAutoSaveStatus('idle'));
+  };
+
+  const scoreColor =
+    readinessView.score === 100
+      ? 'var(--tone-success-text, #16a34a)'
+      : readinessView.score >= 60
+        ? 'var(--color-primary)'
+        : '#f59e0b';
+
+  const isReadinessTab = activeSection === 'readiness';
+
   return (
     <>
       <AgentBootstrapModal
@@ -355,7 +405,7 @@ export function AgentEditorForm({ workspaceId, agent, onSaved, onError, agents =
       />
 
       <form
-        className="grid grid-cols-1 xl:grid-cols-[220px_minmax(0,1fr)_280px] gap-4"
+        className={`grid gap-4 grid-cols-1 ${isReadinessTab ? 'xl:grid-cols-[220px_minmax(0,1fr)]' : 'xl:grid-cols-[220px_minmax(0,1fr)_280px]'}`}
         onSubmit={(event) => {
           event.preventDefault();
           void (async () => {
@@ -370,25 +420,54 @@ export function AgentEditorForm({ workspaceId, agent, onSaved, onError, agents =
           })();
         }}
       >
-        <div className="xl:col-span-3 rounded-md border px-3 py-2 flex items-center justify-between">
-          <p className="text-sm font-semibold">Agent Builder</p>
-          <span className="rounded-full border px-2 py-1 text-xs uppercase tracking-wide">
-            {readinessView.state}
-          </span>
+        {/* Header bar — spans full width */}
+        <div className="xl:col-span-3 rounded-md border px-3 py-2 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold">Agent Builder</p>
+            <div className="flex items-center gap-2">
+              {autoSaveStatus === 'saving' && (
+                <span className="text-xs opacity-60">Saving…</span>
+              )}
+              {autoSaveStatus === 'saved' && (
+                <span className="text-xs font-medium" style={{ color: 'var(--tone-success-text, #16a34a)' }}>Saved</span>
+              )}
+              <span className="rounded-full border px-2 py-0.5 text-[11px] uppercase tracking-wide opacity-70">
+                {readinessView.state.replace(/_/g, ' ')}
+              </span>
+              <span
+                className="rounded-full px-2 py-0.5 text-xs font-bold"
+                style={{
+                  background: readinessView.score === 100 ? 'rgba(22,163,74,0.12)' : 'var(--bg-tertiary)',
+                  color: scoreColor,
+                }}
+              >
+                {readinessView.score}%
+              </span>
+            </div>
+          </div>
+          {/* Readiness progress bar */}
+          <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
+            <div
+              className="h-full rounded-full transition-all duration-500"
+              style={{ width: `${readinessView.score}%`, background: scoreColor }}
+            />
+          </div>
         </div>
 
-        <aside className="rounded-md border overflow-hidden">
-          <div className="px-3 py-2 text-xs font-semibold uppercase opacity-80 border-b">Builder sections</div>
+        {/* Section nav sidebar */}
+        <aside className="rounded-md border overflow-hidden self-start">
+          <div className="px-3 py-2 text-xs font-semibold uppercase opacity-70 border-b">Builder sections</div>
           <nav className="py-1">
             {(Object.keys(SECTION_LABEL) as SectionKey[]).map((key) => (
               <button
                 key={key}
                 type="button"
-                onClick={() => setActiveSection(key)}
+                onClick={() => switchSection(key)}
                 className="w-full text-left px-3 py-2 text-sm"
                 style={{
                   background: activeSection === key ? 'var(--color-primary-soft)' : 'transparent',
                   color: activeSection === key ? 'var(--color-primary)' : 'var(--text-muted)',
+                  fontWeight: activeSection === key ? 600 : 400,
                 }}
               >
                 {SECTION_LABEL[key]}
@@ -397,12 +476,17 @@ export function AgentEditorForm({ workspaceId, agent, onSaved, onError, agents =
           </nav>
         </aside>
 
-        <div className="space-y-4">
+        {/* Main content area */}
+        <div className="space-y-4 min-w-0">
           {activeSection === 'identity' && <AgentIdentitySection value={draft} onChange={setDraft} profileSource={profileSource} />}
           {activeSection === 'prompts-behavior' && <AgentBehaviorSection value={draft} onChange={setDraft} />}
           {activeSection === 'skills-tools' && (
             <AgentSkillsToolsSection
               data={skillsToolsData}
+              localNotes={draft.skillsTools?.localNotes ?? ''}
+              onNotesChange={(notes) =>
+                setDraft((prev) => ({ ...prev, skillsTools: { ...(prev.skillsTools ?? {}), localNotes: notes } }))
+              }
               onPatch={async (payload) => {
                 if (!draft.id) return;
                 await patchEditorSkillsTools({ level: 'agent', id: draft.id, ...payload });
@@ -414,6 +498,7 @@ export function AgentEditorForm({ workspaceId, agent, onSaved, onError, agents =
                     ...(prev.skillsTools ?? {}),
                     assignedSkills: data.effective.skills,
                     enabledTools: data.effective.tools,
+                    localNotes: prev.skillsTools?.localNotes ?? '',
                   },
                   skillRefs: data.effective.skills,
                 }));
@@ -425,37 +510,55 @@ export function AgentEditorForm({ workspaceId, agent, onSaved, onError, agents =
           {activeSection === 'hooks' && <AgentHooksSection value={draft} onChange={setDraft} />}
           {activeSection === 'versions' && <AgentVersionsSection agentId={draft.id} />}
           {activeSection === 'operations' && <AgentOperationsSection value={draft} onChange={setDraft} />}
+          {activeSection === 'readiness' && (
+            <AgentReadinessPanel
+              state={readinessView.state}
+              score={readinessView.score}
+              checks={readinessView.checks}
+              missingFields={readinessView.missingFields}
+              publishEnabled={publishEnabled}
+              publishing={publishBusy}
+              onPublish={handlePublish}
+              fullPage
+            />
+          )}
 
-          <button
-            type="submit"
-            className="rounded px-3 py-2 text-sm font-medium"
-            style={{ background: 'var(--btn-primary-bg)', color: 'var(--btn-primary-text)' }}
-          >
-            Save Agent
-          </button>
+          {/* Action buttons — shown on all tabs */}
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="submit"
+              className="rounded px-4 py-2 text-sm font-medium"
+              style={{ background: 'var(--btn-primary-bg)', color: 'var(--btn-primary-text)' }}
+            >
+              Save Changes
+            </button>
+            <button
+              type="button"
+              className="rounded px-4 py-2 text-sm font-medium disabled:opacity-50 transition-colors"
+              style={{
+                background: publishEnabled ? '#16a34a' : 'var(--bg-tertiary)',
+                color: publishEnabled ? '#fff' : 'var(--text-muted)',
+              }}
+              disabled={!publishEnabled || publishBusy}
+              onClick={handlePublish}
+            >
+              {publishBusy ? 'Publishing…' : 'Publish'}
+            </button>
+          </div>
         </div>
 
-        <AgentReadinessPanel
-          state={readinessView.state}
-          score={readinessView.score}
-          checks={readinessView.checks}
-          missingFields={readinessView.missingFields}
-          publishEnabled={publishEnabled}
-          publishing={publishBusy}
-          onPublish={() => {
-            if (!persistedAgentId || readinessView.state !== 'ready_to_publish') return;
-            void (async () => {
-              setPublishBusy(true);
-              try {
-                await publishVersion(`agent-${persistedAgentId}-publish`, 'Published from Agent Builder readiness gate');
-              } catch (err) {
-                onError?.(err instanceof Error ? err : new Error(String(err)));
-              } finally {
-                setPublishBusy(false);
-              }
-            })();
-          }}
-        />
+        {/* Right panel — compact readiness summary, hidden on readiness tab */}
+        {!isReadinessTab && (
+          <AgentReadinessPanel
+            state={readinessView.state}
+            score={readinessView.score}
+            checks={readinessView.checks}
+            missingFields={readinessView.missingFields}
+            publishEnabled={publishEnabled}
+            publishing={publishBusy}
+            onPublish={handlePublish}
+          />
+        )}
       </form>
     </>
   );

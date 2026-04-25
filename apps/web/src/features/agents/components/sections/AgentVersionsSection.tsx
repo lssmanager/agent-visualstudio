@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import {
   applyCoreFiles,
@@ -19,6 +19,7 @@ export function AgentVersionsSection({ agentId }: Props) {
   const [snapshots, setSnapshots] = useState<VersionSnapshot[]>([]);
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<string>('');
   const [diffPreview, setDiffPreview] = useState<string>('');
+  const [previewTab, setPreviewTab] = useState<string>('');
   const [busy, setBusy] = useState<string>('');
   const [error, setError] = useState<string>('');
 
@@ -36,9 +37,16 @@ export function AgentVersionsSection({ agentId }: Props) {
     })();
   }, [selectedSnapshotId]);
 
+  useEffect(() => {
+    if (generated?.artifacts?.[0]?.name && !previewTab) {
+      setPreviewTab(generated.artifacts[0].name);
+    }
+  }, [generated, previewTab]);
+
   const runGenerate = async () => {
     setBusy('generate');
     setError('');
+    setPreviewTab('');
     try {
       const result = await generateAgentCoreFiles(agentId);
       setGenerated(result);
@@ -91,19 +99,22 @@ export function AgentVersionsSection({ agentId }: Props) {
     }
   };
 
+  const selectedArtifact = generated?.artifacts.find((a) => a.name === previewTab);
+
   return (
     <section className="space-y-3">
       <h3 className="text-sm font-semibold">Versions</h3>
 
       <div className="grid grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)] gap-3">
+        {/* Left column — snapshots + actions */}
         <aside className="rounded-md border p-2 space-y-2">
-          <p className="text-xs font-semibold uppercase opacity-80">Snapshots</p>
+          <p className="text-xs font-semibold uppercase opacity-60">Snapshots</p>
           <select
-            className="w-full rounded-md border px-2 py-1 text-xs"
+            className="w-full rounded-md border px-2 py-1.5 text-xs"
             value={selectedSnapshotId}
             onChange={(e) => setSelectedSnapshotId(e.target.value)}
           >
-            <option value="">Current</option>
+            <option value="">Current (working)</option>
             {snapshots.map((snapshot) => (
               <option key={snapshot.id} value={snapshot.id}>
                 {snapshot.label ?? snapshot.id} · {new Date(snapshot.createdAt).toLocaleString()}
@@ -111,14 +122,42 @@ export function AgentVersionsSection({ agentId }: Props) {
             ))}
           </select>
 
-          <div className="flex flex-wrap gap-2">
-            <button type="button" className="rounded border px-2 py-1 text-xs" onClick={() => void runGenerate()} disabled={busy !== ''}>{busy === 'generate' ? 'Generating...' : 'Generate'}</button>
-            <button type="button" className="rounded border px-2 py-1 text-xs" onClick={() => void runDiff()} disabled={busy !== ''}>{busy === 'diff' ? 'Diff...' : 'Diff'}</button>
-            <button type="button" className="rounded border px-2 py-1 text-xs" onClick={() => void runApply()} disabled={busy !== '' || !generated}>Apply/Publish</button>
-            <button type="button" className="rounded border px-2 py-1 text-xs" onClick={() => void runRollback()} disabled={busy !== '' || !selectedSnapshotId}>Rollback</button>
+          <div className="flex flex-wrap gap-1.5">
             <button
               type="button"
-              className="rounded border px-2 py-1 text-xs"
+              className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+              onClick={() => void runGenerate()}
+              disabled={busy !== ''}
+            >
+              {busy === 'generate' ? 'Generating…' : 'Generate'}
+            </button>
+            <button
+              type="button"
+              className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+              onClick={() => void runDiff()}
+              disabled={busy !== ''}
+            >
+              {busy === 'diff' ? 'Diffing…' : 'Diff'}
+            </button>
+            <button
+              type="button"
+              className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+              onClick={() => void runApply()}
+              disabled={busy !== '' || !generated}
+            >
+              {busy === 'apply' ? 'Applying…' : 'Apply'}
+            </button>
+            <button
+              type="button"
+              className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+              onClick={() => void runRollback()}
+              disabled={busy !== '' || !selectedSnapshotId}
+            >
+              {busy === 'rollback' ? 'Rolling back…' : 'Rollback'}
+            </button>
+            <button
+              type="button"
+              className="rounded border px-2 py-1 text-xs disabled:opacity-50"
               onClick={() => {
                 if (!generated) return;
                 const blob = new Blob([JSON.stringify(generated.artifacts, null, 2)], { type: 'application/json' });
@@ -131,21 +170,63 @@ export function AgentVersionsSection({ agentId }: Props) {
               }}
               disabled={!generated}
             >
-              Export Core Files
+              Export
             </button>
           </div>
+
+          {error && (
+            <p className="text-xs rounded-md border p-1.5" style={{ color: 'var(--tone-danger-text, #dc2626)', background: 'rgba(239,68,68,0.08)' }}>
+              {error}
+            </p>
+          )}
         </aside>
 
-        <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase opacity-80">Generated Core Files Preview</p>
-          <pre className="text-xs overflow-auto rounded-md border p-2 max-h-64">{JSON.stringify(generated?.artifacts ?? [], null, 2)}</pre>
+        {/* Right column — file preview tabs + diff */}
+        <div className="space-y-3 min-w-0">
+          {/* Generated file tabs */}
+          {generated && (
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase opacity-60">Generated Core Files</p>
+              <div className="flex flex-wrap gap-0 border-b overflow-x-auto">
+                {generated.artifacts.map((art) => (
+                  <button
+                    key={art.name}
+                    type="button"
+                    className="px-2.5 py-1 text-xs whitespace-nowrap border-b-2 transition-colors"
+                    style={{
+                      borderBottomColor: previewTab === art.name ? 'var(--color-primary)' : 'transparent',
+                      color: previewTab === art.name ? 'var(--color-primary)' : 'var(--text-muted)',
+                      fontWeight: previewTab === art.name ? 600 : 400,
+                    }}
+                    onClick={() => setPreviewTab(art.name)}
+                  >
+                    {art.name}
+                  </button>
+                ))}
+              </div>
+              {selectedArtifact && (
+                <pre className="text-xs overflow-auto rounded-md border p-2 max-h-64 font-mono">
+                  {selectedArtifact.content}
+                </pre>
+              )}
+            </div>
+          )}
 
-          <p className="text-xs font-semibold uppercase opacity-80">Diff vs Deployed/Selected</p>
-          <pre className="text-xs overflow-auto rounded-md border p-2 max-h-64">{diffPreview || 'Run Diff to preview changes'}</pre>
+          {!generated && (
+            <div className="rounded-md border p-3 text-xs opacity-50">
+              Click Generate to preview core files for this agent.
+            </div>
+          )}
+
+          {/* Diff view */}
+          {diffPreview && (
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase opacity-60">Diff vs Deployed / Selected</p>
+              <pre className="text-xs overflow-auto rounded-md border p-2 max-h-64 font-mono">{diffPreview}</pre>
+            </div>
+          )}
         </div>
       </div>
-
-      {error ? <p className="text-xs" style={{ color: 'var(--tone-danger-text)' }}>{error}</p> : null}
     </section>
   );
 }

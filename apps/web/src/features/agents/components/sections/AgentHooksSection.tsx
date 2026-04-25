@@ -23,58 +23,146 @@ export function AgentHooksSection({ value, onChange }: Props) {
   };
 
   const update = (patch: Partial<typeof hooks>) => onChange({ ...value, hooks: { ...hooks, ...patch } });
-  const updateHeartbeat = (patch: Partial<NonNullable<typeof hooks.heartbeat>>) => update({ heartbeat: { ...(hooks.heartbeat ?? { enabled: false, promptSource: 'disabled' }), ...patch } });
+  const updateHeartbeat = (patch: Partial<NonNullable<typeof hooks.heartbeat>>) =>
+    update({ heartbeat: { ...(hooks.heartbeat ?? { enabled: false, promptSource: 'disabled' }), ...patch } });
+
+  const heartbeat = hooks.heartbeat ?? { enabled: false, promptSource: 'disabled' };
 
   return (
-    <section className="space-y-3">
+    <section className="space-y-4">
       <h3 className="text-sm font-semibold">Hooks</h3>
 
-      <label className="inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={Boolean(hooks.heartbeat?.enabled)} onChange={(e) => updateHeartbeat({ enabled: e.target.checked })} /> Enable Heartbeat</label>
+      {/* Heartbeat */}
+      <div className="rounded-md border p-3 space-y-3">
+        <label className="inline-flex items-center gap-2 text-sm font-medium cursor-pointer">
+          <input
+            type="checkbox"
+            checked={Boolean(heartbeat.enabled)}
+            onChange={(e) => updateHeartbeat({ enabled: e.target.checked })}
+          />
+          Enable Heartbeat
+        </label>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-        <select className="rounded-md border px-3 py-2 text-sm" value={hooks.heartbeat?.promptSource ?? 'disabled'} onChange={(e) => updateHeartbeat({ promptSource: e.target.value as 'HEARTBEAT.md' | 'inline' | 'disabled' })}>
-          <option value="HEARTBEAT.md">HEARTBEAT.md file</option>
-          <option value="inline">inline config</option>
-          <option value="disabled">disabled</option>
-        </select>
-        <input className="rounded-md border px-3 py-2 text-sm" value={hooks.heartbeat?.quietHoursStart ?? ''} onChange={(e) => updateHeartbeat({ quietHoursStart: e.target.value })} placeholder="23:00" />
-        <input className="rounded-md border px-3 py-2 text-sm" value={hooks.heartbeat?.quietHoursEnd ?? ''} onChange={(e) => updateHeartbeat({ quietHoursEnd: e.target.value })} placeholder="08:00" />
+        {/* Prompt source — radio group */}
+        <div className="space-y-1">
+          <p className="text-xs font-semibold uppercase opacity-60">Prompt Source</p>
+          <div className="flex flex-wrap gap-4 text-sm">
+            {(['HEARTBEAT.md', 'inline', 'disabled'] as const).map((opt) => (
+              <label key={opt} className="inline-flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="radio"
+                  name={`promptSource-${value.id}`}
+                  value={opt}
+                  checked={heartbeat.promptSource === opt}
+                  onChange={() => updateHeartbeat({ promptSource: opt })}
+                />
+                <span>{opt}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Periodic checks */}
+        <div className="space-y-1">
+          <p className="text-xs font-semibold uppercase opacity-60">Periodic Checks</p>
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <label className="inline-flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={Boolean(heartbeat.checkEmail)}
+                onChange={(e) => updateHeartbeat({ checkEmail: e.target.checked })}
+              />
+              Email
+            </label>
+            <label className="inline-flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={Boolean(heartbeat.checkCalendar)}
+                onChange={(e) => updateHeartbeat({ checkCalendar: e.target.checked })}
+              />
+              Calendar
+            </label>
+            <label className="inline-flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={Boolean(heartbeat.checkWeather)}
+                onChange={(e) => updateHeartbeat({ checkWeather: e.target.checked })}
+              />
+              Weather
+            </label>
+            <label className="inline-flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={Boolean(heartbeat.checkMentions)}
+                onChange={(e) => updateHeartbeat({ checkMentions: e.target.checked })}
+              />
+              Mentions
+            </label>
+          </div>
+        </div>
+
+        {/* Quiet hours */}
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1">
+            <p className="text-xs opacity-60">Quiet hours start</p>
+            <input
+              type="time"
+              className="w-full rounded-md border px-3 py-1.5 text-sm"
+              value={heartbeat.quietHoursStart ?? '23:00'}
+              onChange={(e) => updateHeartbeat({ quietHoursStart: e.target.value })}
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs opacity-60">Quiet hours end</p>
+            <input
+              type="time"
+              className="w-full rounded-md border px-3 py-1.5 text-sm"
+              value={heartbeat.quietHoursEnd ?? '08:00'}
+              onChange={(e) => updateHeartbeat({ quietHoursEnd: e.target.value })}
+            />
+          </div>
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-        <label className="inline-flex items-center gap-2"><input type="checkbox" checked={Boolean(hooks.heartbeat?.checkEmail)} onChange={(e) => updateHeartbeat({ checkEmail: e.target.checked })} /> email</label>
-        <label className="inline-flex items-center gap-2"><input type="checkbox" checked={Boolean(hooks.heartbeat?.checkCalendar)} onChange={(e) => updateHeartbeat({ checkCalendar: e.target.checked })} /> calendar</label>
-        <label className="inline-flex items-center gap-2"><input type="checkbox" checked={Boolean(hooks.heartbeat?.checkWeather)} onChange={(e) => updateHeartbeat({ checkWeather: e.target.checked })} /> weather</label>
-        <label className="inline-flex items-center gap-2"><input type="checkbox" checked={Boolean(hooks.heartbeat?.checkMentions)} onChange={(e) => updateHeartbeat({ checkMentions: e.target.checked })} /> mentions</label>
+      {/* Proactive tasks */}
+      <div className="space-y-1">
+        <p className="text-xs font-semibold uppercase opacity-60">Proactive Tasks</p>
+        <p className="text-xs opacity-50">One task per line — what should this agent check periodically?</p>
+        <textarea
+          rows={4}
+          className="w-full rounded-md border px-3 py-2 text-sm"
+          value={(hooks.proactiveChecks ?? []).join('\n')}
+          onChange={(e) =>
+            update({ proactiveChecks: e.target.value.split('\n').map((l) => l.trim()).filter(Boolean) })
+          }
+          placeholder="organize memory&#10;check git status&#10;update docs"
+        />
       </div>
 
-      <textarea
-        rows={4}
-        className="w-full rounded-md border px-3 py-2 text-sm"
-        value={(hooks.proactiveChecks ?? []).join('\n')}
-        onChange={(e) => update({ proactiveChecks: e.target.value.split('\n').map((line) => line.trim()).filter(Boolean) })}
-        placeholder="What should this agent check periodically?"
-      />
-
-      <textarea
-        rows={4}
-        className="w-full rounded-md border px-3 py-2 text-sm"
-        value={(hooks.cronHooks ?? []).map((row) => `${row.schedule} :: ${row.task}`).join('\n')}
-        onChange={(e) =>
-          update({
-            cronHooks: e.target.value
-              .split('\n')
-              .map((line) => line.trim())
-              .filter(Boolean)
-              .map((line) => {
-                const [schedule, ...taskParts] = line.split('::');
-                return { schedule: schedule.trim(), task: taskParts.join('::').trim() };
-              })
-              .filter((row) => row.schedule && row.task),
-          })
-        }
-        placeholder="cron expression :: task"
-      />
+      {/* Cron hooks */}
+      <div className="space-y-1">
+        <p className="text-xs font-semibold uppercase opacity-60">Cron Hooks</p>
+        <p className="text-xs opacity-50">Format: cron expression :: task description</p>
+        <textarea
+          rows={4}
+          className="w-full rounded-md border px-3 py-2 text-sm font-mono"
+          value={(hooks.cronHooks ?? []).map((row) => `${row.schedule} :: ${row.task}`).join('\n')}
+          onChange={(e) =>
+            update({
+              cronHooks: e.target.value
+                .split('\n')
+                .map((line) => line.trim())
+                .filter(Boolean)
+                .map((line) => {
+                  const [schedule, ...taskParts] = line.split('::');
+                  return { schedule: schedule.trim(), task: taskParts.join('::').trim() };
+                })
+                .filter((row) => row.schedule && row.task),
+            })
+          }
+          placeholder="0 9 * * 1-5 :: Send daily standup summary"
+        />
+      </div>
     </section>
   );
 }
