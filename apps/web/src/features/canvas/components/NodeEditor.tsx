@@ -22,9 +22,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
       style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-secondary)' }}
     >
       <div className="flex items-center justify-between">
-        <h4 className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
-          Edit Node
-        </h4>
+        <h4 className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>Edit Node</h4>
         <button
           onClick={onDelete}
           className="text-[10px] px-2 py-0.5 rounded"
@@ -39,7 +37,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         <div>Type: <span className="font-semibold">{nodeType}</span></div>
       </div>
 
-      {/* Type-specific editors */}
+      {/* ── Trigger ─────────────────────────────────────────────────────── */}
       {nodeType === 'trigger' && (
         <div className="space-y-2">
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Trigger Type</label>
@@ -53,12 +51,13 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
             <option value="schedule">Schedule</option>
             <option value="webhook">Webhook</option>
             <option value="event">Event</option>
+            <option value="n8n">n8n Trigger</option>
           </select>
           {config.triggerType === 'schedule' && (
             <input
               value={(config.schedule as string) ?? ''}
               onChange={(e) => updateField('schedule', e.target.value)}
-              placeholder="Cron expression (e.g. 0 9 * * *)"
+              placeholder="Cron (e.g. 0 9 * * *)"
               className="w-full rounded border px-2 py-1 text-xs font-mono"
               style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
             />
@@ -72,10 +71,20 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
               style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
             />
           )}
+          {config.triggerType === 'n8n' && (
+            <input
+              value={(config.n8nWorkflowId as string) ?? ''}
+              onChange={(e) => updateField('n8nWorkflowId', e.target.value)}
+              placeholder="n8n workflow ID"
+              className="w-full rounded border px-2 py-1 text-xs font-mono"
+              style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
+            />
+          )}
         </div>
       )}
 
-      {nodeType === 'agent' && (
+      {/* ── Agent ────────────────────────────────────────────────────────── */}
+      {(nodeType === 'agent' || nodeType === 'subagent') && (
         <div className="space-y-2">
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Agent</label>
           <select
@@ -83,21 +92,62 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
             onChange={(e) => {
               const agent = agents.find((a) => a.id === e.target.value);
               updateField('agentId', e.target.value);
-              if (agent) {
-                onChange({ ...config, agentId: agent.id, agentName: agent.name, model: agent.model });
-              }
+              if (agent) onChange({ ...config, agentId: agent.id, agentName: agent.name, model: agent.model });
             }}
             className="w-full rounded border px-2 py-1 text-xs"
             style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
           >
             <option value="">-- Select agent --</option>
-            {agents.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
+            {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
+          {config.agentName && (
+            <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              model: <span className="font-mono">{(config.model as string) ?? '—'}</span>
+            </div>
+          )}
         </div>
       )}
 
+      {/* ── Supervisor ───────────────────────────────────────────────────── */}
+      {nodeType === 'supervisor' && (
+        <div className="space-y-2">
+          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Supervisor Agent</label>
+          <select
+            value={(config.agentId as string) ?? ''}
+            onChange={(e) => {
+              const agent = agents.find((a) => a.id === e.target.value);
+              if (agent) onChange({ ...config, agentId: agent.id, agentName: agent.name });
+            }}
+            className="w-full rounded border px-2 py-1 text-xs"
+            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
+          >
+            <option value="">-- Select supervisor --</option>
+            {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Delegation Mode</label>
+          <select
+            value={(config.delegationMode as string) ?? 'llm_router'}
+            onChange={(e) => updateField('delegationMode', e.target.value)}
+            className="w-full rounded border px-2 py-1 text-xs"
+            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
+          >
+            <option value="llm_router">LLM Router</option>
+            <option value="round_robin">Round Robin</option>
+            <option value="priority">Priority</option>
+          </select>
+          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Max Iterations</label>
+          <input
+            type="number"
+            value={(config.maxIterations as number) ?? 10}
+            onChange={(e) => updateField('maxIterations', Number(e.target.value))}
+            min={1} max={100}
+            className="w-full rounded border px-2 py-1 text-xs"
+            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
+          />
+        </div>
+      )}
+
+      {/* ── Tool / Skill ─────────────────────────────────────────────────── */}
       {nodeType === 'tool' && (
         <div className="space-y-2">
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Skill</label>
@@ -108,9 +158,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
             style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
           >
             <option value="">-- Select skill --</option>
-            {skills.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
+            {skills.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Function</label>
           <input
@@ -123,6 +171,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         </div>
       )}
 
+      {/* ── Condition ────────────────────────────────────────────────────── */}
       {nodeType === 'condition' && (
         <ConditionBuilder
           value={(config.expression as string) ?? ''}
@@ -130,13 +179,25 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         />
       )}
 
+      {/* ── Approval ─────────────────────────────────────────────────────── */}
       {nodeType === 'approval' && (
         <div className="space-y-2">
+          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Approval Role</label>
+          <select
+            value={(config.approvalRole as string) ?? 'operator'}
+            onChange={(e) => updateField('approvalRole', e.target.value)}
+            className="w-full rounded border px-2 py-1 text-xs"
+            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
+          >
+            <option value="operator">Operator</option>
+            <option value="manager">Manager</option>
+            <option value="admin">Admin</option>
+          </select>
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Timeout (hours)</label>
           <input
             type="number"
-            value={(config.timeout as number) ?? 24}
-            onChange={(e) => updateField('timeout', Number(e.target.value))}
+            value={Math.round(((config.timeoutMs as number) ?? 300000) / 3_600_000)}
+            onChange={(e) => updateField('timeoutMs', Number(e.target.value) * 3_600_000)}
             className="w-full rounded border px-2 py-1 text-xs"
             style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
             min={1}
@@ -144,6 +205,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         </div>
       )}
 
+      {/* ── End ──────────────────────────────────────────────────────────── */}
       {nodeType === 'end' && (
         <div className="space-y-2">
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Outcome</label>
@@ -157,6 +219,62 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
             <option value="failed">Failed</option>
             <option value="cancelled">Cancelled</option>
           </select>
+        </div>
+      )}
+
+      {/* ── n8n Webhook ──────────────────────────────────────────────────── */}
+      {nodeType === 'n8n_webhook' && (
+        <div className="space-y-2">
+          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Webhook Path</label>
+          <input
+            value={(config.webhookPath as string) ?? '/hook'}
+            onChange={(e) => updateField('webhookPath', e.target.value)}
+            placeholder="/my-hook"
+            className="w-full rounded border px-2 py-1 text-xs font-mono"
+            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
+          />
+          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Method</label>
+          <select
+            value={(config.method as string) ?? 'POST'}
+            onChange={(e) => updateField('method', e.target.value)}
+            className="w-full rounded border px-2 py-1 text-xs"
+            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
+          >
+            <option>GET</option>
+            <option>POST</option>
+            <option>PUT</option>
+            <option>DELETE</option>
+          </select>
+          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>n8n Workflow ID (optional)</label>
+          <input
+            value={(config.workflowId as string) ?? ''}
+            onChange={(e) => updateField('workflowId', e.target.value)}
+            placeholder="abc123"
+            className="w-full rounded border px-2 py-1 text-xs font-mono"
+            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
+          />
+          <label className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+            <input
+              type="checkbox"
+              checked={(config.waitForResponse as boolean) ?? false}
+              onChange={(e) => updateField('waitForResponse', e.target.checked)}
+            />
+            Wait for n8n response
+          </label>
+        </div>
+      )}
+
+      {/* ── n8n Workflow ─────────────────────────────────────────────────── */}
+      {nodeType === 'n8n_workflow' && (
+        <div className="space-y-2">
+          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Workflow ID</label>
+          <input
+            value={(config.workflowId as string) ?? ''}
+            onChange={(e) => updateField('workflowId', e.target.value)}
+            placeholder="n8n workflow ID"
+            className="w-full rounded border px-2 py-1 text-xs font-mono"
+            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
+          />
         </div>
       )}
     </div>

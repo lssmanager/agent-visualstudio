@@ -1,137 +1,139 @@
 /**
  * n8n-bridge.service.ts
- * Traduce nodos FlowNode N8nWebhook / N8nWorkflow a ejecuciones reales
- * en n8n y mapea resultados de vuelta al contexto del Run.
+ * Translates a FlowSpec canvas into an n8n workflow JSON structure.
  *
- * Patrones tomados de:
- *   - n8n  → WorkflowRunner + IExecuteData
- *   - Flowise → ICommonObject node execution
- *   - LangGraph → conditional edges + ToolNode
+ * Mapping logic inspired by:
+ *  - n8n WorkflowRepository serialization (packages/cli/src/databases/)
+ *  - Flowise INodeData → ChatFlow serialization
+ *  - LangGraph StateGraph → compiled graph adjacency list
  */
 
-import { N8nService } from '../n8n/n8n.service';
-import type { FlowNode, N8nWebhookConfig, N8nWorkflowConfig } from './flow-node.types';
+import type { FlowSpec } from '../../../../../packages/core-types/src';
+import type { N8nWorkflow } from '../n8n/n8n.service';
 
-export interface N8nBridgeResult {
-  nodeId: string;
-  status: 'success' | 'error' | 'timeout';
-  executionId?: string;
-  data?: unknown;
-  error?: string;
-  durationMs: number;
+const GRID = 200; // pixels between nodes in n8n canvas
+
+/** Deterministic node ID for cross-referencing */
+function n8nNodeId(canvasNodeId: string): string {
+  return `openclaw_${canvasNodeId.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+}
+
+/** Map canvas node type → n8n node type string */
+function mapNodeType(type: string): string {
+  const MAP: Record<string, string> = {
+    trigger:       'n8n-nodes-base.manualTrigger',
+    agent:         'n8n-nodes-base.executeWorkflow',   // placeholder until custom node
+    subagent:      'n8n-nodes-base.executeWorkflow',
+    supervisor:    'n8n-nodes-base.executeWorkflow',
+    skill:         'n8n-nodes-base.function',
+    tool:          'n8n-nodes-base.httpRequest',
+    condition:     'n8n-nodes-base.if',
+    handoff:       'n8n-nodes-base.set',
+    loop:          'n8n-nodes-base.splitInBatches',
+    approval:      'n8n-nodes-base.wait',
+    end:           'n8n-nodes-base.noOp',
+    n8n_webhook:   'n8n-nodes-base.webhook',
+    n8n_workflow:  'n8n-nodes-base.executeWorkflow',
+  };
+  return MAP[type] ?? 'n8n-nodes-base.noOp';
+}
+
+/** Build node parameters from canvas config */
+function mapParameters(type: string, config: Record<string, unknown>): Record<string, unknown> {
+  switch (type) {
+    case 'trigger':
+      if (config.triggerType === 'schedule') {
+        return { rule: { interval: [{ field: 'cronExpression', expression: config.schedule ?? '0 * * * *' }] } };
+      }
+      return {};
+
+    case 'n8n_webhook':
+      return {
+        path:           config.webhookPath ?? '/hook',
+        httpMethod:     config.method ?? 'POST',
+        responseMode:   config.waitForResponse ? 'lastNode' : 'onReceived',
+        options:        {},
+      };
+
+    case 'tool':
+      return {
+        url:            config.url ?? '',
+        method:         'POST',
+        sendBody:       true,
+        bodyParameters: { parameters: [{ name: 'payload', value: '={{ $json }}' }] },
+      };
+
+    case 'condition':
+      return {
+        conditions: {
+          string: [{ value1: '={{ $json.result }}', operation: 'isNotEmpty' }],
+        },
+      };
+
+    case 'approval':
+      return {
+        resume: 'webhook',
+        options: { webhookSuffix: `/approval/${config.approvalRole ?? 'operator'}` },
+      };
+
+    default:
+      return {};
+  }
 }
 
 export class N8nBridgeService {
-  private readonly n8n = new N8nService();
-
   /**
-   * Ejecuta un nodo N8nWebhook: llama al webhookUrl configurado.
-   * Patrón: n8n WebhookNode execute() + waitForWebhook pattern.
+   * Convert a FlowSpec canvas to an n8n workflow object ready to POST to n8n API.
    */
-  async executeWebhookNode(
-    node: FlowNode,
-    runContext: Record<string, unknown>,
-  ): Promise<N8nBridgeResult> {
-    const start = Date.now();
-    const cfg = node.config as N8nWebhookConfig;
-    const body = this.interpolate(cfg.bodyTemplate ?? {}, runContext);
+  flowSpecToN8nWorkflow(flow: FlowSpec): Partial<N8nWorkflow> {
+    const nodes = flow.nodes.map((node, idx) => ({
+      id:         n8nNodeId(node.id),
+      name:       (node.config?.label as string) ?? `${node.type} ${idx + 1}`,
+      type:       mapNodeType(node.type),
+      typeVersion: 1,
+      position:   [
+        (node.position?.x ?? idx * GRID),
+        (node.position?.y ?? 100),
+      ],
+      parameters: mapParameters(node.type, (node.config ?? {}) as Record<string, unknown>),
+      credentials: {},
+    }));
 
-    try {
-      let data: unknown;
-      if (cfg.waitForResponse) {
-        data = await this.n8n.triggerWebhook({
-          webhookUrl: cfg.webhookUrl,
-          method: cfg.method ?? 'POST',
-          body,
-          timeoutMs: cfg.responseTimeoutMs ?? 30_000,
-        });
-      } else {
-        void this.n8n.triggerWebhook({
-          webhookUrl: cfg.webhookUrl,
-          method: cfg.method ?? 'POST',
-          body,
-        });
+    // Build connections: each FlowEdge → n8n connections.main
+    const connections: Record<string, { main: Array<Array<{ node: string; type: string; index: number }>> }> = {};
+
+    for (const edge of flow.edges) {
+      const sourceId = n8nNodeId(edge.from);
+      const targetId = n8nNodeId(edge.to);
+
+      if (!connections[sourceId]) {
+        connections[sourceId] = { main: [[]] };
       }
-      return { nodeId: node.id, status: 'success', data, durationMs: Date.now() - start };
-    } catch (err: unknown) {
-      const error = String(err);
-      return {
-        nodeId: node.id,
-        status: error.includes('abort') ? 'timeout' : 'error',
-        error,
-        durationMs: Date.now() - start,
-      };
+      connections[sourceId].main[0].push({ node: targetId, type: 'main', index: 0 });
     }
+
+    return {
+      name:   flow.name ?? flow.id ?? 'openclaw-flow',
+      active: false,
+      nodes,
+      connections,
+      settings: {
+        executionOrder: 'v1',
+        saveManualExecutions: true,
+        callerPolicy: 'workflowsFromSameOwner',
+      },
+    };
   }
 
   /**
-   * Ejecuta un nodo N8nWorkflow via API y hace poll hasta completar.
-   * Patrón: n8n WorkflowRunner.runWorkflow + polling en executions API.
+   * Returns a map of canvasNodeId → n8nNodeId.
+   * Used by the frontend to cross-reference run steps with n8n executions.
    */
-  async executeWorkflowNode(
-    node: FlowNode,
-    runContext: Record<string, unknown>,
-  ): Promise<N8nBridgeResult> {
-    const start = Date.now();
-    const cfg = node.config as N8nWorkflowConfig;
-    const body = this.interpolate(cfg.bodyTemplate ?? {}, runContext);
-
-    try {
-      const execution = await this.n8n.executeWorkflow(cfg.n8nWorkflowId, body);
-      let data: unknown = execution.data;
-
-      if (cfg.waitForResponse) {
-        data = await this.pollExecution(execution.id, cfg.responseTimeoutMs ?? 60_000);
-      }
-
-      return { nodeId: node.id, status: 'success', executionId: execution.id, data, durationMs: Date.now() - start };
-    } catch (err: unknown) {
-      return { nodeId: node.id, status: 'error', error: String(err), durationMs: Date.now() - start };
+  buildNodeIdMap(flow: FlowSpec): Map<string, string> {
+    const map = new Map<string, string>();
+    for (const node of flow.nodes) {
+      map.set(node.id, n8nNodeId(node.id));
     }
-  }
-
-  /**
-   * Genera un workflow básico en n8n a partir de nodos del canvas.
-   * Patrón: n8n WorkflowHelpers.buildWorkflow().
-   */
-  async scaffoldWorkflow(
-    name: string,
-    n8nNodes: unknown[],
-    connections: unknown,
-  ): Promise<string> {
-    const wf = await this.n8n.createWorkflow(name, n8nNodes, connections);
-    return wf.id;
-  }
-
-  // ─── Private helpers ─────────────────────────────────────────────────────────
-
-  /**
-   * Interpolación simple: reemplaza {{key}} con valor del contexto.
-   * Patrón: n8n ExpressionResolve.resolveSimpleParameterValue().
-   */
-  private interpolate(
-    template: Record<string, unknown>,
-    ctx: Record<string, unknown>,
-  ): Record<string, unknown> {
-    const json = JSON.stringify(template);
-    const replaced = json.replace(/\{\{(\w+)\}\}/g, (_m, key: string) =>
-      ctx[key] !== undefined ? JSON.stringify(ctx[key]).replace(/^"|"$/g, '') : '',
-    );
-    try { return JSON.parse(replaced); } catch { return template; }
-  }
-
-  /**
-   * Poll execution hasta terminal o timeout.
-   * Patrón: n8n ActiveExecutions + waitForExecution().
-   */
-  private async pollExecution(executionId: string, timeoutMs: number): Promise<unknown> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      const exec = await this.n8n.getExecution(executionId);
-      if (exec.status === 'success') return exec.data;
-      if (exec.status === 'error') throw new Error(exec.error ?? 'n8n execution failed');
-      await new Promise((r) => setTimeout(r, 1_500));
-    }
-    throw new Error(`n8n execution ${executionId} timed out after ${timeoutMs}ms`);
+    return map;
   }
 }

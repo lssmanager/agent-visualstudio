@@ -15,34 +15,40 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 
 import type { FlowSpec, FlowNodeType, RunSpec, AgentSpec, SkillSpec } from '../../../lib/types';
-import { TriggerNode } from './nodes/TriggerNode';
-import { AgentNode } from './nodes/AgentNode';
-import { ToolNode } from './nodes/ToolNode';
-import { ConditionNode } from './nodes/ConditionNode';
-import { ApprovalNode } from './nodes/ApprovalNode';
-import { EndNode } from './nodes/EndNode';
+import { TriggerNode }     from './nodes/TriggerNode';
+import { AgentNode }       from './nodes/AgentNode';
+import { ToolNode }        from './nodes/ToolNode';
+import { ConditionNode }   from './nodes/ConditionNode';
+import { ApprovalNode }    from './nodes/ApprovalNode';
+import { EndNode }         from './nodes/EndNode';
+import { N8nWebhookNode }  from './nodes/N8nWebhookNode';
+import { SupervisorNode }  from './nodes/SupervisorNode';
 import { generateNodeId, getNodeTemplate } from '../lib/canvas-utils';
 
 const NODE_TYPES = {
-  trigger: TriggerNode,
-  agent: AgentNode,
-  subagent: AgentNode,
-  skill: ToolNode,
-  tool: ToolNode,
-  condition: ConditionNode,
-  handoff: ConditionNode,
-  loop: ConditionNode,
-  approval: ApprovalNode,
-  end: EndNode,
+  trigger:       TriggerNode,
+  agent:         AgentNode,
+  subagent:      AgentNode,
+  skill:         ToolNode,
+  tool:          ToolNode,
+  condition:     ConditionNode,
+  handoff:       ConditionNode,
+  loop:          ConditionNode,
+  approval:      ApprovalNode,
+  end:           EndNode,
+  // ── new ────────────────────────────────────
+  supervisor:    SupervisorNode,
+  n8n_webhook:   N8nWebhookNode,
+  n8n_workflow:  N8nWebhookNode, // reuses webhook visual until dedicated node
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  completed: '#d1fae5',
-  running: '#dbeafe',
+  completed:        '#d1fae5',
+  running:          '#dbeafe',
   waiting_approval: '#fef3c7',
-  failed: '#fee2e2',
-  queued: '#f3f4f6',
-  skipped: '#f3f4f6',
+  failed:           '#fee2e2',
+  queued:           '#f3f4f6',
+  skipped:          '#f3f4f6',
 };
 
 interface EditableFlowCanvasProps {
@@ -68,56 +74,51 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
     return map;
   }, [activeRun]);
 
-  // Convert FlowSpec nodes -> ReactFlow nodes.
+  // Convert FlowSpec nodes → ReactFlow nodes.
   const rfNodes = useMemo<Node[]>(
     () =>
       flow.nodes.map((node) => {
         const stepStatus = stepStatusMap.get(node.id);
         return {
-          id: node.id,
-          type: node.type as string,
+          id:       node.id,
+          type:     node.type as string,
           position: node.position ?? { x: 200, y: 100 },
-          data: { label: node.type, config: node.config },
-          style: stepStatus ? { boxShadow: `0 0 0 3px ${STATUS_COLORS[stepStatus] ?? '#f3f4f6'}` } : undefined,
+          data:     { label: node.type, config: node.config },
+          style:    stepStatus
+            ? { boxShadow: `0 0 0 3px ${STATUS_COLORS[stepStatus] ?? '#f3f4f6'}` }
+            : undefined,
         };
       }),
     [flow.nodes, stepStatusMap],
   );
 
-  // Convert FlowSpec edges -> ReactFlow edges.
+  // Convert FlowSpec edges → ReactFlow edges.
   const rfEdges = useMemo<Edge[]>(
     () =>
       flow.edges.map((edge, i) => ({
-        id: edge.id ?? `${edge.from}-${edge.to}-${i}`,
-        source: edge.from,
-        target: edge.to,
-        label: edge.condition,
+        id:       edge.id ?? `${edge.from}-${edge.to}-${i}`,
+        source:   edge.from,
+        target:   edge.to,
+        label:    edge.condition,
         animated: stepStatusMap.get(edge.from) === 'running',
-        type: 'smoothstep',
+        type:     'smoothstep',
       })),
     [flow.edges, stepStatusMap],
   );
 
-  // Handle node changes (drag, select, remove).
+  // Handle node changes.
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
       const updated = applyNodeChanges(changes, rfNodes);
-
-      // Check for selection changes.
       const selectedNode = updated.find((n) => n.selected);
       onNodeSelect?.(selectedNode?.id ?? null);
 
-      // Sync positions and removals back to FlowSpec.
       const removedIds = new Set(changes.filter((c) => c.type === 'remove').map((c) => c.id));
-
       const newNodes = flow.nodes
         .filter((n) => !removedIds.has(n.id))
         .map((n) => {
           const rfNode = updated.find((u) => u.id === n.id);
-          if (rfNode) {
-            return { ...n, position: rfNode.position };
-          }
-          return n;
+          return rfNode ? { ...n, position: rfNode.position } : n;
         });
 
       if (removedIds.size > 0 || changes.some((c) => c.type === 'position' && c.dragging === false)) {
@@ -128,14 +129,14 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
     [rfNodes, flow, onChange, onNodeSelect],
   );
 
-  // Handle edge changes (remove).
+  // Handle edge changes.
   const onEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
       const updated = applyEdgeChanges(changes, rfEdges);
       const newEdges = updated.map((e) => ({
-        id: e.id,
-        from: e.source,
-        to: e.target,
+        id:        e.id,
+        from:      e.source,
+        to:        e.target,
         condition: (e.label as string) || undefined,
       }));
       onChange({ ...flow, edges: newEdges });
@@ -148,9 +149,9 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
     (connection: Connection) => {
       if (!connection.source || !connection.target) return;
       const newEdge = {
-        id: `${connection.source}-${connection.target}-${Date.now()}`,
-        from: connection.source,
-        to: connection.target,
+        id:        `${connection.source}-${connection.target}-${Date.now()}`,
+        from:      connection.source,
+        to:        connection.target,
         condition: connection.sourceHandle ?? undefined,
       };
       onChange({ ...flow, edges: [...flow.edges, newEdge] });
@@ -158,7 +159,6 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
     [flow, onChange],
   );
 
-  // Handle drop from palette.
   const onDragOver = useCallback((event: DragEvent) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
@@ -167,28 +167,17 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
   const onDrop = useCallback(
     (event: DragEvent) => {
       event.preventDefault();
-
       const type = event.dataTransfer.getData('application/reactflow-type') as FlowNodeType;
       if (!type) return;
-
       const template = getNodeTemplate(type);
       if (!template) return;
-
       const bounds = reactFlowWrapper.current?.getBoundingClientRect();
       if (!bounds || !rfInstance) return;
-
       const position = rfInstance.project({
         x: event.clientX - bounds.left,
         y: event.clientY - bounds.top,
       });
-
-      const newNode = {
-        id: generateNodeId(type),
-        type,
-        config: { ...template.defaultConfig },
-        position,
-      };
-
+      const newNode = { id: generateNodeId(type), type, config: { ...template.defaultConfig }, position };
       onChange({ ...flow, nodes: [...flow.nodes, newNode] });
     },
     [rfInstance, flow, onChange],

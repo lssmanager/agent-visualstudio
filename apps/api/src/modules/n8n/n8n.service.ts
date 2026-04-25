@@ -1,153 +1,157 @@
 /**
  * n8n.service.ts
- * Bridge hacia la API REST de n8n para crear/disparar workflows.
+ * REST client towards a self-hosted n8n instance.
+ * Inspired by n8n's own /packages/cli/src/WorkflowRunner.ts and
+ * Flowise NodeExecutionService pattern.
  *
- * Patrones tomados de:
- *   - n8n WorkflowRunner.runWorkflow()
- *   - n8n IWorkflowExecuteAdditionalData
- *   - Flowise ICommonObject.nodeData
+ * Env vars required:
+ *   N8N_BASE_URL   – e.g. http://n8n:5678
+ *   N8N_API_KEY    – n8n API key (Settings → API)
  */
 
-import fetch, { RequestInit } from 'node-fetch';
+import type { FlowSpec } from '../../../../../packages/core-types/src';
+import { N8nBridgeService } from '../flows/n8n-bridge.service';
 
-export interface N8nWorkflowMeta {
+export interface N8nWorkflow {
   id: string;
   name: string;
   active: boolean;
   nodes: unknown[];
   connections: unknown;
-  createdAt?: string;
-  updatedAt?: string;
+  settings?: Record<string, unknown>;
 }
 
-export interface N8nExecutionResult {
+export interface N8nExecution {
   id: string;
   workflowId: string;
-  status: 'new' | 'running' | 'success' | 'error' | 'waiting';
-  startedAt?: string;
+  finished: boolean;
+  mode: string;
+  startedAt: string;
   stoppedAt?: string;
-  data?: unknown;
-  error?: string;
+  status: 'running' | 'success' | 'error' | 'waiting' | 'canceled';
+  data?: Record<string, unknown>;
 }
 
-export interface N8nWebhookTriggerOptions {
-  webhookUrl: string;
-  method?: 'GET' | 'POST';
-  body?: Record<string, unknown>;
-  headers?: Record<string, string>;
-  timeoutMs?: number;
-}
-
-export class N8nService {
+class N8nClient {
   private readonly baseUrl: string;
   private readonly apiKey: string;
 
   constructor() {
     this.baseUrl = (process.env.N8N_BASE_URL ?? 'http://localhost:5678').replace(/\/$/, '');
-    this.apiKey = process.env.N8N_API_KEY ?? '';
+    this.apiKey  = process.env.N8N_API_KEY ?? '';
   }
 
-  private headers(extra?: Record<string, string>): Record<string, string> {
-    return {
-      'Content-Type': 'application/json',
-      ...(this.apiKey ? { 'X-N8N-API-KEY': this.apiKey } : {}),
-      ...extra,
-    };
-  }
-
-  private async request<T>(path: string, options?: RequestInit): Promise<T> {
+  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const url = `${this.baseUrl}/api/v1${path}`;
     const res = await fetch(url, {
-      ...options,
-      headers: this.headers(options?.headers as Record<string, string>),
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-N8N-API-KEY': this.apiKey,
+      },
+      body: body ? JSON.stringify(body) : undefined,
     });
     if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`n8n API ${res.status} – ${body}`);
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(`n8n ${method} ${path} → ${res.status}: ${text}`);
     }
     return res.json() as Promise<T>;
   }
 
-  async listWorkflows(): Promise<N8nWorkflowMeta[]> {
-    const resp = await this.request<{ data: N8nWorkflowMeta[] }>('/workflows');
-    return resp.data ?? [];
+  // ── Workflows ───────────────────────────────────────────────────────────────
+  async listWorkflows(): Promise<N8nWorkflow[]> {
+    const resp = await this.request<{ data: N8nWorkflow[] }>('GET', '/workflows');
+    return resp.data;
   }
 
-  async getWorkflow(id: string): Promise<N8nWorkflowMeta> {
-    return this.request<N8nWorkflowMeta>(`/workflows/${id}`);
+  async getWorkflow(workflowId: string): Promise<N8nWorkflow> {
+    return this.request<N8nWorkflow>('GET', `/workflows/${workflowId}`);
   }
 
-  async createWorkflow(
-    name: string,
-    nodes: unknown[],
-    connections: unknown,
-  ): Promise<N8nWorkflowMeta> {
-    return this.request<N8nWorkflowMeta>('/workflows', {
-      method: 'POST',
-      body: JSON.stringify({ name, nodes, connections, active: false }),
+  async createWorkflow(workflow: Partial<N8nWorkflow>): Promise<N8nWorkflow> {
+    return this.request<N8nWorkflow>('POST', '/workflows', workflow);
+  }
+
+  async updateWorkflow(workflowId: string, workflow: Partial<N8nWorkflow>): Promise<N8nWorkflow> {
+    return this.request<N8nWorkflow>('PATCH', `/workflows/${workflowId}`, workflow);
+  }
+
+  async activateWorkflow(workflowId: string): Promise<void> {
+    await this.request('POST', `/workflows/${workflowId}/activate`);
+  }
+
+  async deactivateWorkflow(workflowId: string): Promise<void> {
+    await this.request('POST', `/workflows/${workflowId}/deactivate`);
+  }
+
+  // ── Executions ──────────────────────────────────────────────────────────────
+  async triggerWebhook(
+    webhookPath: string,
+    payload: Record<string, unknown>,
+    method: 'GET' | 'POST' = 'POST',
+  ): Promise<Record<string, unknown>> {
+    const url = `${this.baseUrl}/webhook${webhookPath.startsWith('/') ? webhookPath : `/${webhookPath}`}`;
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: method !== 'GET' ? JSON.stringify(payload) : undefined,
     });
-  }
-
-  async activateWorkflow(id: string): Promise<void> {
-    await this.request(`/workflows/${id}/activate`, { method: 'POST' });
-  }
-
-  async deleteWorkflow(id: string): Promise<void> {
-    await this.request(`/workflows/${id}`, { method: 'DELETE' });
-  }
-
-  /**
-   * Dispara un workflow via la API de ejecución de n8n.
-   * Patrón: n8n WorkflowRunner.runWorkflow({ startNodes: [...] })
-   */
-  async executeWorkflow(
-    workflowId: string,
-    inputData?: Record<string, unknown>,
-  ): Promise<N8nExecutionResult> {
-    return this.request<N8nExecutionResult>(`/workflows/${workflowId}/run`, {
-      method: 'POST',
-      body: JSON.stringify({ startNodes: [], runData: inputData ?? {} }),
-    });
-  }
-
-  async getExecution(executionId: string): Promise<N8nExecutionResult> {
-    return this.request<N8nExecutionResult>(`/executions/${executionId}`);
-  }
-
-  async listExecutions(workflowId?: string): Promise<N8nExecutionResult[]> {
-    const qs = workflowId ? `?workflowId=${workflowId}` : '';
-    const resp = await this.request<{ data: N8nExecutionResult[] }>(`/executions${qs}`);
-    return resp.data ?? [];
-  }
-
-  /**
-   * Llama al webhook URL de un nodo Webhook de n8n.
-   * Patrón: n8n IWebhookResponseCallbackData + node-fetch
-   */
-  async triggerWebhook(options: N8nWebhookTriggerOptions): Promise<unknown> {
-    const { webhookUrl, method = 'POST', body = {}, headers = {}, timeoutMs = 30_000 } = options;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await fetch(webhookUrl, {
-        method,
-        headers: { 'Content-Type': 'application/json', ...headers },
-        body: method !== 'GET' ? JSON.stringify(body) : undefined,
-        signal: controller.signal as NodeJS.AbortSignal,
-      });
-      const text = await res.text();
-      try { return JSON.parse(text); } catch { return text; }
-    } finally {
-      clearTimeout(timeout);
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(`n8n webhook ${webhookPath} → ${res.status}: ${text}`);
     }
+    return res.json() as Promise<Record<string, unknown>>;
   }
 
-  async ping(): Promise<boolean> {
-    try {
-      await this.request('/workflows?limit=1');
-      return true;
-    } catch {
-      return false;
-    }
+  async getExecution(executionId: string): Promise<N8nExecution> {
+    return this.request<N8nExecution>('GET', `/executions/${executionId}`);
+  }
+
+  async listExecutions(workflowId?: string): Promise<N8nExecution[]> {
+    const qs = workflowId ? `?workflowId=${encodeURIComponent(workflowId)}` : '';
+    const resp = await this.request<{ data: N8nExecution[] }>('GET', `/executions${qs}`);
+    return resp.data;
+  }
+}
+
+export class N8nService {
+  private readonly client = new N8nClient();
+  private readonly bridge = new N8nBridgeService();
+
+  // ── Workflow management ─────────────────────────────────────────────────────
+  listWorkflows()       { return this.client.listWorkflows(); }
+  getWorkflow(id: string) { return this.client.getWorkflow(id); }
+
+  /** Create an n8n workflow from a FlowSpec.  Returns the created workflow. */
+  async createWorkflowFromFlow(flow: FlowSpec): Promise<N8nWorkflow> {
+    const n8nWorkflow = this.bridge.flowSpecToN8nWorkflow(flow);
+    return this.client.createWorkflow(n8nWorkflow);
+  }
+
+  /** Update an existing n8n workflow from a FlowSpec. */
+  async updateWorkflowFromFlow(flow: FlowSpec, workflowId: string): Promise<N8nWorkflow> {
+    const n8nWorkflow = this.bridge.flowSpecToN8nWorkflow(flow);
+    return this.client.updateWorkflow(workflowId, n8nWorkflow);
+  }
+
+  activateWorkflow(id: string)   { return this.client.activateWorkflow(id); }
+  deactivateWorkflow(id: string) { return this.client.deactivateWorkflow(id); }
+
+  // ── Execution ───────────────────────────────────────────────────────────────
+  triggerWebhook(
+    webhookPath: string,
+    payload: Record<string, unknown>,
+    method?: 'GET' | 'POST',
+  ) {
+    return this.client.triggerWebhook(webhookPath, payload, method);
+  }
+
+  getExecution(id: string)              { return this.client.getExecution(id); }
+  listExecutions(workflowId?: string)   { return this.client.listExecutions(workflowId); }
+
+  // ── Bridge utilities ────────────────────────────────────────────────────────
+  /** Returns the cross-reference map: canvas nodeId → n8n nodeId */
+  getNodeIdMap(flow: FlowSpec): Map<string, string> {
+    return this.bridge.buildNodeIdMap(flow);
   }
 }

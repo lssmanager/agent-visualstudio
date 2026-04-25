@@ -1,162 +1,140 @@
 /**
  * profile-propagator.service.ts
- * Propaga cambios de systemPrompt hacia arriba en la jerarquía
- * cuando un agente especializado es modificado.
+ * Propagates systemPrompt changes upward through the agent hierarchy
+ * (subagent → agent → workspace → department → agency).
  *
- * Jerarquía: subagent → agent → workspace → department → agency
- *
- * Patrones tomados de:
- *   - Hermes chief-of-staff  → StaffDirective.propagateToChief()
- *   - AutoGen                → GroupChat.update_system_message()
- *   - Semantic Kernel        → KernelPlugin.UpdateFunctionMetadata()
- *   - CrewAI                 → Crew.update_agent_backstory()
+ * Pattern inspired by:
+ *  - LangGraph MemorySaver checkpoint aggregation
+ *  - CrewAI Crew.kickoff() manager_llm context merge
+ *  - AutoGen GroupChatManager system_message aggregation
+ *  - Hermes Chief-of-Staff delegator context builder
  */
 
+import type { CanonicalNodeLevel } from '../../../../../packages/core-types/src';
 import { StudioService } from '../studio/studio.service';
 
-export interface PropagationEvent {
-  entityId: string;
-  entityLevel: 'subagent' | 'agent' | 'workspace' | 'department' | 'agency';
-  changedField: 'systemPrompt' | 'description' | 'skills' | 'tools' | 'name';
-  newValue: string;
-}
-
 export interface PropagationResult {
-  propagated: boolean;
-  chain: string[];
-  summaryPatch: Record<string, string>;
-  warnings: string[];
+  entityId:   string;
+  level:      CanonicalNodeLevel;
+  aggregatedSystemPrompt: string;
+  childSummaries: Array<{ id: string; name: string; role: string; summary: string }>;
 }
 
 export class ProfilePropagatorService {
-  private readonly studio = new StudioService();
+  private readonly studioService = new StudioService();
 
   /**
-   * Entry point: recibe un cambio en cualquier nivel y asciende
-   * actualizando los resúmenes contextuales de los supervisores.
+   * Recalculate the aggregated systemPrompt for an agent or supervisor
+   * given the current state of its children.
    *
-   * Patrón: Hermes chief-of-staff StaffDirective.propagateToChief():
-   *   director.brief → manager.context → chief_of_staff.brief
+   * Call this any time a subagent's profile changes.
    */
-  async propagate(event: PropagationEvent): Promise<PropagationResult> {
-    const canonical = await this.studio.getCanonicalState();
-    const chain: string[] = [];
-    const summaryPatch: Record<string, string> = {};
-    const warnings: string[] = [];
+  async propagateUpward(changedEntityId: string, level: CanonicalNodeLevel): Promise<PropagationResult[]> {
+    const canonical = await this.studioService.getCanonicalState();
+    const results: PropagationResult[] = [];
 
-    if (event.entityLevel === 'subagent') {
-      const subagent = canonical.subagents.find((s) => s.id === event.entityId);
-      if (!subagent) {
-        warnings.push(`subagent ${event.entityId} not found`);
-      } else {
-        chain.push(subagent.id);
-        const agent = canonical.agents.find((a) => a.id === subagent.parentAgentId);
-        if (agent) {
-          chain.push(agent.id);
-          summaryPatch[agent.id] = this.buildAgentContextNote(
-            agent.name,
-            canonical.subagents
-              .filter((s) => s.parentAgentId === agent.id)
-              .map((s) => ({
-                id: s.id,
-                name: s.name,
-                prompt: s.id === event.entityId
-                  ? event.newValue
-                  : (s.systemPrompt ?? s.description ?? ''),
-              })),
-          );
-          const higher = await this.propagateFromAgent(
-            agent.id, canonical, chain, summaryPatch, warnings,
-          );
-          chain.push(...higher);
-        } else {
-          warnings.push(`Parent agent for subagent ${event.entityId} not found`);
-        }
+    if (level === 'subagent') {
+      const subagent = canonical.subagents.find((s) => s.id === changedEntityId);
+      if (!subagent?.parentAgentId) return results;
+
+      const parentAgent = canonical.agents.find((a) => a.id === subagent.parentAgentId);
+      if (!parentAgent) return results;
+
+      const siblings = canonical.subagents.filter((s) => s.parentAgentId === parentAgent.id);
+      const agentResult = this.buildAgentPrompt(parentAgent.id, parentAgent.name, siblings);
+      results.push(agentResult);
+
+      // Continue propagating workspace level
+      const workspace = canonical.workspaces.find((w) => w.id === parentAgent.workspaceId);
+      if (workspace) {
+        const workspaceAgents = canonical.agents.filter((a) => a.workspaceId === workspace.id);
+        results.push(this.buildWorkspacePrompt(workspace.id, workspace.name, workspaceAgents, results));
       }
+
+      return results;
     }
 
-    if (event.entityLevel === 'agent') {
-      chain.push(event.entityId);
-      const higher = await this.propagateFromAgent(
-        event.entityId, canonical, chain, summaryPatch, warnings,
-      );
-      chain.push(...higher);
+    if (level === 'agent') {
+      const agent = canonical.agents.find((a) => a.id === changedEntityId);
+      if (!agent) return results;
+      const subagents = canonical.subagents.filter((s) => s.parentAgentId === agent.id);
+      results.push(this.buildAgentPrompt(agent.id, agent.name, subagents));
+      return results;
     }
 
-    if (event.entityLevel === 'workspace' || event.entityLevel === 'department') {
-      chain.push(event.entityId);
-      warnings.push(
-        `Propagation from ${event.entityLevel} only annotated; no recursive ascent implemented yet`,
-      );
-    }
-
-    return { propagated: chain.length > 1, chain, summaryPatch, warnings };
+    return results;
   }
 
-  // ─── Private helpers ─────────────────────────────────────────────────────────
+  // ─── Private helpers ───────────────────────────────────────────────────────
 
-  /**
-   * Desde un agent, actualiza el workspace context note.
-   * Patrón: AutoGen GroupChat.update_system_message() + resúmenes de miembros.
-   */
-  private async propagateFromAgent(
+  private buildAgentPrompt(
     agentId: string,
-    canonical: Awaited<ReturnType<StudioService['getCanonicalState']>>,
-    chain: string[],
-    summaryPatch: Record<string, string>,
-    warnings: string[],
-  ): Promise<string[]> {
-    const touched: string[] = [];
-    const agent = canonical.agents.find((a) => a.id === agentId);
-    if (!agent) {
-      warnings.push(`agent ${agentId} not found for upward propagation`);
-      return touched;
-    }
-
-    const workspace = canonical.workspaces.find((w) => w.id === agent.workspaceId);
-    if (!workspace) {
-      warnings.push(`workspace for agent ${agentId} not found`);
-      return touched;
-    }
-
-    touched.push(workspace.id);
-    const workspaceAgents = canonical.agents.filter((a) => a.workspaceId === workspace.id);
-    summaryPatch[workspace.id] = this.buildWorkspaceContextNote(
-      workspace.name,
-      workspaceAgents.map((a) => ({ id: a.id, name: a.name, role: a.description ?? '' })),
-    );
-
-    const dept = canonical.departments.find((d) => d.id === workspace.departmentId);
-    if (dept) {
-      touched.push(dept.id);
-      summaryPatch[dept.id] =
-        `Department "${dept.name}" has updated context via workspace "${workspace.name}"`;
-    }
-
-    return touched;
-  }
-
-  /**
-   * Genera nota contextual de un agent a partir de sus sub-agentes.
-   * Patrón: CrewAI Crew.kickoff() task backstory builder.
-   */
-  private buildAgentContextNote(
     agentName: string,
-    subagents: { id: string; name: string; prompt: string }[],
-  ): string {
-    const lines = subagents.map((s) => `  - ${s.name}: ${s.prompt.slice(0, 100)}...`);
-    return `Agent "${agentName}" supervises:\n${lines.join('\n')}`;
+    subagents: Array<{ id: string; name: string; description?: string; skillRefs: string[] }>,
+  ): PropagationResult {
+    const childSummaries = subagents.map((s) => ({
+      id:      s.id,
+      name:    s.name,
+      role:    'subagent',
+      summary: s.description ?? `Specialized sub-agent. Skills: ${s.skillRefs.join(', ') || 'none'}.`,
+    }));
+
+    const skillBullets = childSummaries
+      .map((c) => `  - ${c.name}: ${c.summary}`)
+      .join('\n');
+
+    const aggregatedSystemPrompt = [
+      `You are ${agentName}, an orchestrating agent.`,
+      `You coordinate the following specialized sub-agents:`,
+      skillBullets || '  (no sub-agents assigned)',
+      '',
+      'Delegation rules:',
+      '  1. Decompose the task and assign each part to the most capable sub-agent.',
+      '  2. Aggregate results before responding.',
+      '  3. Escalate to your supervisor if the task exceeds your scope.',
+    ].join('\n');
+
+    return {
+      entityId: agentId,
+      level:    'agent',
+      aggregatedSystemPrompt,
+      childSummaries,
+    };
   }
 
-  /**
-   * Genera nota contextual de un workspace a partir de sus agentes.
-   * Patrón: Hermes chief-of-staff team_roster brief.
-   */
-  private buildWorkspaceContextNote(
+  private buildWorkspacePrompt(
+    workspaceId: string,
     workspaceName: string,
-    agents: { id: string; name: string; role: string }[],
-  ): string {
-    const lines = agents.map((a) => `  - ${a.name}: ${a.role.slice(0, 80)}`);
-    return `Workspace "${workspaceName}" team:\n${lines.join('\n')}`;
+    agents: Array<{ id: string; name: string; description?: string }>,
+    agentResults: PropagationResult[],
+  ): PropagationResult {
+    const childSummaries = agents.map((a) => {
+      const agentResult = agentResults.find((r) => r.entityId === a.id);
+      return {
+        id:      a.id,
+        name:    a.name,
+        role:    'agent',
+        summary: agentResult
+          ? `Coordinates: ${agentResult.childSummaries.map((c) => c.name).join(', ')}`
+          : (a.description ?? 'Orchestrating agent'),
+      };
+    });
+
+    const agentBullets = childSummaries
+      .map((c) => `  - ${c.name}: ${c.summary}`)
+      .join('\n');
+
+    const aggregatedSystemPrompt = [
+      `You are the ${workspaceName} workspace coordinator.`,
+      `Available agents in this workspace:`,
+      agentBullets || '  (no agents assigned)',
+    ].join('\n');
+
+    return {
+      entityId: workspaceId,
+      level:    'workspace',
+      aggregatedSystemPrompt,
+      childSummaries,
+    };
   }
 }
