@@ -49,7 +49,7 @@ export function CorefilesDiffPreviewModal({
           <div style={{ display: 'grid', gap: 2 }}>
             <strong style={{ fontSize: 'var(--text-lg)', color: 'var(--text-primary)' }}>Core Files Diff Preview</strong>
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              Preview -> Diff -> Apply lifecycle for workspace artifacts.
+              {'Preview → Diff → Apply lifecycle for workspace artifacts.'}
             </span>
           </div>
           <button type="button" onClick={onClose} style={secondaryButton()}>

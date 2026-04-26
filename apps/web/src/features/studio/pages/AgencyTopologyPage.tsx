@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import {
   Activity,
   AlertTriangle,
-  CircleCheck,
+  CheckCircle,
   Network,
   PauseCircle,
   PlayCircle,
@@ -414,7 +414,7 @@ export default function AgencyTopologyPage() {
 
       {result && (
         <div style={result.status === 'applied' ? successBanner : warningBanner}>
-          {result.status === 'applied' ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}
+          {result.status === 'applied' ? <CheckCircle size={14} /> : <AlertTriangle size={14} />}
           {result.action}: {result.status} - {result.message}
         </div>
       )}

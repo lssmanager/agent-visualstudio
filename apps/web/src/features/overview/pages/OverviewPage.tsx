@@ -5,7 +5,7 @@ import {
   ArrowRightLeft,
   BookOpen,
   Bot,
-  CirclePlay,
+  PlayCircle,
   DollarSign,
   GitBranch,
   Plus,
@@ -140,7 +140,7 @@ export default function OverviewPage() {
               Edit Flows
             </button>
             <button type="button" style={actionButtonStyle()} onClick={() => navigate('/runs')}>
-              <CirclePlay size={14} />
+              <PlayCircle size={14} />
               Open Runs Console
             </button>
           </>

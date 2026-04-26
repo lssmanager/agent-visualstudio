@@ -67,6 +67,28 @@ npm run dev        # Backend con ts-node (watch)
 npm run dev:web    # Frontend Vite dev server (proxia /api → :3400)
 ```
 
+### Deploy con Docker / Coolify
+
+Este repo ya puede desplegarse con `Dockerfile` explícito en Coolify.
+
+Arquitectura recomendada en Coolify:
+- **App container:** este repo (`Dockerfile`)
+- **PostgreSQL:** servicio separado
+- **Redis/cache:** servicio separado si el runtime/colas lo requieren
+
+Variables mínimas en Coolify:
+- `DATABASE_URL`
+- `CHANNEL_ENC_KEY`
+- `PORT=3400`
+- `STUDIO_API_PORT=3400`
+- opcional: `GATEWAY_ADAPTER_URL`
+
+Comportamiento del contenedor:
+- genera Prisma Client al arrancar
+- ejecuta `prisma migrate deploy`
+- levanta el API en `:3400`
+- sirve la SPA ya compilada desde `apps/web/dist`
+
 ---
 
 ## Variables de entorno
