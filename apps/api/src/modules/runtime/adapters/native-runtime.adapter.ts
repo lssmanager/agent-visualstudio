@@ -25,6 +25,8 @@ import { topologyActionResultSchema } from '../../../../../../packages/schemas/s
 import type { RuntimeAdapter, RuntimeSnapshot } from '../runtime-adapter.interface';
 import { prisma } from '../../core/db/prisma.service';
 
+const db = prisma as any;
+
 // ---------------------------------------------------------------------------
 // NativeRuntimeAdapter
 // ---------------------------------------------------------------------------
@@ -45,7 +47,7 @@ export class NativeRuntimeAdapter implements RuntimeAdapter {
 
   private async _health(): Promise<RuntimeSnapshot['health']> {
     try {
-      const activeRuns = await prisma.run.count({ where: { status: 'running' } });
+      const activeRuns = await db.run.count({ where: { status: 'running' } });
       return { ok: true, status: 'online', mode: 'native', activeRuns };
     } catch (err) {
       return { ok: false, status: 'db_error', error: String(err) };
@@ -54,16 +56,16 @@ export class NativeRuntimeAdapter implements RuntimeAdapter {
 
   private async _diagnostics(): Promise<RuntimeSnapshot['diagnostics']> {
     const [agents, flows, sessions, runs] = await Promise.all([
-      prisma.agent.count({ where: { isEnabled: true } }),
-      prisma.flow.count({ where: { isEnabled: true } }),
-      prisma.gatewaySession.count(),
-      prisma.run.count({ where: { status: { in: ['running', 'queued'] } } }),
+      db.agent.count({ where: { isEnabled: true } }),
+      db.flow.count({ where: { isEnabled: true } }),
+      db.gatewaySession.count(),
+      db.run.count({ where: { status: { in: ['running', 'queued'] } } }),
     ]);
     return { ok: true, mode: 'native', agents, activeFlows: flows, sessions, pendingRuns: runs };
   }
 
   private async _sessions(): Promise<RuntimeSnapshot['sessions']> {
-    const rows = await prisma.gatewaySession.findMany({
+    const rows = await db.gatewaySession.findMany({
       orderBy: { lastActivityAt: 'desc' },
       take: 50,
     });
@@ -90,7 +92,7 @@ export class NativeRuntimeAdapter implements RuntimeAdapter {
   // ── Sessions ────────────────────────────────────────────────────────────
 
   async inspectSessions(): Promise<SessionState[]> {
-    const rows = await prisma.gatewaySession.findMany({
+    const rows = await db.gatewaySession.findMany({
       orderBy: { lastActivityAt: 'desc' },
       take: 100,
     });
@@ -112,7 +114,7 @@ export class NativeRuntimeAdapter implements RuntimeAdapter {
     Array<{ channel: string; sessions: number; activeSessions: number }>
   > {
     // Agrupa sesiones por ChannelConfig.channel
-    const configs = await prisma.channelConfig.findMany({
+    const configs = await db.channelConfig.findMany({
       where: { isActive: true },
       include: { _count: { select: { bindings: true } } },
     });
@@ -205,7 +207,7 @@ export class NativeRuntimeAdapter implements RuntimeAdapter {
   ): Promise<void> {
     // Habilitar ChannelBinding entre "from" (canal) y "to" (agente)
     if (payload.from && payload.to) {
-      await prisma.channelBinding.updateMany({
+      await db.channelBinding.updateMany({
         where: { channelConfigId: payload.from, agentId: payload.to },
         data: { isEnabled: true },
       });
@@ -216,7 +218,7 @@ export class NativeRuntimeAdapter implements RuntimeAdapter {
     payload: Omit<TopologyActionRequest, 'action'>,
   ): Promise<void> {
     if (payload.from && payload.to) {
-      await prisma.channelBinding.updateMany({
+      await db.channelBinding.updateMany({
         where: { channelConfigId: payload.from, agentId: payload.to },
         data: { isEnabled: false },
       });
@@ -228,7 +230,7 @@ export class NativeRuntimeAdapter implements RuntimeAdapter {
   ): Promise<void> {
     // Pausar runs activos del agente
     if (payload.from) {
-      await prisma.run.updateMany({
+      await db.run.updateMany({
         where: {
           status: 'running',
           trigger: { path: ['agentId'], equals: payload.from },
@@ -242,7 +244,7 @@ export class NativeRuntimeAdapter implements RuntimeAdapter {
     payload: Omit<TopologyActionRequest, 'action'>,
   ): Promise<void> {
     if (payload.from) {
-      await prisma.run.updateMany({
+      await db.run.updateMany({
         where: {
           status: 'waiting_approval',
           trigger: { path: ['agentId'], equals: payload.from },
@@ -257,7 +259,7 @@ export class NativeRuntimeAdapter implements RuntimeAdapter {
   ): Promise<void> {
     // Redirigir sesiones de "from" agente a "to" agente
     if (payload.from && payload.to) {
-      await prisma.gatewaySession.updateMany({
+      await db.gatewaySession.updateMany({
         where: { agentId: payload.from },
         data: { agentId: payload.to },
       });
@@ -269,7 +271,7 @@ export class NativeRuntimeAdapter implements RuntimeAdapter {
   ): Promise<void> {
     // Reanudar runs pausados de un agente (LangGraph resume pattern)
     if (payload.from) {
-      await prisma.runStep.updateMany({
+      await db.runStep.updateMany({
         where: {
           agentId: payload.from,
           durableState: 'paused',

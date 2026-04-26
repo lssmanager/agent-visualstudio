@@ -15,6 +15,8 @@ import { prisma } from '../core/db/prisma.service';
 // Commented out: Path does not exist. Using type-only import from @prisma/client instead.
 import type { Prisma } from '@prisma/client';
 
+const db = prisma as any;
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 function prismaToSpec(row: any): FlowSpec {
@@ -55,12 +57,12 @@ function specToCreateInput(
 
 export class FlowsRepository {
   async list(): Promise<FlowSpec[]> {
-    const rows = await prisma.flow.findMany({ orderBy: { createdAt: 'asc' } });
+    const rows = await db.flow.findMany({ orderBy: { createdAt: 'asc' } });
     return rows.map(prismaToSpec);
   }
 
   async listByWorkspace(workspaceId: string): Promise<FlowSpec[]> {
-    const rows = await prisma.flow.findMany({
+    const rows = await db.flow.findMany({
       where:   { workspaceId },
       orderBy: { createdAt: 'asc' },
     });
@@ -68,13 +70,13 @@ export class FlowsRepository {
   }
 
   async findById(id: string): Promise<FlowSpec | null> {
-    const row = await prisma.flow.findUnique({ where: { id } });
+    const row = await db.flow.findUnique({ where: { id } });
     return row ? prismaToSpec(row) : null;
   }
 
   async save(flow: FlowSpec): Promise<FlowSpec> {
     const data = specToCreateInput(flow);
-    const row = await prisma.flow.upsert({
+    const row = await db.flow.upsert({
       where:  { id: flow.id },
       create: data,
       update: {
@@ -96,6 +98,6 @@ export class FlowsRepository {
   }
 
   async remove(id: string): Promise<void> {
-    await prisma.flow.delete({ where: { id } });
+    await db.flow.delete({ where: { id } });
   }
 }

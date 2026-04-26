@@ -15,6 +15,8 @@ import { prisma } from '../core/db/prisma.service';
 // Commented out: Path does not exist. Using type-only import from @prisma/client instead.
 import type { Prisma } from '@prisma/client';
 
+const db = prisma as any;
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 function prismaToSpec(row: any): SkillSpec {
@@ -55,18 +57,18 @@ function specToCreateInput(
 
 export class SkillsRepository {
   async list(): Promise<SkillSpec[]> {
-    const rows = await prisma.skill.findMany({ orderBy: { name: 'asc' } });
+    const rows = await db.skill.findMany({ orderBy: { name: 'asc' } });
     return rows.map(prismaToSpec);
   }
 
   async findById(id: string): Promise<SkillSpec | null> {
-    const row = await prisma.skill.findUnique({ where: { id } });
+    const row = await db.skill.findUnique({ where: { id } });
     return row ? prismaToSpec(row) : null;
   }
 
   async save(skill: SkillSpec): Promise<SkillSpec> {
     const data = specToCreateInput(skill);
-    const row = await prisma.skill.upsert({
+    const row = await db.skill.upsert({
       where:  { id: skill.id },
       create: data,
       update: {
@@ -89,6 +91,6 @@ export class SkillsRepository {
   }
 
   async remove(id: string): Promise<void> {
-    await prisma.skill.delete({ where: { id } });
+    await db.skill.delete({ where: { id } });
   }
 }

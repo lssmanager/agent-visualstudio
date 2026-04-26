@@ -18,6 +18,8 @@ import { prisma } from '../core/db/prisma.service';
 // Commented out: Path does not exist. Using type-only import from @prisma/client instead.
 import type { Prisma } from '@prisma/client';
 
+const db = prisma as any;
+
 // ── Helpers de conversión ─────────────────────────────────────────────────
 
 function prismaToSpec(row: any): AgentSpec {
@@ -79,12 +81,12 @@ function specToCreateInput(
 
 export class AgentsRepository {
   async list(): Promise<AgentSpec[]> {
-    const rows = await prisma.agent.findMany({ orderBy: { createdAt: 'asc' } });
+    const rows = await db.agent.findMany({ orderBy: { createdAt: 'asc' } });
     return rows.map(prismaToSpec);
   }
 
   async listByWorkspace(workspaceId: string): Promise<AgentSpec[]> {
-    const rows = await prisma.agent.findMany({
+    const rows = await db.agent.findMany({
       where:   { workspaceId },
       orderBy: { createdAt: 'asc' },
     });
@@ -92,7 +94,7 @@ export class AgentsRepository {
   }
 
   async findById(id: string): Promise<AgentSpec | null> {
-    const row = await prisma.agent.findUnique({ where: { id } });
+    const row = await db.agent.findUnique({ where: { id } });
     return row ? prismaToSpec(row) : null;
   }
 
@@ -102,7 +104,7 @@ export class AgentsRepository {
    */
   async save(agent: AgentSpec): Promise<AgentSpec> {
     const data = specToCreateInput(agent);
-    const row = await prisma.agent.upsert({
+    const row = await db.agent.upsert({
       where:  { id: agent.id },
       create: data,
       update: {
@@ -138,6 +140,6 @@ export class AgentsRepository {
   }
 
   async remove(id: string): Promise<void> {
-    await prisma.agent.delete({ where: { id } });
+    await db.agent.delete({ where: { id } });
   }
 }

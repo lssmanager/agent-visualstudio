@@ -91,10 +91,10 @@ export class ChannelsService {
     const channel = await this.prisma.channel.create({
       data: {
         workspaceId: dto.workspaceId,
-        kind:        dto.kind,
+        kind:        dto.kind as any,
         tokenEnc,
         meta:        (dto.meta ?? {}) as any,
-        status:      'provisioned',
+        status:      'provisioned' as any,
       },
     });
     this.logger.log(`Channel provisioned: ${channel.id} (${channel.kind})`);
@@ -105,7 +105,7 @@ export class ChannelsService {
   async bind(channelId: string, dto: BindChannelDto): Promise<ChannelRecord> {
     const channel = await this.prisma.channel.update({
       where:  { id: channelId },
-      data:   { boundAgentId: dto.agentId, status: 'bound' },
+      data:   { boundAgentId: dto.agentId, status: 'bound' as any },
     }).catch(() => { throw new NotFoundException(`Channel ${channelId} not found`); });
     this.logger.log(`Channel ${channelId} bound to agent ${dto.agentId}`);
     this._emit(channelId, { status: 'bound', agentId: dto.agentId });

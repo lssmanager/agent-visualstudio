@@ -22,6 +22,8 @@ import {
   type OutgoingMessage,
 } from './channel-adapter.interface';
 
+const db = prisma as any;
+
 const DISCORD_API = 'https://discord.com/api/v10';
 
 interface DiscordCredentials {
@@ -44,7 +46,7 @@ export class DiscordAdapter extends BaseChannelAdapter {
 
   async initialize(channelConfigId: string): Promise<void> {
     this.channelConfigId = channelConfigId;
-    const config = await prisma.channelConfig.findUnique({
+    const config = await db.channelConfig.findUnique({
       where: { id: channelConfigId },
     });
     if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);

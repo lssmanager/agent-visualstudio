@@ -23,6 +23,8 @@ import {
   type OutgoingMessage,
 } from './channel-adapter.interface';
 
+const db = prisma as any;
+
 const WHATSAPP_API = 'https://graph.facebook.com/v19.0';
 
 interface WhatsAppCredentials {
@@ -43,7 +45,7 @@ export class WhatsAppAdapter extends BaseChannelAdapter {
 
   async initialize(channelConfigId: string): Promise<void> {
     this.channelConfigId = channelConfigId;
-    const config = await prisma.channelConfig.findUnique({
+    const config = await db.channelConfig.findUnique({
       where: { id: channelConfigId },
     });
     if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);

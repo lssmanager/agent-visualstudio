@@ -13,6 +13,8 @@ import { prisma } from '../core/db/prisma.service';
 // Commented out: Path does not exist. Using type-only import from @prisma/client instead.
 import type { Prisma } from '@prisma/client';
 
+const db = prisma as any;
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 function stepPrismaToSpec(
@@ -59,7 +61,7 @@ export class RunRepository {
   // ── Runs ────────────────────────────────────────────────
 
   async create(run: RunSpec): Promise<RunSpec> {
-    const row = await prisma.run.create({
+    const row = await db.run.create({
       data: {
         id:          run.id,
         workspaceId: run.workspaceId,
@@ -75,7 +77,7 @@ export class RunRepository {
   }
 
   async findById(id: string): Promise<RunSpec | null> {
-    const row = await prisma.run.findUnique({
+    const row = await db.run.findUnique({
       where:   { id },
       include: { steps: { orderBy: { createdAt: 'asc' } } },
     });
@@ -83,7 +85,7 @@ export class RunRepository {
   }
 
   async listByFlow(flowId: string): Promise<RunSpec[]> {
-    const rows = await prisma.run.findMany({
+    const rows = await db.run.findMany({
       where:   { flowId },
       include: { steps: true },
       orderBy: { startedAt: 'desc' },
@@ -92,7 +94,7 @@ export class RunRepository {
   }
 
   async listByWorkspace(workspaceId: string): Promise<RunSpec[]> {
-    const rows = await prisma.run.findMany({
+    const rows = await db.run.findMany({
       where:   { workspaceId },
       include: { steps: true },
       orderBy: { startedAt: 'desc' },
@@ -106,7 +108,7 @@ export class RunRepository {
     status: RunSpec['status'],
     extra?: { error?: string; completedAt?: Date },
   ): Promise<void> {
-    await prisma.run.update({
+    await db.run.update({
       where: { id },
       data:  {
         status,
@@ -127,7 +129,7 @@ export class RunRepository {
       durableState?: string;
     },
   ): Promise<RunStep> {
-    const row = await prisma.runStep.create({
+    const row = await db.runStep.create({
       data: {
         id:              step.id,
         runId:           step.runId,
@@ -173,7 +175,7 @@ export class RunRepository {
       durableState: string;
     }>,
   ): Promise<void> {
-    await prisma.runStep.update({
+    await db.runStep.update({
       where: { id },
       data: {
         ...(patch.status       !== undefined && { status:          patch.status }),
@@ -202,7 +204,7 @@ export class RunRepository {
     seq: number,
     data: unknown,
   ): Promise<void> {
-    await prisma.runStep.update({
+    await db.runStep.update({
       where: { id: stepId },
       data:  { checkpointData: data as any, checkpointSeq: seq },
     });
@@ -214,7 +216,7 @@ export class RunRepository {
     reason: string,
     payload?: unknown,
   ): Promise<void> {
-    await prisma.runStep.update({
+    await db.runStep.update({
       where: { id: stepId },
       data:  {
         status:          'waiting_approval',
@@ -230,7 +232,7 @@ export class RunRepository {
     stepId: string,
     payload: unknown,
   ): Promise<void> {
-    await prisma.runStep.update({
+    await db.runStep.update({
       where: { id: stepId },
       data:  {
         status:        'running',

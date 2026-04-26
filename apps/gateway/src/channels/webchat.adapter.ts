@@ -19,6 +19,8 @@ import {
   type OutgoingMessage,
 } from './channel-adapter.interface';
 
+const db = prisma as any;
+
 export class WebChatAdapter extends BaseChannelAdapter {
   readonly channel = 'webchat';
 
@@ -29,7 +31,7 @@ export class WebChatAdapter extends BaseChannelAdapter {
 
   async initialize(channelConfigId: string): Promise<void> {
     this.channelConfigId = channelConfigId;
-    const config = await prisma.channelConfig.findUnique({
+    const config = await db.channelConfig.findUnique({
       where: { id: channelConfigId },
     });
     if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
@@ -60,7 +62,7 @@ export class WebChatAdapter extends BaseChannelAdapter {
 
     if (clients.length === 0) {
       // Guardar en DB para que el cliente la recupere en el próximo poll
-      await prisma.gatewaySession.update({
+      await db.gatewaySession.update({
         where: {
           channelConfigId_externalId: {
             channelConfigId: this.channelConfigId,
@@ -145,7 +147,7 @@ export class WebChatAdapter extends BaseChannelAdapter {
     // GET /webchat/:sessionId/history — historial para HTTP polling
     router.get('/:sessionId/history', async (req: Request, res: Response) => {
       const { sessionId } = req.params;
-      const session = await prisma.gatewaySession.findFirst({
+      const session = await db.gatewaySession.findFirst({
         where: {
           channelConfigId: this.channelConfigId,
           externalId: sessionId,

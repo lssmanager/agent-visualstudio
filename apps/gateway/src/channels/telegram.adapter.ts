@@ -20,6 +20,8 @@ import {
   type OutgoingMessage,
 } from './channel-adapter.interface';
 
+const db = prisma as any;
+
 const TELEGRAM_API = 'https://api.telegram.org';
 
 interface TelegramCredentials {
@@ -36,7 +38,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
 
   async initialize(channelConfigId: string): Promise<void> {
     this.channelConfigId = channelConfigId;
-    const config = await prisma.channelConfig.findUnique({
+    const config = await db.channelConfig.findUnique({
       where: { id: channelConfigId },
     });
     if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
