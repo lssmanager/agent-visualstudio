@@ -1,4 +1,10 @@
-// ─── Channel types (appended to existing types) ─────────────────────────────
+import type {
+  CanonicalStudioState,
+  CoreFileDiff,
+  WorkspaceSpecCanonical,
+} from '../../../../packages/core-types/src/studio-canonical';
+import type { AgentSpec, FlowSpec, ProfileSpec, SkillSpec, WorkspaceSpec } from './types-base';
+
 export type ChannelKind = 'telegram' | 'whatsapp' | 'discord' | 'webchat';
 
 export interface ChannelRecord {
@@ -15,12 +21,32 @@ export interface ChannelRecord {
 export interface LlmProviderRecord {
   id: string;
   workspaceId: string;
-  provider: string; // 'openai' | 'anthropic' | 'openrouter' | 'deepseek' | 'qwen'
+  provider: string;
   label: string;
-  maskedKey: string; // e.g. 'sk-...xxxx'
+  maskedKey: string;
   isDefault: boolean;
   createdAt: string;
 }
 
-// ─── Re-export everything that was already here ───────────────────────────────
+export interface StudioStateResponse {
+  workspace: WorkspaceSpec | null;
+  agents: AgentSpec[];
+  skills: SkillSpec[];
+  flows: FlowSpec[];
+  policies: Array<{ id: string; name: string }>;
+  profiles: ProfileSpec[];
+  compile: { artifacts: unknown[]; diagnostics: string[] };
+  runtime: {
+    health: { ok: boolean; [key: string]: unknown };
+    diagnostics: Record<string, unknown>;
+    sessions: { ok: boolean; payload?: unknown[] };
+  };
+  generatedAt: string;
+}
+
+export type CanonicalStudioStateResponse = CanonicalStudioState;
+export type CoreFilesDiffResponse = { snapshotId?: string; diffs: CoreFileDiff[]; generatedAt?: string };
+export type CoreFilesPreviewResponse = { snapshotId?: string; artifacts: unknown[]; diagnostics: string[]; generatedAt?: string };
+
 export * from './types-base';
+export type * from '../../../../packages/core-types/src/studio-canonical';

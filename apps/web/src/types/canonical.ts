@@ -1,1 +1,1 @@
-export type * from '../../../../packages/canonical-types/src';
+export type * from '../../../../packages/core-types/src/studio-canonical';

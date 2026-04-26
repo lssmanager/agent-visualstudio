@@ -38,9 +38,13 @@ export async function getStudioState() {
   return parseJson<StudioStateResponse>(response);
 }
 
-export async function getCanonicalStudioState() {
+export async function fetchCanonicalState() {
   const response = await fetch(`${API_BASE}/studio/canonical-state`);
   return parseJson<CanonicalStudioStateResponse>(response);
+}
+
+export async function getCanonicalStudioState() {
+  return fetchCanonicalState();
 }
 
 export async function getDeployPreview() {

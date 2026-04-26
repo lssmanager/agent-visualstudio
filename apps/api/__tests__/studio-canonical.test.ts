@@ -1,5 +1,5 @@
-import { canonicalStudioStateSchema } from '../../../packages/schemas/src';
-import { adaptLegacyStudioStateToCanonical } from '../src/modules/studio/studio.adapter';
+import { canonicalStudioStateSchema } from '../../../packages/schemas/src/studio-canonical-schemas';
+import { adaptLegacyStudioStateToCanonical } from '../src/modules/studio/studio-canonical.adapter';
 import type { LegacyStudioStateDto } from '../src/modules/studio/dto/studio-state.dto';
 import { TopologyService } from '../src/modules/topology/topology.service';
 

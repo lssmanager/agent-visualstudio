@@ -9,8 +9,8 @@ import { runtimeAdapterRegistry } from '../runtime/runtime-adapter.registry';
 import { SkillsService } from '../skills/skills.service';
 import { WorkspacesCompiler } from '../workspaces/workspaces.compiler';
 import { WorkspacesService } from '../workspaces/workspaces.service';
-import { canonicalStudioStateSchema } from '../../../../../packages/schemas/src';
-import { adaptLegacyStudioStateToCanonical } from './studio.adapter';
+import { canonicalStudioStateSchema } from '../../../../../packages/schemas/src/studio-canonical-schemas';
+import { adaptLegacyStudioStateToCanonical } from './studio-canonical.adapter';
 import type { CanonicalStudioStateDto, LegacyStudioStateDto } from './dto/studio-state.dto';
 import { studioConfig } from '../../config';
 
