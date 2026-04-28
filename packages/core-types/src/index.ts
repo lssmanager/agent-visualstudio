@@ -1,6 +1,7 @@
 export * from './agent-spec';
 export * from './canonical-studio-state';
 export * from './command-spec';
+export * from './cost-table';
 export * from './deployable-artifact';
 export * from './effective-config';
 export * from './flow-spec';
