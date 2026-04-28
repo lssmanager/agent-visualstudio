@@ -1,3 +1,16 @@
+/**
+ * policy-spec.ts
+ *
+ * Typed interfaces for BudgetPolicy and ModelPolicy that mirror the
+ * Prisma models. Used throughout the platform so callers never work
+ * with raw Prisma types directly.
+ *
+ * The scope FK fields follow the exactly-one-FK invariant documented
+ * in prisma/schema.prisma and enforced by assertExactlyOneScope().
+ */
+
+// ─── Legacy policy shape (kept for backward compat with existing callers) ─────
+
 export interface PolicyModelConstraint {
   allow: string[];
   deny?: string[];
@@ -16,4 +29,62 @@ export interface PolicySpec {
   enabled: boolean;
   createdAt?: string;
   updatedAt?: string;
+}
+
+// ─── Budget policy ────────────────────────────────────────────────────────────
+
+export interface BudgetPolicySpec {
+  id: string;
+  /** Rolling window spend limit in USD */
+  limitUsd: number;
+  /** Window length in days (default: 30) */
+  periodDays: number;
+  /** Alert threshold as fraction of limitUsd (default: 0.8 = 80 %) */
+  alertAt: number;
+  // Scope FKs — exactly one is non-null (DB CHECK + assertExactlyOneScope)
+  agencyId:     string | null;
+  departmentId: string | null;
+  workspaceId:  string | null;
+  agentId:      string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type BudgetPolicyCreateInput = Omit<BudgetPolicySpec, 'id' | 'createdAt' | 'updatedAt'>;
+
+// ─── Model policy ─────────────────────────────────────────────────────────────
+
+export interface ModelPolicySpec {
+  id: string;
+  /** Primary model identifier, e.g. "openai/gpt-4o" or "qwen/qwen-plus" */
+  primaryModel: string;
+  /** Fallback model used when primary is over budget or unavailable */
+  fallbackModel: string | null;
+  temperature:  number | null;
+  maxTokens:    number | null;
+  // Scope FKs — exactly one is non-null (DB CHECK + assertExactlyOneScope)
+  agencyId:     string | null;
+  departmentId: string | null;
+  workspaceId:  string | null;
+  agentId:      string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ModelPolicyCreateInput = Omit<ModelPolicySpec, 'id' | 'createdAt' | 'updatedAt'>;
+
+// ─── Resolved (effective) policy for a run ────────────────────────────────────
+
+/**
+ * EffectivePolicy is what PolicyResolver returns after walking the
+ * agency → department → workspace → agent chain.
+ * Both fields may be null if no policy is configured at any level.
+ */
+export interface EffectivePolicy {
+  budget: BudgetPolicySpec | null;
+  model:  ModelPolicySpec  | null;
+  /** The scope level from which the budget policy was resolved */
+  budgetResolvedFrom: 'agency' | 'department' | 'workspace' | 'agent' | null;
+  /** The scope level from which the model policy was resolved */
+  modelResolvedFrom:  'agency' | 'department' | 'workspace' | 'agent' | null;
 }

@@ -5,6 +5,7 @@ export * from './deployable-artifact';
 export * from './effective-config';
 export * from './flow-spec';
 export * from './hook-spec';
+export * from './policy-scope';
 export * from './policy-spec';
 export * from './profile-spec';
 export * from './routine-spec';

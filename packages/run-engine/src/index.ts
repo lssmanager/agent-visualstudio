@@ -3,3 +3,4 @@ export { StepExecutor, type StepExecutionResult } from './step-executor';
 export { LlmStepExecutor, type GatewayRpcClient } from './llm-step-executor';
 export { RunRepository } from './run-repository';
 export { ApprovalQueue, type PendingApproval } from './approval-queue';
+export { PolicyResolver, type PolicyResolverContext } from './policy-resolver';
