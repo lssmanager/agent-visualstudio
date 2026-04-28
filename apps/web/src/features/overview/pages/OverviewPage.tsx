@@ -30,6 +30,7 @@ import { RuntimeHealthWidget } from '../components/widgets/RuntimeHealthWidget';
 import { SessionsTrendWidget } from '../components/widgets/SessionsTrendWidget';
 import { ToolCallsWidget } from '../components/widgets/ToolCallsWidget';
 import { FlowsHealthWidget } from '../components/widgets/FlowsHealthWidget';
+import { DashboardChartsSection } from '../components/DashboardChartsSection';
 
 function actionButtonStyle(primary = false): CSSProperties {
   if (primary) {
@@ -162,6 +163,9 @@ export default function OverviewPage() {
         <StudioKpiCard label="Runtime" value={runtimeOk ? 'Online' : 'Degraded'} helper={runtimeOk ? 'Gateway healthy' : 'Action needed'} tone={runtimeOk ? 'success' : 'warning'} icon={<Activity size={18} />} onClick={() => navigate('/diagnostics')} />
         <StudioKpiCard label="Usage Cost" value={costValue} helper="Current period" icon={<DollarSign size={18} />} onClick={() => navigate('/operations')} />
       </section>
+
+      {/* ── Fase 6: Dashboard analítico ── */}
+      <DashboardChartsSection />
 
       <section
         className="studio-responsive-two-col"
