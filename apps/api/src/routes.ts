@@ -25,8 +25,9 @@ import { registerTopologyRoutes } from './modules/topology/topology.controller';
 import { registerCorefilesRoutes } from './modules/corefiles/corefiles.controller';
 import { registerBuilderAgentRoutes } from './modules/builder-agent/builder-agent.controller';
 import { registerRuntimeInspectionRoutes } from './modules/runtime/runtime-inspection.controller';
-// ── Sprint: Async runtime, queues & SSE streaming ─────────────────────────
 import { registerRunsStreamRoutes } from './modules/runtime/runs-stream.controller';
+// ── Fases 4-5: Dashboard analítico ──────────────────────────────────────────
+import { registerDashboardRoutes } from './modules/dashboard/dashboard.controller';
 
 export function registerRoutes(app: Express) {
   const router = Router();
@@ -61,6 +62,8 @@ export function registerRoutes(app: Express) {
   registerRuntimeInspectionRoutes(router);
   // SSE streaming + async queue routes (must come after registerRunsRoutes)
   registerRunsStreamRoutes(router);
+  // Dashboard analítico Fases 4-5
+  registerDashboardRoutes(router);
 
   app.use(studioConfig.apiPrefix, router);
 }
