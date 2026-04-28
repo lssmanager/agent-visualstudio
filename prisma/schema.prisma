@@ -6,8 +6,26 @@
 // Execution:    Flow → Run → RunStep  (LangGraph-style checkpoints)
 // Gateway:      ChannelConfig → ChannelBinding → GatewaySession
 // Integrations: N8nConnection → N8nWorkflow
-// Policies:     BudgetPolicy, ModelPolicy  (scope-inherited)
+// Policies:     BudgetPolicy, ModelPolicy  (scope-inherited, exactly-one-FK)
 // Audit:        AuditEvent
+//
+// ── Exactly-one-FK invariant on Policy tables ────────────────────────────────
+// BudgetPolicy and ModelPolicy each belong to exactly ONE scope level
+// (agency | department | workspace | agent). Prisma cannot express this
+// constraint natively, so it is enforced at two layers:
+//
+//   1. DB layer — raw CHECK constraint added via a manual migration:
+//      ALTER TABLE "BudgetPolicy" ADD CONSTRAINT "budget_policy_exactly_one_scope"
+//        CHECK (
+//          (CASE WHEN "agencyId"     IS NOT NULL THEN 1 ELSE 0 END +
+//           CASE WHEN "departmentId" IS NOT NULL THEN 1 ELSE 0 END +
+//           CASE WHEN "workspaceId"  IS NOT NULL THEN 1 ELSE 0 END +
+//           CASE WHEN "agentId"      IS NOT NULL THEN 1 ELSE 0 END) = 1
+//        );
+//      (Same for "ModelPolicy". See prisma/migrations/README.md.)
+//
+//   2. App layer — PolicyScopeGuard in apps/api validates before upsert.
+//      Import: import { assertExactlyOneScope } from '@agent-vs/core-types';
 // ─────────────────────────────────────────────────────────────────────────────
 
 generator client {
@@ -18,6 +36,10 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+// ─── Scope enum (used by app-layer validation, NOT a Prisma enum in DB) ───────
+// Values: 'agency' | 'department' | 'workspace' | 'agent'
+// Kept as String fields in the DB so we can extend without migrations.
 
 // ─── Hierarchy ────────────────────────────────────────────────────────────────
 
@@ -126,10 +148,10 @@ model Skill {
   description String?  @db.Text
   /// 'mcp' | 'builtin' | 'n8n_webhook' | 'openapi' | 'function'
   type        String
-  /// For mcp:        { command, args, env }
+  /// For mcp:         { command, args, env }
   /// For n8n_webhook: { webhookUrl, method }
-  /// For openapi:    { specUrl, operationId }
-  /// For function:   { handler (serialized) }
+  /// For openapi:     { specUrl, operationId }
+  /// For function:    { handler (serialized) }
   config      Json
   /// JSON Schema of expected input
   schema      Json?
@@ -173,30 +195,30 @@ model Flow {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  runs        Run[]
+  runs Run[]
 }
 
 // ─── Runs ────────────────────────────────────────────────────────────────────
 
 model Run {
-  id          String    @id @default(uuid())
-  flowId      String
-  flow        Flow      @relation(fields: [flowId], references: [id])
-  agencyId    String?
-  agency      Agency?   @relation(fields: [agencyId], references: [id])
+  id           String    @id @default(uuid())
+  flowId       String
+  flow         Flow      @relation(fields: [flowId], references: [id])
+  agencyId     String?
+  agency       Agency?   @relation(fields: [agencyId], references: [id])
   /// 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'waiting_approval'
-  status      String    @default("queued")
+  status       String    @default("queued")
   /// { type: 'manual' | 'channel' | 'schedule' | 'replay:<runId>', payload? }
-  trigger     Json
-  error       String?   @db.Text
-  startedAt   DateTime  @default(now())
-  completedAt DateTime?
-  /// Accumulated cost for the whole run (sum of steps)
-  totalCostUsd Float    @default(0)
-  metadata    Json?
-  createdAt   DateTime  @default(now())
+  trigger      Json
+  error        String?   @db.Text
+  startedAt    DateTime  @default(now())
+  completedAt  DateTime?
+  /// Accumulated cost for the whole run (sum of RunStep.costUsd)
+  totalCostUsd Float     @default(0)
+  metadata     Json?
+  createdAt    DateTime  @default(now())
 
-  steps       RunStep[]
+  steps RunStep[]
 
   @@index([flowId, status])
   @@index([agencyId, createdAt])
@@ -229,17 +251,17 @@ model RunStep {
 // ─── Gateway / Channels ──────────────────────────────────────────────────────
 
 model ChannelConfig {
-  id     String  @id @default(uuid())
+  id               String  @id @default(uuid())
   /// 'telegram' | 'whatsapp' | 'webchat' | 'slack' | 'discord' | 'webhook'
-  type   String
-  name   String
+  type             String
+  name             String
   /// AES-256-GCM encrypted secrets (CHANNEL_SECRET env key)
-  secretsEncrypted String  @db.Text
+  secretsEncrypted String   @db.Text
   /// Non-sensitive config: { webhookPath, parseMode, allowedOrigins, ... }
-  config Json
-  isActive Boolean @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  config           Json
+  isActive         Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   bindings ChannelBinding[]
   sessions GatewaySession[]
@@ -306,15 +328,27 @@ model N8nWorkflow {
   /// JSON Schema of parameters exposed to skills
   inputSchema   Json?
   webhookUrl    String?
-  isActive      Boolean       @default(true)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@unique([connectionId, n8nWorkflowId])
 }
 
 // ─── Budget / Model Policies ─────────────────────────────────────────────────
-// One policy per scope entity. Resolution order: agent → workspace → department → agency.
+//
+// INVARIANT: exactly one FK is non-null per row.
+//
+// Prisma @unique prevents two policies at the same scope, but cannot prevent:
+//   (a) a row with ALL FKs null, or
+//   (b) a row with MORE THAN ONE FK set.
+//
+// Both cases are blocked by the CHECK constraints documented at the top of
+// this file. Run `npx prisma migrate dev --name add_policy_scope_check` then
+// edit the generated SQL file to add the constraints before applying.
+//
+// Resolution order at runtime: agent → workspace → department → agency
+// See: packages/run-engine/src/policy-resolver.ts
 
 model BudgetPolicy {
   id         String   @id @default(uuid())
@@ -327,11 +361,11 @@ model BudgetPolicy {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  // Exactly one of these foreign keys is set
-  agencyId     String?    @unique
-  departmentId String?    @unique
-  workspaceId  String?    @unique
-  agentId      String?    @unique
+  // ── Scope FKs — exactly one must be non-null (enforced by DB CHECK) ──────
+  agencyId     String? @unique
+  departmentId String? @unique
+  workspaceId  String? @unique
+  agentId      String? @unique
 
   agency     Agency?     @relation("AgencyBudget",     fields: [agencyId],     references: [id], onDelete: Cascade)
   department Department? @relation("DepartmentBudget", fields: [departmentId], references: [id], onDelete: Cascade)
@@ -343,18 +377,18 @@ model ModelPolicy {
   id            String   @id @default(uuid())
   /// Primary model identifier, e.g. "openai/gpt-4o" or "qwen/qwen-plus"
   primaryModel  String
-  /// Fallback model if primary fails or is over budget
+  /// Fallback model used when primary is over budget or unavailable
   fallbackModel String?
   temperature   Float?   @default(0.7)
   maxTokens     Int?     @default(4096)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  // Exactly one of these foreign keys is set
-  agencyId     String?    @unique
-  departmentId String?    @unique
-  workspaceId  String?    @unique
-  agentId      String?    @unique
+  // ── Scope FKs — exactly one must be non-null (enforced by DB CHECK) ──────
+  agencyId     String? @unique
+  departmentId String? @unique
+  workspaceId  String? @unique
+  agentId      String? @unique
 
   agency     Agency?     @relation("AgencyModel",     fields: [agencyId],     references: [id], onDelete: Cascade)
   department Department? @relation("DepartmentModel", fields: [departmentId], references: [id], onDelete: Cascade)
@@ -368,10 +402,10 @@ model AuditEvent {
   id        String   @id @default(uuid())
   /// e.g. 'run.started' | 'run.completed' | 'agent.created' | 'channel.message' | 'budget.alert'
   eventType String
-  /// Entity kind the event is about: 'agency' | 'department' | 'workspace' | 'agent' | 'run' | 'channel'
+  /// Entity kind: 'agency' | 'department' | 'workspace' | 'agent' | 'run' | 'channel'
   scopeType String?
   scopeId   String?
-  /// Logto user ID (if triggered by a user action)
+  /// Logto user ID (if triggered by a user action via Studio)
   userId    String?
   payload   Json
   createdAt DateTime @default(now())
