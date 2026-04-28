@@ -1,0 +1,382 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// prisma/schema.prisma
+// Agent Visual Studio — Full Platform Schema
+//
+// Hierarchy:    Agency → Department → Workspace → Agent → Subagent
+// Execution:    Flow → Run → RunStep  (LangGraph-style checkpoints)
+// Gateway:      ChannelConfig → ChannelBinding → GatewaySession
+// Integrations: N8nConnection → N8nWorkflow
+// Policies:     BudgetPolicy, ModelPolicy  (scope-inherited)
+// Audit:        AuditEvent
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Hierarchy ────────────────────────────────────────────────────────────────
+
+model Agency {
+  id           String       @id @default(uuid())
+  name         String
+  slug         String       @unique
+  /// Orchestrator system prompt — auto-updated by ProfilePropagatorService
+  systemPrompt String?      @db.Text
+  model        String       @default("openai/gpt-4o")
+  /// Aggregated capability profile (JSON) — built by AgentBuilder
+  profileJson  Json?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  departments  Department[]
+  runs         Run[]
+  budgetPolicy BudgetPolicy? @relation("AgencyBudget")
+  modelPolicy  ModelPolicy?  @relation("AgencyModel")
+}
+
+model Department {
+  id           String      @id @default(uuid())
+  agencyId     String
+  agency       Agency      @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  name         String
+  slug         String
+  systemPrompt String?     @db.Text
+  model        String      @default("openai/gpt-4o")
+  profileJson  Json?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  workspaces   Workspace[]
+  budgetPolicy BudgetPolicy? @relation("DepartmentBudget")
+  modelPolicy  ModelPolicy?  @relation("DepartmentModel")
+
+  @@unique([agencyId, slug])
+}
+
+model Workspace {
+  id           String     @id @default(uuid())
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  name         String
+  slug         String
+  systemPrompt String?    @db.Text
+  model        String     @default("openai/gpt-4o")
+  profileJson  Json?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  agents       Agent[]
+  budgetPolicy BudgetPolicy? @relation("WorkspaceBudget")
+  modelPolicy  ModelPolicy?  @relation("WorkspaceModel")
+
+  @@unique([departmentId, slug])
+}
+
+model Agent {
+  id           String    @id @default(uuid())
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name         String
+  slug         String
+  /// 'orchestrator' | 'specialist' | 'subagent'
+  role         String    @default("specialist")
+  systemPrompt String?   @db.Text
+  model        String    @default("openai/gpt-4o")
+  profileJson  Json?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  skills          AgentSkill[]
+  channelBindings ChannelBinding[]
+  flows           Flow[]
+  subagents       Subagent[]
+  budgetPolicy    BudgetPolicy? @relation("AgentBudget")
+  modelPolicy     ModelPolicy?  @relation("AgentModel")
+
+  @@unique([workspaceId, slug])
+}
+
+model Subagent {
+  id           String   @id @default(uuid())
+  agentId      String
+  agent        Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  name         String
+  slug         String
+  systemPrompt String?  @db.Text
+  model        String   @default("openai/gpt-4o")
+  profileJson  Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  skills       SubagentSkill[]
+
+  @@unique([agentId, slug])
+}
+
+// ─── Skills / Tools ──────────────────────────────────────────────────────────
+
+model Skill {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?  @db.Text
+  /// 'mcp' | 'builtin' | 'n8n_webhook' | 'openapi' | 'function'
+  type        String
+  /// For mcp:        { command, args, env }
+  /// For n8n_webhook: { webhookUrl, method }
+  /// For openapi:    { specUrl, operationId }
+  /// For function:   { handler (serialized) }
+  config      Json
+  /// JSON Schema of expected input
+  schema      Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  agents    AgentSkill[]
+  subagents SubagentSkill[]
+}
+
+model AgentSkill {
+  agentId String
+  skillId String
+  agent   Agent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  skill   Skill  @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([agentId, skillId])
+}
+
+model SubagentSkill {
+  subagentId String
+  skillId    String
+  subagent   Subagent @relation(fields: [subagentId], references: [id], onDelete: Cascade)
+  skill      Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([subagentId, skillId])
+}
+
+// ─── Flows ───────────────────────────────────────────────────────────────────
+
+model Flow {
+  id          String   @id @default(uuid())
+  agentId     String
+  agent       Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  /// Serialized FlowSpec — { nodes: FlowNode[], edges: FlowEdge[] }
+  spec        Json
+  version     Int      @default(1)
+  isActive    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  runs        Run[]
+}
+
+// ─── Runs ────────────────────────────────────────────────────────────────────
+
+model Run {
+  id          String    @id @default(uuid())
+  flowId      String
+  flow        Flow      @relation(fields: [flowId], references: [id])
+  agencyId    String?
+  agency      Agency?   @relation(fields: [agencyId], references: [id])
+  /// 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'waiting_approval'
+  status      String    @default("queued")
+  /// { type: 'manual' | 'channel' | 'schedule' | 'replay:<runId>', payload? }
+  trigger     Json
+  error       String?   @db.Text
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  /// Accumulated cost for the whole run (sum of steps)
+  totalCostUsd Float    @default(0)
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+
+  steps       RunStep[]
+
+  @@index([flowId, status])
+  @@index([agencyId, createdAt])
+}
+
+model RunStep {
+  id          String    @id @default(uuid())
+  runId       String
+  run         Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  /// Matches FlowNode.id in the flow spec
+  nodeId      String
+  /// 'agent' | 'tool' | 'condition' | 'loop' | 'approval' | 'input' | 'output'
+  nodeType    String
+  agentId     String?
+  /// 'queued' | 'running' | 'completed' | 'failed' | 'skipped' | 'waiting_approval'
+  status      String    @default("queued")
+  input       Json?
+  output      Json?
+  error       String?   @db.Text
+  /// { input: number, output: number }
+  tokenUsage  Json?
+  costUsd     Float     @default(0)
+  retryCount  Int       @default(0)
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  @@index([runId, nodeId])
+}
+
+// ─── Gateway / Channels ──────────────────────────────────────────────────────
+
+model ChannelConfig {
+  id     String  @id @default(uuid())
+  /// 'telegram' | 'whatsapp' | 'webchat' | 'slack' | 'discord' | 'webhook'
+  type   String
+  name   String
+  /// AES-256-GCM encrypted secrets (CHANNEL_SECRET env key)
+  secretsEncrypted String  @db.Text
+  /// Non-sensitive config: { webhookPath, parseMode, allowedOrigins, ... }
+  config Json
+  isActive Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bindings ChannelBinding[]
+  sessions GatewaySession[]
+}
+
+model ChannelBinding {
+  id              String        @id @default(uuid())
+  channelConfigId String
+  channelConfig   ChannelConfig @relation(fields: [channelConfigId], references: [id], onDelete: Cascade)
+  agentId         String
+  agent           Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  /// Level that owns this binding: 'agency' | 'department' | 'workspace' | 'agent'
+  scopeLevel      String        @default("agent")
+  /// ID of the scope entity (agencyId, departmentId, etc.)
+  scopeId         String
+  isDefault       Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+
+  @@unique([channelConfigId, agentId])
+}
+
+model GatewaySession {
+  id              String        @id @default(uuid())
+  channelConfigId String
+  channelConfig   ChannelConfig @relation(fields: [channelConfigId], references: [id])
+  /// External user ID in the channel (Telegram chat_id, WhatsApp phone, etc.)
+  externalUserId  String
+  agentId         String
+  /// Conversation message history — [{ role, content, ts }]
+  messageHistory  Json          @default("[]")
+  /// 'active' | 'paused' | 'closed'
+  state           String        @default("active")
+  metadata        Json?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([channelConfigId, externalUserId])
+  @@index([agentId, state])
+}
+
+// ─── n8n Integration ─────────────────────────────────────────────────────────
+
+model N8nConnection {
+  id              String   @id @default(uuid())
+  name            String   @default("default")
+  /// Base URL of the n8n instance, e.g. https://n8n.example.com
+  baseUrl         String
+  apiKeyEncrypted String   @db.Text
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  workflows N8nWorkflow[]
+}
+
+model N8nWorkflow {
+  id            String        @id @default(uuid())
+  connectionId  String
+  connection    N8nConnection @relation(fields: [connectionId], references: [id])
+  /// Workflow ID as it exists inside n8n
+  n8nWorkflowId String
+  name          String
+  description   String?
+  /// JSON Schema of parameters exposed to skills
+  inputSchema   Json?
+  webhookUrl    String?
+  isActive      Boolean       @default(true)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@unique([connectionId, n8nWorkflowId])
+}
+
+// ─── Budget / Model Policies ─────────────────────────────────────────────────
+// One policy per scope entity. Resolution order: agent → workspace → department → agency.
+
+model BudgetPolicy {
+  id         String   @id @default(uuid())
+  /// Rolling window spend limit in USD
+  limitUsd   Float
+  /// Window length in days (default: 30)
+  periodDays Int      @default(30)
+  /// Alert threshold as fraction of limitUsd (default: 0.8 = 80%)
+  alertAt    Float    @default(0.8)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Exactly one of these foreign keys is set
+  agencyId     String?    @unique
+  departmentId String?    @unique
+  workspaceId  String?    @unique
+  agentId      String?    @unique
+
+  agency     Agency?     @relation("AgencyBudget",     fields: [agencyId],     references: [id], onDelete: Cascade)
+  department Department? @relation("DepartmentBudget", fields: [departmentId], references: [id], onDelete: Cascade)
+  workspace  Workspace?  @relation("WorkspaceBudget",  fields: [workspaceId],  references: [id], onDelete: Cascade)
+  agent      Agent?      @relation("AgentBudget",      fields: [agentId],      references: [id], onDelete: Cascade)
+}
+
+model ModelPolicy {
+  id            String   @id @default(uuid())
+  /// Primary model identifier, e.g. "openai/gpt-4o" or "qwen/qwen-plus"
+  primaryModel  String
+  /// Fallback model if primary fails or is over budget
+  fallbackModel String?
+  temperature   Float?   @default(0.7)
+  maxTokens     Int?     @default(4096)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Exactly one of these foreign keys is set
+  agencyId     String?    @unique
+  departmentId String?    @unique
+  workspaceId  String?    @unique
+  agentId      String?    @unique
+
+  agency     Agency?     @relation("AgencyModel",     fields: [agencyId],     references: [id], onDelete: Cascade)
+  department Department? @relation("DepartmentModel", fields: [departmentId], references: [id], onDelete: Cascade)
+  workspace  Workspace?  @relation("WorkspaceModel",  fields: [workspaceId],  references: [id], onDelete: Cascade)
+  agent      Agent?      @relation("AgentModel",      fields: [agentId],      references: [id], onDelete: Cascade)
+}
+
+// ─── Audit ───────────────────────────────────────────────────────────────────
+
+model AuditEvent {
+  id        String   @id @default(uuid())
+  /// e.g. 'run.started' | 'run.completed' | 'agent.created' | 'channel.message' | 'budget.alert'
+  eventType String
+  /// Entity kind the event is about: 'agency' | 'department' | 'workspace' | 'agent' | 'run' | 'channel'
+  scopeType String?
+  scopeId   String?
+  /// Logto user ID (if triggered by a user action)
+  userId    String?
+  payload   Json
+  createdAt DateTime @default(now())
+
+  @@index([eventType, createdAt])
+  @@index([scopeType, scopeId, createdAt])
+  @@index([userId, createdAt])
+}
