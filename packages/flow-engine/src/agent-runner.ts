@@ -1,26 +1,21 @@
 /**
- * agent-runner.ts — Puente entre Prisma Agent y FlowExecutor
+ * agent-runner.ts — Puente entre Prisma Agent → Flow → FlowExecutor
  *
- * AgentRunner es el punto de entrada único que el GatewayService usa
- * para ejecutar un agente dado su ID y el historial de la sesión.
+ * Usa el schema real:
+ *   Agent.flows[]          (Flow[],  campo: flows)
+ *   Flow.spec              (Json,    la FlowDefinition serializada)
+ *   Flow.isActive          (Boolean, solo el activo se ejecuta)
+ *   Run.flowId             (String,  requerido)
+ *   Run.agencyId           (String?, opcional)
+ *   RunStep.runId / nodeId / nodeType / status / startedAt
  *
- * Flujo:
- *   1. Carga el Agent de Prisma (con su FlowVersion activa)
- *   2. Compila el FlowDefinition con compileFlow()
- *   3. Construye FlowRunOptions inyectando el historial como estado inicial
- *   4. Llama FlowExecutor.run() con onStepComplete → persiste RunSteps
- *   5. Extrae el texto de respuesta del estado final y lo devuelve
- *
- * Variables de entorno por agente (prefijo MODEL_):
- *   MODEL_API_KEY        — llave API del proveedor LLM del agente
- *   MODEL_BASE_URL       — base URL (para OpenRouter, DeepSeek, Qwen, etc.)
- *   MODEL_DEFAULT_MODEL  — modelo por defecto para este agente
+ * Variables de entorno por modelo:
+ *   MODEL_API_KEY        — llave del proveedor LLM
+ *   MODEL_BASE_URL       — base URL (OpenRouter, DeepSeek, Qwen…)
+ *   MODEL_DEFAULT_MODEL  — modelo por defecto
  *
  * Fallback globales:
  *   OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_DEFAULT_MODEL
- *
- * Los agentes pueden sobreescribir estos valores almacenándolos en
- * Agent.modelConfig (JSON field) en la DB, que toma prioridad sobre env.
  */
 
 import { randomUUID }        from 'crypto';
@@ -46,11 +41,11 @@ export interface AgentRunnerConfig {
 
 export interface AgentRunResult {
   /** The text reply to send back to the user */
-  reply:    string;
+  reply:     string;
   /** Full FlowRunResult for logging / cost tracking */
   runResult: FlowRunResult;
-  /** DB run ID (persisted in Run table) */
-  runId:    string;
+  /** DB run ID */
+  runId:     string;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,7 +56,7 @@ export class AgentRunner {
   constructor(private readonly config: AgentRunnerConfig) {}
 
   /**
-   * Execute an agent for a given conversation turn.
+   * Execute the active Flow of an Agent for one conversation turn.
    *
    * @param agentId  UUID of the Agent row in Prisma
    * @param history  Session message history from SessionManager
@@ -74,42 +69,41 @@ export class AgentRunner {
   ): Promise<AgentRunResult> {
     const id = runId ?? randomUUID();
 
-    // 1. Load agent + active flow version from Prisma
+    // 1. Load agent + active flow from Prisma
     const agent = await this.config.db.agent.findUniqueOrThrow({
       where:   { id: agentId },
       include: {
-        flowVersions: {
+        flows: {
           where:   { isActive: true },
           take:    1,
-          orderBy: { createdAt: 'desc' },
+          orderBy: { updatedAt: 'desc' },
         },
       },
     });
 
-    const flowVersion = agent.flowVersions[0];
-    if (!flowVersion) {
+    const flow = agent.flows[0];
+    if (!flow) {
       throw new Error(
-        `AgentRunner: agent ${agentId} has no active FlowVersion. ` +
-        'Publish a flow version in the Studio before activating this agent.',
+        `AgentRunner: agent ${agentId} has no active Flow. ` +
+        'Create and activate a flow in the Studio before using this agent.',
       );
     }
 
-    // 2. Compile the flow
-    const flowDef = flowVersion.definition as Parameters<typeof compileFlow>[0];
-    const compiled = compileFlow(flowDef);
-
-    // 3. Build LLM provider from agent config or env fallback
-    const provider = this.buildProvider(
-      (agent.modelConfig as Record<string, unknown> | null) ?? {},
+    // 2. Compile the flow spec
+    const compiled = compileFlow(
+      flow.spec as Parameters<typeof compileFlow>[0],
     );
+
+    // 3. Build LLM provider from env vars
+    //    Agent.model is the model identifier (e.g. "openai/gpt-4o")
+    //    It is used as the defaultModel fallback.
+    const provider = this.buildProvider(agent.model);
 
     // 4. Build FlowExecutor
     const executorConfig: FlowExecutorConfig = {
       llmExecutor: {
         provider,
-        defaultModel: this.resolveDefaultModel(
-          (agent.modelConfig as Record<string, unknown> | null) ?? {},
-        ),
+        defaultModel: this.resolveDefaultModel(agent.model),
         estimateCost: (model, usage) =>
           (provider as OpenAILLMProvider).estimateCost?.(model, {
             promptTokens:     usage.input,
@@ -118,7 +112,6 @@ export class AgentRunner {
           }) ?? 0,
       },
       maxNodes: this.config.maxNodes ?? 100,
-      // Persist each step to Prisma as it completes
       onStepComplete: async (step) => {
         await this.config.db.runStep
           .create({
@@ -126,20 +119,18 @@ export class AgentRunner {
               id:          step.id,
               runId:       id,
               nodeId:      step.nodeId,
-              nodeType:    step.nodeType,
+              nodeType:    String(step.nodeType),
               status:      step.status,
               startedAt:   new Date(step.startedAt),
               completedAt: step.completedAt ? new Date(step.completedAt) : null,
-              input:       step.input   ?? {},
-              output:      step.output  ?? {},
-              error:       step.error   ?? null,
+              input:       step.input  ?? {},
+              output:      step.output ?? {},
+              error:       step.error  ?? null,
               tokenUsage:  step.tokenUsage ?? null,
-              costUsd:     step.costUsd  ?? null,
+              costUsd:     step.costUsd   ?? 0,
             },
           })
           .catch((err: unknown) => {
-            // Non-fatal: log and continue. Run persistence should not block
-            // the conversation from proceeding.
             console.warn('[AgentRunner] Failed to persist RunStep:', err);
           });
       },
@@ -148,25 +139,22 @@ export class AgentRunner {
     const executor = new FlowExecutor(executorConfig);
 
     // 5. Build initial state from session history
-    //    The LLMStepExecutor will pick up `messages` from state and
-    //    inject them into the prompt via the `input` field of the trigger.
     const lastUserMsg = [...history].reverse().find(h => h.role === 'user');
     const initialState: Record<string, unknown> = {
-      messages: history,
+      messages:  history,
       userInput: lastUserMsg?.content ?? '',
       agentId,
     };
 
-    // 6. Create Run record in Prisma
+    // 6. Create Run record in Prisma (flowId is required)
     await this.config.db.run
       .create({
         data: {
           id,
-          agentId,
-          workspaceId: agent.workspaceId,
-          status:      'running',
-          trigger:     { type: 'gateway', source: 'conversation' },
-          startedAt:   new Date(),
+          flowId:   flow.id,
+          status:   'running',
+          trigger:  { type: 'gateway', source: 'conversation' },
+          startedAt: new Date(),
         },
       })
       .catch((err: unknown) => {
@@ -184,7 +172,7 @@ export class AgentRunner {
       initialState,
     });
 
-    // 8. Update Run record with final status
+    // 8. Update Run with final status
     await this.config.db.run
       .update({
         where: { id },
@@ -198,9 +186,7 @@ export class AgentRunner {
         console.warn('[AgentRunner] Failed to update Run status:', err);
       });
 
-    // 9. Extract reply text from final state
     const reply = this.extractReply(runResult);
-
     return { reply, runResult, runId: id };
   }
 
@@ -208,64 +194,60 @@ export class AgentRunner {
   // Private helpers
   // -------------------------------------------------------------------------
 
-  /**
-   * Build an OpenAILLMProvider from agent modelConfig or env vars.
-   * Priority: agent.modelConfig > MODEL_* env > OPENAI_* env
-   */
-  private buildProvider(
-    modelConfig: Record<string, unknown>,
-  ): OpenAILLMProvider {
+  private buildProvider(agentModel: string): OpenAILLMProvider {
     const apiKey =
-      (modelConfig.apiKey   as string | undefined) ??
       process.env.MODEL_API_KEY ??
       process.env.OPENAI_API_KEY ?? '';
 
     const baseUrl =
-      (modelConfig.baseUrl  as string | undefined) ??
       process.env.MODEL_BASE_URL ??
       process.env.OPENAI_BASE_URL;
 
     if (!apiKey) {
       console.warn(
         '[AgentRunner] No API key configured. ' +
-        'Set OPENAI_API_KEY or MODEL_API_KEY env var, or agent.modelConfig.apiKey.',
+        'Set OPENAI_API_KEY or MODEL_API_KEY.',
       );
     }
 
     return new OpenAILLMProvider({
       apiKey,
       baseUrl,
-      defaultModel: this.resolveDefaultModel(modelConfig),
+      defaultModel: this.resolveDefaultModel(agentModel),
     });
   }
 
-  private resolveDefaultModel(modelConfig: Record<string, unknown>): string {
+  /**
+   * Resolve the default model string.
+   * Agent.model format: "provider/model-id" or just "model-id"
+   * Strip the provider prefix for the OpenAI-compat API if needed.
+   */
+  private resolveDefaultModel(agentModel: string): string {
     return (
-      (modelConfig.defaultModel as string | undefined) ??
       process.env.MODEL_DEFAULT_MODEL ??
       process.env.OPENAI_DEFAULT_MODEL ??
+      agentModel ??
       'gpt-4o-mini'
     );
   }
 
   /**
-   * Extract the assistant reply text from the FlowRunResult.
+   * Extract the assistant reply text from FlowRunResult.
    *
-   * Strategy (in order):
-   *   1. finalState._reply (agents can explicitly set this key)
-   *   2. Content of the last completed agent/subagent step
-   *   3. String representation of finalState.userInput (echo fallback)
-   *   4. Empty string (never crash the gateway)
+   * Order:
+   *   1. finalState._reply  (explicit output key)
+   *   2. Content of last completed agent/subagent step
+   *   3. Content of last completed step of any type
+   *   4. Status message for non-reply outcomes
+   *   5. Empty string (never crash)
    */
   private extractReply(result: FlowRunResult): string {
     const { finalState, run } = result;
 
-    // Explicit reply key
     if (typeof finalState._reply === 'string' && finalState._reply) {
       return finalState._reply;
     }
 
-    // Last completed agent/subagent step output
     const agentSteps = run.steps
       .filter(s =>
         (s.nodeType === 'agent' || s.nodeType === 'subagent') &&
@@ -279,10 +261,10 @@ export class AgentRunner {
       if (typeof content === 'string' && content) return content;
     }
 
-    // Last completed step of any type
     const lastStep = [...run.steps]
       .reverse()
       .find(s => s.status === 'completed' && s.output);
+
     if (lastStep) {
       const raw = lastStep.output;
       if (typeof raw === 'string') return raw;
@@ -292,13 +274,8 @@ export class AgentRunner {
       }
     }
 
-    // Status message for non-reply outcomes
-    if (run.status === 'waiting_approval') {
-      return '(esperando aprobación)';
-    }
-    if (run.status === 'failed') {
-      return `(error en el flujo: ${run.error ?? 'desconocido'})`;
-    }
+    if (run.status === 'waiting_approval') return '(esperando aprobación)';
+    if (run.status === 'failed')           return `(error: ${run.error ?? 'desconocido'})`;
 
     return '';
   }
