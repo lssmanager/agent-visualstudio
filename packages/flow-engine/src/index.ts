@@ -38,6 +38,13 @@ export type {
   FlowRunResult,
 } from './flow-executor.js';
 
+// Agent runner (gateway <-> flow-engine bridge)
+export { AgentRunner } from './agent-runner.js';
+export type {
+  AgentRunnerConfig,
+  AgentRunResult,
+} from './agent-runner.js';
+
 // OpenClaw channel adapter (optional serialization layer)
 export { OpenClawChannelAdapter } from './openclaw-channel-adapter.js';
 export type { OpenClawChannelAdapterConfig } from './openclaw-channel-adapter.js';

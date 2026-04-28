@@ -4,7 +4,7 @@
  * Responsabilidades:
  *   1. Cargar y cachear ChannelConfig desde Prisma
  *   2. Resolver el IChannelAdapter correcto para cada canal
- *   3. Coordinar receive() → SessionManager → FlowEngine
+ *   3. Coordinar receive() → SessionManager → AgentRunner → FlowExecutor
  *   4. Coordinar FlowEngine reply → SessionManager → adapter.send()
  *   5. Ciclo de vida: activateChannel() / deactivateChannel()
  *
@@ -13,20 +13,17 @@
  *   Llave: GATEWAY_ENCRYPTION_KEY (hex 64 chars = 32 bytes).
  *   Formato del buffer encriptado:
  *     [12 bytes IV][16 bytes auth tag][N bytes ciphertext]
- *
- * Integración con FlowEngine:
- *   Por ahora el dispatch() llama a _runAgent() que es un stub.
- *   La integración real con packages/flow-engine se hace en la siguiente fase.
  */
 
 import { createDecipheriv } from 'crypto';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient }  from '@prisma/client';
 import {
   registry,
   SessionManager,
   type IncomingMessage,
   type OutboundMessage,
 } from '@agent-vs/gateway-sdk';
+import { AgentRunner }        from '@agent-vs/flow-engine';
 import type { IChannelAdapter } from './channels/channel-adapter.interface';
 
 // ---------------------------------------------------------------------------
@@ -46,12 +43,15 @@ interface DecryptedChannelConfig {
 // ---------------------------------------------------------------------------
 
 export class GatewayService {
-  private readonly sessions:    SessionManager;
+  /** Exposed for webchat reply route (needs findSession) */
+  readonly sessions:    SessionManager;
+  private readonly agentRunner:   AgentRunner;
   private readonly configCache  = new Map<string, DecryptedChannelConfig>();
-  private readonly encKey:      Buffer;
+  private readonly encKey:       Buffer;
 
   constructor(private readonly db: PrismaClient) {
-    this.sessions = new SessionManager(db);
+    this.sessions    = new SessionManager(db);
+    this.agentRunner = new AgentRunner({ db });
 
     const keyHex = process.env.GATEWAY_ENCRYPTION_KEY ?? '';
     if (!keyHex) {
@@ -66,34 +66,24 @@ export class GatewayService {
   // Public: lifecycle
   // -------------------------------------------------------------------------
 
-  /**
-   * Load a ChannelConfig from DB, decrypt secrets, call adapter.setup().
-   * Idempotent — safe to call on every gateway restart.
-   */
   async activateChannel(channelConfigId: string): Promise<void> {
-    const cfg = await this.loadChannelConfig(channelConfigId);
+    const cfg     = await this.loadChannelConfig(channelConfigId);
     const adapter = this.resolveAdapter(cfg.type);
-    await (adapter as unknown as { setup: (c: Record<string, unknown>, s: Record<string, unknown>) => Promise<void> })
-      .setup(cfg.config, cfg.secrets)
-      .catch((err: unknown) => {
-        console.error(`[GatewayService] setup failed for channel ${channelConfigId}:`, err);
-        throw err;
-      });
+    await (adapter as unknown as {
+      setup: (c: Record<string, unknown>, s: Record<string, unknown>) => Promise<void>;
+    }).setup(cfg.config, cfg.secrets);
     console.info(`[GatewayService] channel ${channelConfigId} (${cfg.type}) activated`);
   }
 
-  /**
-   * Call adapter.teardown() and remove from cache.
-   */
   async deactivateChannel(channelConfigId: string): Promise<void> {
     const cached = this.configCache.get(channelConfigId);
     if (!cached) return;
     const adapter = this.resolveAdapter(cached.type);
-    await (adapter as unknown as { teardown: (c: Record<string, unknown>, s: Record<string, unknown>) => Promise<void> })
-      .teardown(cached.config, cached.secrets)
-      .catch((err: unknown) => {
-        console.warn(`[GatewayService] teardown error for channel ${channelConfigId}:`, err);
-      });
+    await (adapter as unknown as {
+      teardown: (c: Record<string, unknown>, s: Record<string, unknown>) => Promise<void>;
+    }).teardown(cached.config, cached.secrets).catch((err: unknown) => {
+      console.warn(`[GatewayService] teardown error for channel ${channelConfigId}:`, err);
+    });
     this.configCache.delete(channelConfigId);
     console.info(`[GatewayService] channel ${channelConfigId} deactivated`);
   }
@@ -107,34 +97,44 @@ export class GatewayService {
    *
    * Flow:
    *   rawPayload
-   *     → adapter.receive()        parse channel format → IncomingMessage
-   *     → SessionManager           upsert GatewaySession, append to history
-   *     → _runAgent()              stub → real FlowEngine in next phase
-   *     → recordReply()            append assistant reply, adapter.send()
+   *     → adapter.receive()       parse channel format → IncomingMessage
+   *     → SessionManager           upsert GatewaySession, append user turn
+   *     → AgentRunner.run()        load Agent+FlowVersion, execute FlowExecutor
+   *     → recordReply()            append assistant turn, adapter.send()
    */
   async dispatch(
     channelConfigId: string,
     rawPayload:      Record<string, unknown>,
   ): Promise<void> {
-    const cfg = await this.loadChannelConfig(channelConfigId);
+    const cfg     = await this.loadChannelConfig(channelConfigId);
     const adapter = this.resolveAdapter(cfg.type);
 
-    // 1. Parse
+    // 1. Parse inbound message
     const incoming = await (adapter as unknown as {
       receive: (p: Record<string, unknown>, s: Record<string, unknown>) => Promise<IncomingMessage | null>;
     }).receive(rawPayload, cfg.secrets);
 
-    if (!incoming) return; // ignored update type (e.g. Telegram bot status)
+    if (!incoming) return;
 
-    // 2. Persist user turn
+    // 2. Persist user turn + upsert session
     const session = await this.sessions.receiveUserMessage(
       channelConfigId,
       cfg.agentId,
       incoming,
     );
 
-    // 3. Run agent (stub — will be replaced by FlowEngine.run())
-    const replyText = await this._runAgent(session.agentId, session.history);
+    // 3. Run agent via FlowExecutor
+    let replyText: string;
+    try {
+      const result = await this.agentRunner.run(
+        session.agentId,
+        session.history,
+      );
+      replyText = result.reply || '(sin respuesta)';
+    } catch (err) {
+      console.error('[GatewayService] AgentRunner error:', err);
+      replyText = '(ocurrió un error al procesar tu mensaje)';
+    }
 
     // 4. Build outbound message
     const outbound: OutboundMessage = {
@@ -142,20 +142,19 @@ export class GatewayService {
       text: replyText,
     };
 
-    // 5. Record assistant reply + send
+    // 5. Persist assistant turn + send to channel
     await this.recordReply(channelConfigId, session.id, outbound);
   }
 
   /**
-   * Called by the internal /api/webchat/:channelId/reply endpoint
-   * (agent → browser push).
+   * Called by the internal /api/webchat/:channelId/reply endpoint.
    */
   async recordReply(
     channelConfigId: string,
     sessionId:       string,
     outbound:        OutboundMessage,
   ): Promise<void> {
-    const cfg = await this.loadChannelConfig(channelConfigId);
+    const cfg     = await this.loadChannelConfig(channelConfigId);
     const adapter = this.resolveAdapter(cfg.type);
 
     await this.sessions.recordAssistantReply(sessionId, outbound);
@@ -191,7 +190,6 @@ export class GatewayService {
   }
 
   private resolveAdapter(type: string): IChannelAdapter {
-    // First look in the gateway-sdk registry (TelegramAdapter, WebChatAdapter)
     if (registry.has(type)) {
       return registry.get(type) as unknown as IChannelAdapter;
     }
@@ -201,18 +199,13 @@ export class GatewayService {
     );
   }
 
-  /**
-   * Decrypt AES-256-GCM secrets.
-   * Format: hex-encoded [12B IV][16B auth tag][N B ciphertext]
-   * Returns empty object if secretsEncrypted is null/empty or key is zeroed.
-   */
   private decrypt(secretsEncrypted: string | null): Record<string, unknown> {
     if (!secretsEncrypted) return {};
     try {
-      const buf      = Buffer.from(secretsEncrypted, 'hex');
-      const iv       = buf.subarray(0, 12);
-      const authTag  = buf.subarray(12, 28);
-      const cipher   = buf.subarray(28);
+      const buf     = Buffer.from(secretsEncrypted, 'hex');
+      const iv      = buf.subarray(0, 12);
+      const authTag = buf.subarray(12, 28);
+      const cipher  = buf.subarray(28);
 
       const decipher = createDecipheriv('aes-256-gcm', this.encKey, iv);
       decipher.setAuthTag(authTag);
@@ -222,19 +215,5 @@ export class GatewayService {
       console.error('[GatewayService] Failed to decrypt secrets:', err);
       return {};
     }
-  }
-
-  /**
-   * Stub: run the bound agent and return its reply.
-   * TODO: replace with FlowEngine.run(agentId, history) in Phase 3.
-   */
-  private async _runAgent(
-    agentId: string,
-    history: Array<{ role: string; content: string; ts: string }>,
-  ): Promise<string> {
-    void agentId;
-    void history;
-    // Placeholder response until FlowEngine is wired
-    return '(agent response — FlowEngine not yet connected)';
   }
 }
