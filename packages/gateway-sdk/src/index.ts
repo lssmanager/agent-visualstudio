@@ -4,3 +4,7 @@ export * from './events';
 export * from './methods';
 export * from './protocol';
 export * from './types';
+export * from './channel-adapter';
+export * from './session-manager';
+export { TelegramAdapter } from './adapters/telegram';
+export { WebChatAdapter }  from './adapters/webchat';
