@@ -3,6 +3,15 @@
 // Multi-tenant: Agency → Department → Workspace → Agent
 // Durable execution: Run → RunStep con checkpointData
 // Credenciales de modelos y canales: cifradas en DB (NO en .env)
+//
+// v2 — Integración Paperclip migration plan:
+//   + ConversationMessage (anti-TOAST pattern para historial gateway)
+//   + BudgetPolicy + BudgetIncident (governance de presupuesto por scope)
+//   + CostEvent (registro granular costo/tokens/latencia por modelo)
+//   + Approval + ApprovalComment (human-in-the-loop)
+//   + Routine (tareas recurrentes por schedule)
+//   + ActivityLog (audit log inmutable scope-aware)
+//   + AgentWakeupRequest (wakeup para runs pausados)
 // ============================================================
 
 generator client {
@@ -28,7 +37,9 @@ model Agency {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
-  departments Department[]
+  departments  Department[]
+  budgetPolicy BudgetPolicy[]
+  activityLogs ActivityLog[]
 
   @@map("agencies")
 }
@@ -42,8 +53,10 @@ model Department {
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
 
-  agency     Agency      @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  workspaces Workspace[]
+  agency       Agency        @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  workspaces   Workspace[]
+  budgetPolicy BudgetPolicy[]
+  activityLogs ActivityLog[]
 
   @@unique([agencyId, slug])
   @@map("departments")
@@ -65,6 +78,9 @@ model Workspace {
   flows          Flow[]
   runs           Run[]
   channelConfigs ChannelConfig[]
+  budgetPolicy   BudgetPolicy[]
+  routines       Routine[]
+  activityLogs   ActivityLog[]
 
   @@unique([departmentId, slug])
   @@map("workspaces")
@@ -98,12 +114,16 @@ model Agent {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  parent      Agent?       @relation("AgentHierarchy", fields: [parentAgentId], references: [id])
-  subagents   Agent[]      @relation("AgentHierarchy")
-  skillLinks  AgentSkill[]
-  runSteps    RunStep[]
+  workspace             Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  parent                Agent?                @relation("AgentHierarchy", fields: [parentAgentId], references: [id])
+  subagents             Agent[]               @relation("AgentHierarchy")
+  skillLinks            AgentSkill[]
+  runSteps              RunStep[]
   channelBindingRecords ChannelBinding[]
+  gatewaySessions       GatewaySession[]
+  wakeupRequests        AgentWakeupRequest[]
+  budgetPolicy          BudgetPolicy[]
+  activityLogs          ActivityLog[]
 
   @@index([workspaceId])
   @@map("agents")
@@ -118,11 +138,19 @@ model Skill {
   name         String
   description  String   @default("")
   version      String   @default("1.0.0")
+  // mcp | openapi | n8n_webhook | builtin | function | plugin
+  type         String   @default("builtin")
   category     String   @default("general")
   permissions  String[] @default([])
   // functions[], plugin, files, dependencies stored as JSON
   functions    Json?    @default("[]")
   plugin       Json?
+  // Para type=openapi: spec URL o spec inline
+  openapiSpec  Json?
+  // Para type=mcp: server URL y capabilities
+  mcpConfig    Json?
+  // Para type=n8n_webhook: webhook URL y auth
+  n8nConfig    Json?
   files        String[] @default([])
   dependencies String[] @default([])
   createdAt    DateTime @default(now())
@@ -190,9 +218,12 @@ model Run {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  flow      Flow      @relation(fields: [flowId], references: [id], onDelete: Cascade)
-  steps     RunStep[]
+  workspace      Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  flow           Flow                 @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  steps          RunStep[]
+  approvals      Approval[]
+  wakeupRequests AgentWakeupRequest[]
+  costEvents     CostEvent[]
 
   @@index([workspaceId, status])
   @@index([flowId])
@@ -227,8 +258,11 @@ model RunStep {
   resumePayload    Json?    // datos inyectados al resumir (aprobación humana, corrección, etc.)
   durableState     String   @default("none") // none | paused | resuming | replaying
 
-  run   Run    @relation(fields: [runId], references: [id], onDelete: Cascade)
-  agent Agent? @relation(fields: [agentId], references: [id])
+  run        Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  agent      Agent?    @relation(fields: [agentId], references: [id])
+  approvals  Approval[]
+  costEvents CostEvent[]
+  wakeupRequests AgentWakeupRequest[]
 
   @@index([runId])
   @@index([agentId])
@@ -253,8 +287,9 @@ model ChannelConfig {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   bindings  ChannelBinding[]
+  sessions  GatewaySession[]
 
   @@unique([workspaceId, channel])
   @@map("channel_configs")
@@ -276,20 +311,309 @@ model ChannelBinding {
   @@map("channel_bindings")
 }
 
-// Sesión de conversación activa en un canal
+// ────────────────────────────────────────────────────────────
+// GATEWAY SESSION + CONVERSATION MESSAGES
+//
+// Patrón anti-TOAST (inspirado en LangGraph Thread pattern):
+//   GatewaySession.activeContextJson  → ventana compacta para el LLM (<3KB)
+//                                        se reescribe con summarización
+//   ConversationMessage               → historial permanente, append-only,
+//                                        queryable, auditable por mensaje
+//
+// El problema de acumular contextWindow como JSONB creciente en la sesión:
+//   - Postgres mueve JSONB >~2KB a TOAST, degradando lecturas/escrituras
+//   - Cada nuevo msg requiere leer y reescribir el array completo
+//   - No es queryable por campos individuales sin deserializar toda la sesión
+// ────────────────────────────────────────────────────────────
+
 model GatewaySession {
   id              String   @id @default(cuid())
   channelConfigId String
   externalId      String   // user ID / thread ID del canal
   agentId         String
-  // Historial de mensajes comprimido para contexto de LLM
-  contextWindow   Json?    @default("[]")
-  lastActivityAt  DateTime @default(now())
-  metadata        Json?    @default("{}")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+
+  // Ventana activa para el LLM: últimos N msgs + resumen. Siempre pequeño (<3KB).
+  // Se compacta con summarización cuando el historial crece.
+  // NO es el historial completo — eso vive en ConversationMessage.
+  activeContextJson Json?  @default("[]")
+
+  state          String   @default("active") // active | idle | closed
+  lastActivityAt DateTime @default(now())
+  metadata       Json?    @default("{}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  channelConfig ChannelConfig        @relation(fields: [channelConfigId], references: [id], onDelete: Cascade)
+  agent         Agent                @relation(fields: [agentId], references: [id])
+  messages      ConversationMessage[]
 
   @@unique([channelConfigId, externalId])
   @@index([agentId])
   @@map("gateway_sessions")
+}
+
+// Historial permanente de conversación — append-only, nunca updates
+// Cada registro es un mensaje individual (~1KB JSONB — seguro anti-TOAST)
+model ConversationMessage {
+  id               String         @id @default(cuid())
+  sessionId        String
+  role             String         // user | assistant | system | tool
+  contentText      String?        @db.Text   // texto plano para búsqueda full-text
+  contentJson      Json           // estructura completa: [{type, text}] o tool_calls
+  channelMessageId String?        // ID externo del canal (Telegram msg_id, etc.)
+
+  toolCallId       String?        // si es resultado de un tool call
+  toolName         String?
+
+  // Scope jerárquico del agente que respondió o recibió
+  scopeType        String?        // agency | department | workspace | agent
+  scopeId          String?
+
+  tokenCount       Int?           // tokens del mensaje (estimado o real)
+  createdAt        DateTime       @default(now())
+
+  session GatewaySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+  @@index([sessionId, role])
+  @@index([scopeId, createdAt])
+  @@map("conversation_messages")
+}
+
+// ────────────────────────────────────────────────────────────
+// BUDGET GOVERNANCE
+// Extraído y reescrito desde Paperclip (Drizzle → Prisma)
+// Cubre: OP-05 Cost Budget Gauge, OP-06 Cost by Model/Role,
+//        OP-08 Governance Widgets del catálogo Phase 3
+// ────────────────────────────────────────────────────────────
+
+// Políticas de presupuesto por scope con herencia en cascada
+// Resolución: agent → workspace → department → agency → global
+model BudgetPolicy {
+  id                  String   @id @default(cuid())
+  scopeType           String   // agency | department | workspace | agent
+  scopeId             String
+  window              String   @default("monthly") // daily | weekly | monthly | custom
+
+  softCapUsd          Float?   // límite de advertencia
+  hardCapUsd          Float?   // límite de bloqueo
+  requireApproval     Boolean  @default(false)
+  approvalThreshold   Float?   // monto a partir del cual requiere aprobación
+  replayBudgetUsd     Float?   // presupuesto extra para replays/retries
+  escalationThreshold Float?   // % de consumo para escalar alerta
+
+  // Caps por modelo individual: { "gpt-4o": 50.0, "claude-3-opus": 30.0 }
+  perModelCaps        Json?    @default("{}")
+
+  // Herencia: si inheritedFrom != null, effectiveValue es el valor calculado
+  inheritedFrom       String?  // scopeId padre del que hereda
+  effectiveValue      Json?    // valor calculado post-herencia en cascada
+  isOverride          Boolean  @default(false) // true = override local, false = heredado
+
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  // Relaciones opcionales por scopeType
+  agency     Agency?     @relation(fields: [scopeId], references: [id])
+  department Department? @relation(fields: [scopeId], references: [id])
+  workspace  Workspace?  @relation(fields: [scopeId], references: [id])
+  agent      Agent?      @relation(fields: [scopeId], references: [id])
+  incidents  BudgetIncident[]
+
+  @@unique([scopeType, scopeId, window])
+  @@index([scopeId])
+  @@map("budget_policies")
+}
+
+// Registro de incidentes de presupuesto — append-only
+model BudgetIncident {
+  id           String   @id @default(cuid())
+  policyId     String
+  scopeType    String
+  scopeId      String
+  incidentType String   // soft_cap_reached | hard_cap_reached | approval_required | per_model_cap_reached
+  triggeredAt  DateTime @default(now())
+  resolvedAt   DateTime?
+  runId        String?
+  runStepId    String?
+  amountUsd    Float    // monto que disparó el incidente
+  metadata     Json?    @default("{}")
+
+  policy BudgetPolicy @relation(fields: [policyId], references: [id])
+
+  @@index([scopeId, triggeredAt])
+  @@index([policyId])
+  @@map("budget_incidents")
+}
+
+// ────────────────────────────────────────────────────────────
+// COST EVENTS — registro granular de costo por modelo
+// Extraído de Paperclip cost_events, re-escrito en Prisma
+// Materia prima para OV-03 Tokens, OV-06 Model Mix,
+// OV-07 Model Spend Ranked, OV-09 Latency P50/P95
+// ────────────────────────────────────────────────────────────
+
+model CostEvent {
+  id            String   @id @default(cuid())
+  runStepId     String?
+  runId         String?
+  agentId       String?
+  scopeType     String   // agency | department | workspace | agent
+  scopeId       String
+  model         String   // gpt-4o | gpt-4o-mini | claude-3-opus | qwen-32b | etc.
+  provider      String   @default("openai") // openai | anthropic | qwen | deepseek | openrouter
+  promptTokens  Int      @default(0)
+  completTokens Int      @default(0)
+  totalTokens   Int      @default(0)
+  costUsd       Float    @default(0)
+  latencyMs     Int?     // latencia total de la llamada en ms
+  // Rol del modelo en este step del run
+  role          String?  // primary | fallback | tool-overhead | long-context
+  timestamp     DateTime @default(now())
+
+  run     Run?     @relation(fields: [runId], references: [id])
+  runStep RunStep? @relation(fields: [runStepId], references: [id])
+
+  @@index([scopeId, timestamp])
+  @@index([model, timestamp])
+  @@index([runId])
+  @@index([agentId, timestamp])
+  @@map("cost_events")
+}
+
+// ────────────────────────────────────────────────────────────
+// APPROVALS — governance human-in-the-loop
+// Extraído de Paperclip approvals + approval_comments
+// Cubre: OP-08 Governance Widgets, nodo approval del canvas
+// ────────────────────────────────────────────────────────────
+
+model Approval {
+  id          String    @id @default(cuid())
+  runId       String
+  runStepId   String?
+  scopeType   String
+  scopeId     String
+  status      String    @default("pending") // pending | approved | rejected | expired | cancelled
+  requestedAt DateTime  @default(now())
+  resolvedAt  DateTime?
+  resolvedBy  String?   // userId o agentId que resolvió
+  reason      String?   // motivo de aprobación o rechazo
+  // contexto del step que requiere aprobación
+  context     Json?     @default("{}")
+  metadata    Json?     @default("{}")
+
+  run     Run      @relation(fields: [runId], references: [id])
+  runStep RunStep? @relation(fields: [runStepId], references: [id])
+  comments ApprovalComment[]
+
+  @@index([scopeId, status])
+  @@index([runId])
+  @@map("approvals")
+}
+
+model ApprovalComment {
+  id         String   @id @default(cuid())
+  approvalId String
+  authorId   String   // userId o agentId
+  authorType String   @default("user") // user | agent | system
+  content    String   @db.Text
+  createdAt  DateTime @default(now())
+
+  approval Approval @relation(fields: [approvalId], references: [id], onDelete: Cascade)
+
+  @@index([approvalId])
+  @@map("approval_comments")
+}
+
+// ────────────────────────────────────────────────────────────
+// ROUTINES — tareas recurrentes por schedule
+// Extraído de Paperclip routines
+// ────────────────────────────────────────────────────────────
+
+model Routine {
+  id          String   @id @default(cuid())
+  workspaceId String
+  agentId     String?
+  flowId      String?
+  name        String
+  description String?  @default("")
+  // cron expression: "0 9 * * 1-5" = lunes a viernes 9am
+  schedule    String
+  // payload inyectado como trigger del run
+  payload     Json?    @default("{}")
+  isEnabled   Boolean  @default(true)
+  lastRunAt   DateTime?
+  nextRunAt   DateTime?
+  lastRunId   String?  // FK al último Run generado
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([nextRunAt])
+  @@map("routines")
+}
+
+// ────────────────────────────────────────────────────────────
+// ACTIVITY LOG — audit log inmutable scope-aware
+// Extraído de Paperclip activity_log
+// Append-only: nunca updates, nunca deletes
+// ────────────────────────────────────────────────────────────
+
+model ActivityLog {
+  id         String   @id @default(cuid())
+  scopeType  String   // agency | department | workspace | agent
+  scopeId    String
+  actorType  String   // user | agent | system
+  actorId    String?
+  // Acciones: run.started | run.completed | run.failed | approval.requested |
+  //           approval.resolved | budget.soft_cap | budget.hard_cap |
+  //           policy.updated | agent.enabled | agent.disabled | routine.triggered
+  action     String
+  // datos relevantes del evento (no duplicar scopeId/actorId ya en columnas)
+  payload    Json?    @default("{}")
+  createdAt  DateTime @default(now())
+
+  // Relaciones opcionales por scopeType para queries directas
+  agency     Agency?     @relation(fields: [scopeId], references: [id])
+  department Department? @relation(fields: [scopeId], references: [id])
+  workspace  Workspace?  @relation(fields: [scopeId], references: [id])
+  agent      Agent?      @relation(fields: [scopeId], references: [id])
+
+  @@index([scopeId, createdAt])
+  @@index([action, createdAt])
+  @@index([actorId, createdAt])
+  @@map("activity_logs")
+}
+
+// ────────────────────────────────────────────────────────────
+// AGENT WAKEUP REQUESTS
+// Extraído de Paperclip agent_wakeup_requests
+// Mecanismo para reanudar runs pausados por approval, budget o schedule
+// ────────────────────────────────────────────────────────────
+
+model AgentWakeupRequest {
+  id          String    @id @default(cuid())
+  agentId     String
+  runId       String?
+  runStepId   String?
+  // Por qué se debe despertar el agente
+  reason      String    // approval_received | budget_reset | manual | schedule | error_resolved
+  // datos inyectados al reanudar (ej: resultado de aprobación)
+  payload     Json?     @default("{}")
+  status      String    @default("pending") // pending | processing | processed | failed
+  scheduledAt DateTime?
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  agent   Agent    @relation(fields: [agentId], references: [id])
+  run     Run?     @relation(fields: [runId], references: [id])
+  runStep RunStep? @relation(fields: [runStepId], references: [id])
+
+  @@index([agentId, status])
+  @@index([runId])
+  @@index([scheduledAt])
+  @@map("agent_wakeup_requests")
 }
