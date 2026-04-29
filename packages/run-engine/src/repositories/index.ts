@@ -1,11 +1,18 @@
 /**
  * Barrel — packages/run-engine/src/repositories/
  *
- * Re-exports todas las clases e interfaces de los repositorios
- * de la jerarquía principal (Agency → Department → Workspace → Agent).
+ * Re-exports todas las clases e interfaces de los repositorios.
+ *
+ * Jerarquía (F0-04):
+ *   Agency → Department → Workspace → Agent
+ *
+ * Ejecución (F0-05):
+ *   Run → RunStep
  */
 
-export { AgencyRepository }    from './agency.repository'
+// ── Jerarquía ──────────────────────────────────────────────────────────────────
+
+export { AgencyRepository } from './agency.repository'
 export type {
   CreateAgencyInput,
   UpdateAgencyInput,
@@ -32,3 +39,20 @@ export type {
   UpdateAgentInput,
   FindAgentsOptions,
 } from './agent.repository'
+
+// ── Ejecución ────────────────────────────────────────────────────────────────
+
+export { RunRepository } from './run.repository'
+export type {
+  CreateRunInput,
+  FindRunsOptions,
+  CreateApprovalInput,
+} from './run.repository'
+
+export { RunStepRepository } from './run-step.repository'
+export type {
+  CreateStepInput,
+  CompleteStepInput,
+  FailStepInput,
+  FindStepsOptions,
+} from './run-step.repository'
