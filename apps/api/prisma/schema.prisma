@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Prisma schema — agent-visualstudio
 // Modelos base:  Workspace, Agent, Flow, Skill, Policy, Hook
-//                Channel, LlmProvider
+//                Channel, LlmProvider, ProviderCatalog
 // Modelos plan:  Run, RunStep, ConversationMessage
 //                BudgetPolicy, BudgetIncident, CostEvent
 //                ModelPolicy, AgentProfile
@@ -169,21 +169,109 @@ model Channel {
   @@index([boundAgentId])
 }
 
+// ── ProviderCatalog ───────────────────────────────────────────────────────────
+// Catálogo estático de providers conocidos (semilla via seed.ts).
+// Describe capabilities, modelos por defecto y tipo de auth requerida.
+// LlmProvider apunta a este catálogo para validar el string provider.
+
+enum ProviderAuthType {
+  api_key          // API key estándar (Authorization: Bearer / X-API-Key)
+  oauth            // OAuth 2.0 / OIDC (GitHub Copilot, openai-codex)
+  aws_credentials  // AWS SigV4 (Amazon Bedrock)
+  azure_api_key    // Azure OpenAI (api-key header + deployment URLs)
+  none             // Sin auth (Ollama local, LM Studio local, vLLM local)
+}
+
+model ProviderCatalog {
+  // slug único: "openai" | "anthropic" | "qwen" | "deepseek" | "openrouter" | ...
+  id          String           @id  // slug usado en provider field de LlmProvider
+
+  displayName String           // nombre legible: "OpenAI", "Anthropic", etc.
+  description String?
+
+  // ── Auth ──
+  authType    ProviderAuthType @default(api_key)
+
+  // ── Capabilities ──────────────────────────────────────────────────────────
+  // JSON con flags booleanos del set de capacidades del provider.
+  // Shape recomendado:
+  // {
+  //   "chat": true,
+  //   "streaming": true,
+  //   "functionCalling": true,
+  //   "vision": true,
+  //   "imageGeneration": false,
+  //   "videoGeneration": false,
+  //   "audioTts": false,
+  //   "audioStt": false,
+  //   "realtimeVoice": false,
+  //   "embeddings": false,
+  //   "batchApi": false,
+  //   "codeExecution": false,
+  //   "webSearch": false
+  // }
+  capabilities Json            @default("{}")
+
+  // ── Default models ────────────────────────────────────────────────────────
+  // JSON con los modelos recomendados por rol.
+  // Shape recomendado:
+  // {
+  //   "primary": "gpt-4o-mini",
+  //   "fast": "gpt-4o-mini",
+  //   "smart": "gpt-4o",
+  //   "embedding": "text-embedding-3-small",
+  //   "image": "gpt-image-2",
+  //   "video": "sora-2",
+  //   "tts": "gpt-4o-mini-tts",
+  //   "stt": "gpt-4o-transcribe"
+  // }
+  defaultModels Json           @default("{}")
+
+  // ── Base URL por defecto ──────────────────────────────────────────────────
+  // El LlmProvider puede sobreescribirla (útil para Azure, proxies, local).
+  defaultBaseUrl String?
+
+  // ── Flags de clasificación ────────────────────────────────────────────────
+  isLocalOnly  Boolean         @default(false)  // Ollama, LM Studio, vLLM, SGLang
+  isOpenAiCompat Boolean       @default(false)  // acepta OpenAI SDK sin adaptador
+  isEnabled    Boolean         @default(true)   // para ocultar providers beta/deprecated
+
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  llmProviders LlmProvider[]
+}
+
 // ── LlmProvider ───────────────────────────────────────────────────────────────
+// Credencial de un workspace hacia un provider del catálogo.
+// provider es el slug FK a ProviderCatalog.id (e.g. "openai", "anthropic").
+// baseUrl permite override de la URL del catálogo (Azure, proxy, local).
+
 model LlmProvider {
   id          String    @id @default(cuid())
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  provider    String    // openai | anthropic | qwen | deepseek | openrouter
-  apiKeyEnc   String    // AES-256-GCM cifrado
+  // FK al catálogo — el slug garantiza que solo providers conocidos sean usados
+  provider    String
+  catalog     ProviderCatalog @relation(fields: [provider], references: [id])
+
+  // Override de baseUrl del catálogo.
+  // null → usar catalog.defaultBaseUrl
+  // valor → URL personalizada (Azure endpoint, proxy, Ollama local, etc.)
   baseUrl     String?
+
+  // API key / token cifrado (AES-256-GCM: iv:authTag:ciphertext)
+  // null cuando authType = none (Ollama local sin auth) o oauth con token externo
+  apiKeyEnc   String?
+
   isDefault   Boolean   @default(false)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   @@unique([workspaceId, provider])
   @@index([workspaceId])
+  @@index([provider])
 }
 
 // ── Run ───────────────────────────────────────────────────────────────────────
@@ -372,7 +460,7 @@ model CostEvent {
   budgetPolicyId String?
   budgetPolicy   BudgetPolicy? @relation(fields: [budgetPolicyId], references: [id])
 
-  provider       String        // openai | anthropic | qwen | deepseek | openrouter
+  provider       String        // slug del ProviderCatalog
   model          String
   promptTokens   Int
   completionTokens Int
@@ -411,7 +499,7 @@ model ModelPolicy {
   targetId    String?
   agent       Agent?           @relation(fields: [targetId], references: [id])
 
-  provider    String           // openai | anthropic | qwen | deepseek | openrouter
+  provider    String           // slug del ProviderCatalog
   model       String           // e.g. gpt-4o-mini, qwen-turbo, deepseek-chat
   temperature Decimal          @default(0.7) @db.Decimal(3, 2)
   maxTokens   Int              @default(4096)
