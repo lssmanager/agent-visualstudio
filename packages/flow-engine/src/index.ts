@@ -1,9 +1,8 @@
-// flow-compiler (existing)
-export { compileFlow, compileFlows } from './flow-compiler.js';
-export type { CompiledFlow } from './flow-compiler.js';
+/**
+ * flow-engine — public exports
+ */
 
-// LLM provider
-export { OpenAILLMProvider } from './llm-provider.js';
+// Provider interface + implementations
 export type {
   ILLMProvider,
   LLMMessage,
@@ -13,38 +12,30 @@ export type {
   LLMCallResult,
   LLMTokenUsage,
   OpenAILLMProviderConfig,
-} from './llm-provider.js';
+} from './llm-provider.js'
+export { OpenAILLMProvider } from './llm-provider.js'
 
-// Tool call loop
-export { runToolCallLoop } from './tool-call-loop.js';
+// Model policy resolver
 export type {
-  ToolCallLoopOptions,
-  ToolCallLoopResult,
-} from './tool-call-loop.js';
+  ResolveModelInput,
+  ResolvedModel,
+} from './model-policy-resolver.js'
+export { ModelPolicyResolver } from './model-policy-resolver.js'
 
-// LLM step executor
-export { LLMStepExecutor } from './llm-step-executor.js';
+// Step executor
 export type {
   LLMStepExecutorConfig,
   StepExecutionContext,
   StepExecutionResult,
-} from './llm-step-executor.js';
+} from './llm-step-executor.js'
+export { LLMStepExecutor } from './llm-step-executor.js'
 
-// Flow executor
-export { FlowExecutor } from './flow-executor.js';
-export type {
-  FlowExecutorConfig,
-  FlowRunOptions,
-  FlowRunResult,
-} from './flow-executor.js';
+// Flow execution
+export { FlowExecutor } from './flow-executor.js'
+export { FlowCompiler } from './flow-compiler.js'
 
-// Agent runner (gateway <-> flow-engine bridge)
-export { AgentRunner } from './agent-runner.js';
-export type {
-  AgentRunnerConfig,
-  AgentRunResult,
-} from './agent-runner.js';
+// Tool call loop
+export { runToolCallLoop } from './tool-call-loop.js'
 
-// OpenClaw channel adapter (optional serialization layer)
-export { OpenClawChannelAdapter } from './openclaw-channel-adapter.js';
-export type { OpenClawChannelAdapterConfig } from './openclaw-channel-adapter.js';
+// Channel adapter
+export { OpenClawChannelAdapter } from './openclaw-channel-adapter.js'

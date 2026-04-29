@@ -1,282 +1,203 @@
 /**
- * agent-runner.ts — Puente entre Prisma Agent → Flow → FlowExecutor
+ * AgentRunner — orquesta un Run completo:
+ *   1. Crea el Run en DB
+ *   2. Compila el Flow en nodos ejecutables
+ *   3. Delega cada nodo a LLMStepExecutor
+ *   4. Persiste RunSteps
+ *   5. Cierra el Run con status final
  *
- * Usa el schema real:
- *   Agent.flows[]          (Flow[],  campo: flows)
- *   Flow.spec              (Json,    la FlowDefinition serializada)
- *   Flow.isActive          (Boolean, solo el activo se ejecuta)
- *   Run.flowId             (String,  requerido)
- *   Run.agencyId           (String?, opcional)
- *   RunStep.runId / nodeId / nodeType / status / startedAt
- *
- * Variables de entorno por modelo:
- *   MODEL_API_KEY        — llave del proveedor LLM
- *   MODEL_BASE_URL       — base URL (OpenRouter, DeepSeek, Qwen…)
- *   MODEL_DEFAULT_MODEL  — modelo por defecto
- *
- * Fallback globales:
- *   OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_DEFAULT_MODEL
+ * Integrado con ModelPolicyResolver via LLMStepExecutor.
+ * Para runs sin Flow (conversación directa), usa un nodo sintético.
  */
-
-import { randomUUID }        from 'crypto';
-import type { PrismaClient } from '@prisma/client';
-import { compileFlow }       from './flow-compiler.js';
-import { FlowExecutor }      from './flow-executor.js';
-import { OpenAILLMProvider } from './llm-provider.js';
-import type {
-  FlowExecutorConfig,
-  FlowRunResult,
-} from './flow-executor.js';
-import type { SessionHistoryEntry } from '@agent-vs/gateway-sdk';
-
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
+import type { PrismaClient } from '@prisma/client'
+import type { ILLMProvider } from './llm-provider.js'
+import { LLMStepExecutor } from './llm-step-executor.js'
+import type { StepExecutionContext } from './llm-step-executor.js'
+import type { OAuthService } from '../../apps/api/src/services/oauth.service.js'
+import type { SkillSpec } from '../../core-types/src/skill-spec.js'
+import type { McpToolDefinition } from '../../mcp-server/src/tools.js'
 
 export interface AgentRunnerConfig {
-  db: PrismaClient;
-  /** Max flow nodes before aborting (circuit breaker). Default: 100 */
-  maxNodes?: number;
+  prisma:         PrismaClient
+  oauthService?:  OAuthService
+  /**
+   * Providers pre-instanciados (opcionales).
+   * El executor construye providers desde DB si no están aquí.
+   */
+  providers?:     Map<string, ILLMProvider>
+  /** Provider legacy para backwards-compat */
+  defaultProvider?: ILLMProvider
 }
 
-export interface AgentRunResult {
-  /** The text reply to send back to the user */
-  reply:     string;
-  /** Full FlowRunResult for logging / cost tracking */
-  runResult: FlowRunResult;
-  /** DB run ID */
-  runId:     string;
+export interface RunInput {
+  workspaceId: string
+  agentId?:    string
+  flowId?:     string
+  sessionId?:  string
+  channelKind?: string
+  inputData:   Record<string, unknown>
+  availableSkills?: SkillSpec[]
+  extraTools?:      McpToolDefinition[]
 }
 
-// ---------------------------------------------------------------------------
-// AgentRunner
-// ---------------------------------------------------------------------------
+export interface RunOutput {
+  runId:     string
+  status:    'completed' | 'failed'
+  output?:   Record<string, unknown>
+  error?:    string
+  durationMs: number
+}
 
 export class AgentRunner {
-  constructor(private readonly config: AgentRunnerConfig) {}
+  private readonly executor: LLMStepExecutor
 
-  /**
-   * Execute the active Flow of an Agent for one conversation turn.
-   *
-   * @param agentId  UUID of the Agent row in Prisma
-   * @param history  Session message history from SessionManager
-   * @param runId    Optional: pass an existing runId for resumable runs
-   */
-  async run(
-    agentId: string,
-    history: SessionHistoryEntry[],
-    runId?: string,
-  ): Promise<AgentRunResult> {
-    const id = runId ?? randomUUID();
+  constructor(private readonly config: AgentRunnerConfig) {
+    this.executor = new LLMStepExecutor({
+      providers:       config.providers ?? new Map(),
+      defaultProvider: config.defaultProvider,
+      prisma:          config.prisma,
+      oauthService:    config.oauthService,
+    })
+  }
 
-    // 1. Load agent + active flow from Prisma
-    const agent = await this.config.db.agent.findUniqueOrThrow({
-      where:   { id: agentId },
-      include: {
-        flows: {
-          where:   { isActive: true },
-          take:    1,
-          orderBy: { updatedAt: 'desc' },
-        },
+  async run(input: RunInput): Promise<RunOutput> {
+    const startMs = Date.now()
+
+    // ── 1. Crear Run en DB ───────────────────────────────────────────
+    const run = await this.config.prisma.run.create({
+      data: {
+        workspaceId: input.workspaceId,
+        agentId:     input.agentId,
+        flowId:      input.flowId,
+        sessionId:   input.sessionId,
+        channelKind: input.channelKind,
+        status:      'running',
+        inputData:   input.inputData,
+        startedAt:   new Date(),
       },
-    });
+    })
 
-    const flow = agent.flows[0];
-    if (!flow) {
-      throw new Error(
-        `AgentRunner: agent ${agentId} has no active Flow. ` +
-        'Create and activate a flow in the Studio before using this agent.',
-      );
-    }
+    try {
+      // ── 2. Obtener nodos del Flow ──────────────────────────────────
+      const nodes = await this.resolveNodes(input)
 
-    // 2. Compile the flow spec
-    const compiled = compileFlow(
-      flow.spec as Parameters<typeof compileFlow>[0],
-    );
+      // ── 3. Contexto inicial ────────────────────────────────────────
+      let context: StepExecutionContext = {
+        runId:           run.id,
+        workspaceId:     input.workspaceId,
+        agentId:         input.agentId,
+        availableSkills: input.availableSkills ?? [],
+        extraTools:      input.extraTools,
+        state:           { ...input.inputData },
+      }
 
-    // 3. Build LLM provider from env vars
-    //    Agent.model is the model identifier (e.g. "openai/gpt-4o")
-    //    It is used as the defaultModel fallback.
-    const provider = this.buildProvider(agent.model);
+      // ── 4. Ejecutar nodos en secuencia ─────────────────────────────
+      let lastOutput: Record<string, unknown> = {}
 
-    // 4. Build FlowExecutor
-    const executorConfig: FlowExecutorConfig = {
-      llmExecutor: {
-        provider,
-        defaultModel: this.resolveDefaultModel(agent.model),
-        estimateCost: (model, usage) =>
-          (provider as OpenAILLMProvider).estimateCost?.(model, {
-            promptTokens:     usage.input,
-            completionTokens: usage.output,
-            totalTokens:      usage.input + usage.output,
-          }) ?? 0,
-      },
-      maxNodes: this.config.maxNodes ?? 100,
-      onStepComplete: async (step) => {
-        await this.config.db.runStep
-          .create({
-            data: {
-              id:          step.id,
-              runId:       id,
-              nodeId:      step.nodeId,
-              nodeType:    String(step.nodeType),
-              status:      step.status,
-              startedAt:   new Date(step.startedAt),
-              completedAt: step.completedAt ? new Date(step.completedAt) : null,
-              input:       step.input  ?? {},
-              output:      step.output ?? {},
-              error:       step.error  ?? null,
-              tokenUsage:  step.tokenUsage ?? null,
-              costUsd:     step.costUsd   ?? 0,
-            },
-          })
-          .catch((err: unknown) => {
-            console.warn('[AgentRunner] Failed to persist RunStep:', err);
-          });
-      },
-    };
+      for (const node of nodes) {
+        const result = await this.executor.execute(node, context)
 
-    const executor = new FlowExecutor(executorConfig);
+        // Persistir RunStep
+        await this.config.prisma.runStep.create({
+          data: {
+            runId:            run.id,
+            nodeId:           result.step.nodeId,
+            nodeType:         result.step.nodeType,
+            index:            nodes.indexOf(node),
+            status:           result.step.status,
+            input:            result.step.input as Record<string, unknown>,
+            output:           result.step.output as Record<string, unknown> | undefined,
+            error:            result.step.error,
+            model:            result.resolvedModel.model,
+            provider:         result.resolvedModel.provider,
+            promptTokens:     result.step.tokenUsage?.input,
+            completionTokens: result.step.tokenUsage?.output,
+            totalTokens:      result.step.tokenUsage
+              ? result.step.tokenUsage.input + result.step.tokenUsage.output
+              : undefined,
+            costUsd:          result.step.costUsd,
+            startedAt:        result.step.startedAt ? new Date(result.step.startedAt) : undefined,
+            completedAt:      result.step.completedAt ? new Date(result.step.completedAt) : undefined,
+          },
+        })
 
-    // 5. Build initial state from session history
-    const lastUserMsg = [...history].reverse().find(h => h.role === 'user');
-    const initialState: Record<string, unknown> = {
-      messages:  history,
-      userInput: lastUserMsg?.content ?? '',
-      agentId,
-    };
+        // Propagar estado
+        context = { ...context, state: result.state }
+        lastOutput = result.state
 
-    // 6. Create Run record in Prisma (flowId is required)
-    await this.config.db.run
-      .create({
-        data: {
-          id,
-          flowId:   flow.id,
-          status:   'running',
-          trigger:  { type: 'gateway', source: 'conversation' },
-          startedAt: new Date(),
-        },
-      })
-      .catch((err: unknown) => {
-        console.warn('[AgentRunner] Failed to create Run record:', err);
-      });
+        // Abortar si el step falló
+        if (result.step.status === 'failed') {
+          throw new Error(result.step.error ?? 'Step failed without error message')
+        }
+      }
 
-    // 7. Execute
-    const runResult = await executor.run(compiled, {
-      runId:        id,
-      workspaceId:  agent.workspaceId,
-      trigger: {
-        type:    'gateway',
-        payload: initialState,
-      },
-      initialState,
-    });
-
-    // 8. Update Run with final status
-    await this.config.db.run
-      .update({
-        where: { id },
-        data: {
-          status:      runResult.run.status,
+      // ── 5. Cerrar Run como completed ───────────────────────────────
+      await this.config.prisma.run.update({
+        where: { id: run.id },
+        data:  {
+          status:      'completed',
+          outputData:  lastOutput,
           completedAt: new Date(),
-          error:       runResult.run.error ?? null,
         },
       })
-      .catch((err: unknown) => {
-        console.warn('[AgentRunner] Failed to update Run status:', err);
-      });
 
-    const reply = this.extractReply(runResult);
-    return { reply, runResult, runId: id };
-  }
+      return {
+        runId:      run.id,
+        status:     'completed',
+        output:     lastOutput,
+        durationMs: Date.now() - startMs,
+      }
 
-  // -------------------------------------------------------------------------
-  // Private helpers
-  // -------------------------------------------------------------------------
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err)
 
-  private buildProvider(agentModel: string): OpenAILLMProvider {
-    const apiKey =
-      process.env.MODEL_API_KEY ??
-      process.env.OPENAI_API_KEY ?? '';
+      await this.config.prisma.run.update({
+        where: { id: run.id },
+        data:  {
+          status:      'failed',
+          error,
+          completedAt: new Date(),
+        },
+      }).catch(() => { /* silent — no queremos enmascarar el error original */ })
 
-    const baseUrl =
-      process.env.MODEL_BASE_URL ??
-      process.env.OPENAI_BASE_URL;
-
-    if (!apiKey) {
-      console.warn(
-        '[AgentRunner] No API key configured. ' +
-        'Set OPENAI_API_KEY or MODEL_API_KEY.',
-      );
-    }
-
-    return new OpenAILLMProvider({
-      apiKey,
-      baseUrl,
-      defaultModel: this.resolveDefaultModel(agentModel),
-    });
-  }
-
-  /**
-   * Resolve the default model string.
-   * Agent.model format: "provider/model-id" or just "model-id"
-   * Strip the provider prefix for the OpenAI-compat API if needed.
-   */
-  private resolveDefaultModel(agentModel: string): string {
-    return (
-      process.env.MODEL_DEFAULT_MODEL ??
-      process.env.OPENAI_DEFAULT_MODEL ??
-      agentModel ??
-      'gpt-4o-mini'
-    );
-  }
-
-  /**
-   * Extract the assistant reply text from FlowRunResult.
-   *
-   * Order:
-   *   1. finalState._reply  (explicit output key)
-   *   2. Content of last completed agent/subagent step
-   *   3. Content of last completed step of any type
-   *   4. Status message for non-reply outcomes
-   *   5. Empty string (never crash)
-   */
-  private extractReply(result: FlowRunResult): string {
-    const { finalState, run } = result;
-
-    if (typeof finalState._reply === 'string' && finalState._reply) {
-      return finalState._reply;
-    }
-
-    const agentSteps = run.steps
-      .filter(s =>
-        (s.nodeType === 'agent' || s.nodeType === 'subagent') &&
-        s.status === 'completed' &&
-        s.output,
-      )
-      .reverse();
-
-    for (const step of agentSteps) {
-      const content = (step.output as Record<string, unknown> | null)?.content;
-      if (typeof content === 'string' && content) return content;
-    }
-
-    const lastStep = [...run.steps]
-      .reverse()
-      .find(s => s.status === 'completed' && s.output);
-
-    if (lastStep) {
-      const raw = lastStep.output;
-      if (typeof raw === 'string') return raw;
-      if (raw && typeof raw === 'object') {
-        const c = (raw as Record<string, unknown>).content;
-        if (typeof c === 'string' && c) return c;
+      return {
+        runId:      run.id,
+        status:     'failed',
+        error,
+        durationMs: Date.now() - startMs,
       }
     }
+  }
 
-    if (run.status === 'waiting_approval') return '(esperando aprobación)';
-    if (run.status === 'failed')           return `(error: ${run.error ?? 'desconocido'})`;
+  // ── Resolución de nodos ──────────────────────────────────────────────
 
-    return '';
+  private async resolveNodes(input: RunInput) {
+    if (input.flowId) {
+      const flow = await this.config.prisma.flow.findUnique({
+        where: { id: input.flowId },
+      })
+      if (!flow) throw new Error(`Flow ${input.flowId} not found`)
+
+      // nodes es un JSON array de FlowNode guardados en DB
+      return (flow.nodes as unknown as import('../../core-types/src/flow-spec.js').FlowNode[])
+    }
+
+    // Sin Flow: nodo sintético que usa el agente directamente
+    const agent = input.agentId
+      ? await this.config.prisma.agent.findUnique({ where: { id: input.agentId } })
+      : null
+
+    return [
+      {
+        id:     'direct',
+        type:   'agent' as const,
+        label:  agent?.name ?? 'Agent',
+        config: {
+          systemPrompt: agent?.role ?? undefined,
+          model:        agent?.model ?? undefined,
+        },
+        position: { x: 0, y: 0 },
+      },
+    ]
   }
 }
