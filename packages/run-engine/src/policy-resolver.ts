@@ -133,7 +133,8 @@ function toBudgetSpec(row: {
 function toModelSpec(row: {
   id: string;
   primaryModel: string;
-  fallbackModel: string | null;
+  /** v6 — lista ordenada de fallbacks; índice 0 = primer intento tras fallo del primary. */
+  fallbackChain: string[];
   temperature: number | null;
   maxTokens: number | null;
   agencyId: string | null;
@@ -144,9 +145,9 @@ function toModelSpec(row: {
   updatedAt: Date;
 }): ModelPolicySpec {
   return {
-    id:           row.id,
+    id:            row.id,
     primaryModel:  row.primaryModel,
-    fallbackModel: row.fallbackModel,
+    fallbackChain: row.fallbackChain,
     temperature:   row.temperature,
     maxTokens:     row.maxTokens,
     agencyId:      row.agencyId,
