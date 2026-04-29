@@ -1,1 +1,472 @@
-{}
+{
+  "F0-01": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F0-02": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F0-03": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F0-04": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F0-05": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F0-06": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F0-07": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F0-08": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F0-09": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F0-10": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F1a-01": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F1a-02": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F1a-03": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F1a-04": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F1a-05": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F1a-06": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F1a-07": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F1a-08": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F1a-09": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F1b-01": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F1b-02": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F1b-03": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F1b-04": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F1b-05": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F1b-06": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F1b-07": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F1b-08": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F1b-09": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F2a-01": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F2a-02": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F2a-03": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F2a-04": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F2a-05": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F2a-06": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F2a-07": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F2a-08": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F2a-09": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F2a-10": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F2a-11": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F2a-12": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F2b-01": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F2b-02": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F2b-03": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F2b-04": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F2b-05": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F3a-01": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F3a-02": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F3a-03": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F3a-04": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F3a-05": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F3a-06": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F3a-07": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F3a-08": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F3a-09": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F3a-10": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F3b-01": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F3b-02": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F3b-03": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F3b-04": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F3b-05": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F3b-06": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F3b-07": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F4a-01": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F4a-02": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F4a-03": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F4a-04": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F4a-05": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F4a-06": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F4a-07": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F4b-01": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F4b-02": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F4b-03": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F4b-04": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F4b-05": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F5-01": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F5-02": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F5-03": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F5-04": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F5-05": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F5-06": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F6-01": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F6-02": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F6-03": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F6-04": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F6-05": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F6-06": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F6-07": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F6-08": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F6-09": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F6-10": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F6-11": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F6-12": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F6-13": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  },
+  "F6-14": {
+    "repo": "lssmanager/dashboard-agentes",
+    "url": "",
+    "number": ""
+  }
+}
