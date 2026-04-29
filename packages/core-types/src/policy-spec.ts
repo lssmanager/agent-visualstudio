@@ -31,7 +31,7 @@ export interface PolicySpec {
   updatedAt?: string;
 }
 
-// ─── Budget policy ────────────────────────────────────────────────────────────
+// ─── Budget policy ───────────────────────────────────────────────────────────
 
 export interface BudgetPolicySpec {
   id: string;
@@ -52,14 +52,21 @@ export interface BudgetPolicySpec {
 
 export type BudgetPolicyCreateInput = Omit<BudgetPolicySpec, 'id' | 'createdAt' | 'updatedAt'>;
 
-// ─── Model policy ─────────────────────────────────────────────────────────────
+// ─── Model policy ──────────────────────────────────────────────────────────────
 
 export interface ModelPolicySpec {
   id: string;
   /** Primary model identifier, e.g. "openai/gpt-4o" or "qwen/qwen-plus" */
   primaryModel: string;
-  /** Fallback model used when primary is over budget or unavailable */
-  fallbackModel: string | null;
+  /**
+   * Ordered list of fallback model identifiers.
+   * Index 0 = first attempt after primary fails.
+   * Empty array means no explicit fallbacks (capability-based fallbacks
+   * from ModelCapabilityRegistry still apply at the executor layer).
+   *
+   * Example: ["anthropic/claude-3-haiku", "qwen/qwen-plus", "openai/gpt-4o-mini"]
+   */
+  fallbackChain: string[];
   temperature:  number | null;
   maxTokens:    number | null;
   // Scope FKs — exactly one is non-null (DB CHECK + assertExactlyOneScope)
@@ -73,7 +80,7 @@ export interface ModelPolicySpec {
 
 export type ModelPolicyCreateInput = Omit<ModelPolicySpec, 'id' | 'createdAt' | 'updatedAt'>;
 
-// ─── Resolved (effective) policy for a run ────────────────────────────────────
+// ─── Resolved (effective) policy for a run ────────────────────────────────────────────
 
 /**
  * EffectivePolicy is what PolicyResolver returns after walking the
