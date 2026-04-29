@@ -1,3 +1,4 @@
+import vm from 'node:vm';
 import type { PrismaClient } from '@prisma/client';
 import type { FlowNode } from '../../core-types/src';
 import type { RunStep, RunSpec, RunStepTokenUsage } from '../../core-types/src';
@@ -15,7 +16,7 @@ export interface StepExecutionResult {
 export interface StepExecutorOptions {
   /**
    * PrismaClient opcional.
-   * Cuando se provee, executeAgent(), executeTool() y executeCondition()
+   * Cuando se provee, executeAgent() y executeTool()
    * delegan a LlmStepExecutor (cargado con lazy require para evitar
    * dependencias circulares en el grafo de módulos durante la construcción).
    * Sin db, el executor retorna un error descriptivo en lugar de un stub
@@ -26,23 +27,36 @@ export interface StepExecutorOptions {
 }
 
 /**
+ * Contexto expuesto a la expresión de un condition node.
+ * Definido aquí como fuente única de verdad — LlmStepExecutor no duplica.
+ */
+export interface ConditionContext {
+  /** Payload del trigger que inició el Run */
+  payload:  Record<string, unknown>;
+  /** Metadata del Run */
+  metadata: Record<string, unknown>;
+  /** Estado actual del Run */
+  status:   string;
+  /**
+   * Mapa nodeId → output de todos los pasos completados anteriores.
+   * Uso: outputs['node-2'].approved === true
+   */
+  outputs:  Record<string, Record<string, unknown>>;
+}
+
+/**
  * Handles execution of individual flow nodes by type.
  *
  * StepExecutor es la clase base extensible del run-engine.
- * LlmStepExecutor la extiende e implementa executeAgent(), executeTool()
- * y executeCondition() con lógica real.
+ * LlmStepExecutor la extiende e implementa executeAgent() y executeTool()
+ * con lógica real de LLM.
+ *
+ * executeCondition() está implementado completamente en esta clase base
+ * usando un sandbox vm aislado — LlmStepExecutor NO lo sobreescribe.
  *
  * Cuando se construye con { db }, este StepExecutor base delega
- * executeAgent(), executeTool() y executeCondition() a una instancia
- * de LlmStepExecutor lazy-construida — así FlowExecutor puede usar
- * StepExecutor directamente sin necesitar saber si hay LLM real disponible.
- *
- * ⚠️  NOTA executeCondition en esta clase base:
- *     La implementación base es un fallback mínimo para cuando NO hay db
- *     (entornos de test / preview). En producción, con db disponible,
- *     delega automáticamente a LlmStepExecutor.executeCondition() que
- *     provee contexto completo (outputs del run, metadata, payload) y
- *     no usa `with()` (incompatible con "use strict").
+ * executeAgent() y executeTool() a una instancia de LlmStepExecutor
+ * lazy-construida.
  */
 export class StepExecutor {
   protected readonly db?: PrismaClient;
@@ -133,68 +147,112 @@ export class StepExecutor {
   }
 
   /**
-   * executeCondition — fallback mínimo (sin db / entorno de test).
+   * executeCondition — implementación completa en la clase base.
    *
-   * ⚠️  BUG CORREGIDO: la versión anterior usaba `with(ctx) { return Boolean(...) }`
-   *     dentro de `"use strict"`, lo cual lanza SyntaxError en runtime que quedaba
-   *     silenciado por el catch, haciendo que SIEMPRE se tomara la primera rama
-   *     (evaluated = true) independientemente de la expresión.
+   * Usa un sandbox vm aislado (node:vm) para evaluar la expresión:
+   *   - Sin acceso a process, require, globals del proceso Node.js.
+   *   - Timeout de 50ms — protección contra bucles infinitos.
+   *   - outputs poblado desde run.steps anteriores via buildOutputsMap().
    *
-   * Esta versión usa named arguments explícitos en Function constructor,
-   *  compatible con strict mode. El contexto expone:
-   *   - payload  → run.trigger.payload
-   *   - metadata → run.metadata
-   *   - status   → run.status
-   *
-   * En producción (con db disponible), el método delega a
-   * LlmStepExecutor.executeCondition() que expone también `outputs`
-   * (resultados de pasos anteriores del flow).
+   * LlmStepExecutor NO sobreescribe este método.
    */
   protected async executeCondition(
-    node: FlowNode,
-    step: RunStep,
-    run: RunSpec,
+    node:  FlowNode,
+    _step: RunStep,
+    run:   RunSpec,
   ): Promise<StepExecutionResult> {
-    // Delegar a LlmStepExecutor cuando hay db — contexto más rico
-    const llm = this.getLlmExecutor();
-    if (llm) return llm.executeCondition(node, step, run);
+    const expression = (node.config?.expression as string | undefined)?.trim();
+    const branches   = (node.config?.branches   as string[] | undefined) ?? [];
 
-    // Fallback sin db — contexto mínimo, sin outputs de pasos anteriores
-    const expression = (node.config?.expression as string) ?? 'true';
-    const branches   = (node.config?.branches   as string[]) ?? ['true', 'false'];
-
-    const payload  = run.trigger?.payload  ?? {};
-    const metadata = (run.metadata as Record<string, unknown>) ?? {};
-    const status   = run.status ?? 'running';
-
-    let evaluated = false;
-    try {
-      // Named-arg Function constructor — compatible con "use strict"
-      // No usamos `with()` ni `eval()` directo.
-      // eslint-disable-next-line @typescript-eslint/no-implied-eval
-      const fn = new Function(
-        'payload',
-        'metadata',
-        'status',
-        `"use strict"; return Boolean(${expression});`,
-      );
-      evaluated = fn(payload, metadata, status) as boolean;
-    } catch (err) {
-      // Expresión sintácticamente inválida → rama 'false' (fallo explícito)
-      return {
-        status: 'failed',
-        error: `Condition expression error: ${String(err)}`,
-        output: { expression, evaluated: false, branch: branches[1] ?? 'false' },
-        branch: branches[1] ?? 'false',
-      };
+    if (!expression) {
+      return { status: 'completed', output: { branch: 'default' }, branch: 'default' };
     }
 
-    const branch = evaluated ? (branches[0] ?? 'true') : (branches[1] ?? 'false');
-    return {
-      status: 'completed',
-      output: { expression, evaluated, branch },
-      branch,
+    const ctx: ConditionContext = {
+      payload:  (run.trigger?.payload  as Record<string, unknown>) ?? {},
+      metadata: (run.metadata          as Record<string, unknown>) ?? {},
+      status:   run.status ?? 'running',
+      outputs:  this.buildOutputsMap(run),
     };
+
+    return this.evalExpression(expression, ctx, branches);
+  }
+
+  /**
+   * Construye un mapa nodeId → output de todos los pasos completados
+   * hasta este punto en el run.
+   *
+   * Solo incluye pasos con status 'completed' y output definido.
+   * Es la fuente correcta para el contexto `outputs` en condition nodes.
+   */
+  private buildOutputsMap(
+    run: RunSpec,
+  ): Record<string, Record<string, unknown>> {
+    return Object.fromEntries(
+      run.steps
+        .filter((s) => s.status === 'completed' && s.output !== undefined)
+        .map((s) => [s.nodeId, s.output as Record<string, unknown>]),
+    );
+  }
+
+  /**
+   * Evalúa la expresión en un contexto V8 aislado (vm.Script).
+   *
+   * Sandbox expone: payload, metadata, status, outputs.
+   * El resultado se captura en __result para recuperar el valor booleano.
+   *
+   * Protección:
+   *   - process, require, global → ReferenceError dentro del sandbox.
+   *   - Timeout 50ms → bucles infinitos terminan con error descriptivo.
+   */
+  private evalExpression(
+    expression: string,
+    ctx:        ConditionContext,
+    branches:   string[],
+  ): StepExecutionResult {
+    try {
+      const sandbox: Record<string, unknown> = {
+        payload:  ctx.payload,
+        metadata: ctx.metadata,
+        status:   ctx.status,
+        outputs:  ctx.outputs,
+        __result: false,
+      };
+      vm.createContext(sandbox);
+
+      // IIFE con 'use strict' + asignación a __result
+      // para recuperar el valor de retorno desde fuera del script.
+      const script = new vm.Script(
+        `"use strict"; __result = Boolean(${expression});`,
+      );
+      // timeout 50ms — protege contra while(true){} y expresiones costosas
+      script.runInContext(sandbox, { timeout: 50 });
+
+      const result = sandbox['__result'] as boolean;
+      const branch = result
+        ? (branches[0] ?? 'true')
+        : (branches[1] ?? 'false');
+
+      return {
+        status: 'completed',
+        output: { expression, result, branch },
+        branch,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+
+      if (msg.includes('Script execution timed out')) {
+        return {
+          status: 'failed',
+          error:  'Condition eval timed out (50ms): expression may contain infinite loop',
+        };
+      }
+
+      return {
+        status: 'failed',
+        error:  `Condition eval failed: ${msg}`,
+      };
+    }
   }
 
   protected async executeEnd(
@@ -222,6 +280,8 @@ export class StepExecutor {
   /**
    * Lazy-construye LlmStepExecutor la primera vez que se necesita.
    * Retorna null si no hay db disponible.
+   * Usado solo para executeAgent() y executeTool() — executeCondition()
+   * está implementado en esta clase base y no delega.
    */
   private getLlmExecutor(): StepExecutor | null {
     if (!this.db) return null;
