@@ -9,27 +9,27 @@
  *      ese scope — sin hardcodear ningún modelo.
  *
  * Resolución de modelo (OrchestratorModelResolver):
- *   Para cada nivel (workspace / department / agency) busca ModelPolicy en Prisma:
- *     1. ModelPolicy del scope actual  → usa primaryModel
- *     2. ModelPolicy del department    → usa primaryModel
- *     3. ModelPolicy de la agency      → usa primaryModel
- *     4. Agent.model de cualquier agente activo en el scope (último recurso de DB)
- *     5. Fallback a template estático  → no llama al LLM
  *
- *   Si el primaryModel falla y existe fallbackModel en la misma policy, reintenta
- *   con el fallback antes de caer al template estático.
+ *   Para cada nivel (workspace / department / agency) construye una cadena completa
+ *   de candidatos, consultando ModelPolicy en Prisma:
  *
- * Patrón de referencia:
- *   - AutoGen AgentBuilder: registro dinámico de agentes con actualización del GroupChat manager.
- *   - CrewAI Crew.add_agent(): inserción en caliente con re-planificación del supervisor.
+ *     1. ModelPolicy.primaryModel del scope actual
+ *     2. ModelPolicy.fallbackModel del scope actual (si configurado)
+ *     3. ModelPolicy.primaryModel del department padre  (si aplica)
+ *     4. ModelPolicy.fallbackModel del department padre (si aplica)
+ *     5. ModelPolicy de la agency
+ *     6. Agent.model de cualquier agente activo en el scope
+ *     7. Modelos similares en capacidades via ModelCapabilityRegistry
+ *        (ordenados por intersección de families — mismo proveedor tiene bonus)
+ *     8. Fallback a template estático — NUNCA falla
  *
- * Integración con HierarchyOrchestrator:
- *   - HierarchyOrchestrator recibe `SupervisorFn` inyectada desde fuera.
- *   - AgentBuilder NO instancia HierarchyOrchestrator; sólo actualiza los systemPrompts
- *     en Prisma que el orchestrator leerá la próxima vez que construya su HierarchyNode.
+ *   Importante: modelos de proveedores distintos son válidos en niveles distintos.
+ *   Un workspace puede usar 'qwen/qwen-max' mientras su agency usa
+ *   'anthropic/claude-3-7-sonnet'. El resolver no impone restricciones de proveedor.
  */
 
 import type { PrismaClient } from '@prisma/client'
+import { ModelCapabilityRegistry, resolveModelFallbackChain } from './model-capability-registry.js'
 import { ProfilePropagatorService, type PropagateProfileInput } from './profile-propagator.service.js'
 
 // ── DTOs públicos ────────────────────────────────────────────────────────────
@@ -77,20 +77,19 @@ export class AgentBuilder {
   private readonly orchestratorPropagator: OrchestratorPromptPropagator
 
   /**
-   * @param prisma - PrismaClient
-   * No recibe modelo fijo ni cliente OpenAI —
-   * OrchestratorPromptPropagator resuelve el modelo desde ModelPolicy en Prisma.
+   * @param prisma            - PrismaClient
+   * @param capabilityRegistry - Opcional: registry custom para tests o modelos fine-tuned
    */
-  constructor(private readonly prisma: PrismaClient) {
+  constructor(
+    private readonly prisma: PrismaClient,
+    capabilityRegistry?: ModelCapabilityRegistry,
+  ) {
     this.propagator             = new ProfilePropagatorService(prisma)
-    this.orchestratorPropagator = new OrchestratorPromptPropagator(prisma)
+    this.orchestratorPropagator = new OrchestratorPromptPropagator(prisma, capabilityRegistry)
   }
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
-  /**
-   * Crea un agente nuevo con su perfil y dispara la propagación hacia arriba.
-   */
   async create(input: CreateAgentInput): Promise<BuiltAgent> {
     const workspace = await this.prisma.workspace.findUnique({
       where:  { id: input.workspaceId },
@@ -120,9 +119,6 @@ export class AgentBuilder {
     return agent as BuiltAgent
   }
 
-  /**
-   * Actualiza un agente existente y re-propaga si cambia el perfil o el rol.
-   */
   async update(agentId: string, input: UpdateAgentInput): Promise<BuiltAgent> {
     const existing = await this.prisma.agent.findUnique({ where: { id: agentId } })
     if (!existing) throw new Error(`Agent "${agentId}" not found`)
@@ -150,10 +146,6 @@ export class AgentBuilder {
     return agent as BuiltAgent
   }
 
-  /**
-   * Elimina un agente, limpia su perfil y actualiza orchestrator prompts hacia arriba.
-   * La propagación ocurre ANTES de eliminar para poder resolver la jerarquía.
-   */
   async remove(agentId: string): Promise<void> {
     const agent = await this.prisma.agent.findUnique({
       where:  { id: agentId },
@@ -166,82 +158,197 @@ export class AgentBuilder {
     await this.prisma.agent.delete({ where: { id: agentId } })
   }
 
-  /**
-   * Dispara manualmente la propagación de orchestrator prompts.
-   * Útil cuando se cambia goal/role sin pasar por update().
-   */
   async triggerPropagation(agentId: string): Promise<void> {
     await this.orchestratorPropagator.propagate(agentId, 'updated')
   }
 }
 
-// ── OrchestratorModelResolver ────────────────────────────────────────────────
+// ── ModelResolution — resultado del resolver ─────────────────────────────────
 
 /**
- * Resuelve el modelo LLM a usar para regenerar el orchestrator prompt
- * de un scope dado, consultando ModelPolicy en Prisma sin requerir agentId.
+ * Cadena completa de modelos a intentar para un scope dado.
+ * El primer elemento es el preferido; los siguientes son fallbacks en orden.
+ * Todos son de cualquier proveedor configurado en ese scope.
+ */
+export interface ModelResolution {
+  /** Modelo primario configurado (primer intento) */
+  primaryModel: string
+  /**
+   * Cadena de fallback ordenada por preferencia:
+   *   [fallbackModel configurado, ...similares por capacidad]
+   * Puede incluir modelos de proveedores distintos al primaryModel.
+   */
+  fallbackChain: string[]
+}
+
+// ── OrchestratorModelResolver ─────────────────────────────────────────────────
+
+/**
+ * Resuelve la cadena completa de modelos LLM a intentar para regenerar
+ * el orchestrator prompt de un scope dado.
  *
- * Cadena de resolución para un scope (workspace / department / agency):
- *   1. ModelPolicy del scope actual
- *   2. ModelPolicy del department padre
- *   3. ModelPolicy de la agency
- *   4. Agent.model de cualquier agente activo dentro del scope (último recurso)
- *   5. null → el caller usa template estático
+ * Consulta ModelPolicy en Prisma sin requerir agentId (opera por scope).
+ * Usa ModelCapabilityRegistry para ordenar fallbacks por similitud de capacidades.
+ *
+ * Un workspace puede usar 'qwen/qwen-max', su department 'anthropic/claude-3-5-haiku'
+ * y su agency 'openai/gpt-4o' — cada nivel resuelve independientemente.
  */
 export class OrchestratorModelResolver {
-  constructor(private readonly prisma: PrismaClient) {}
+  private readonly capRegistry: ModelCapabilityRegistry
+
+  constructor(
+    private readonly prisma: PrismaClient,
+    capabilityRegistry?: ModelCapabilityRegistry,
+  ) {
+    this.capRegistry = capabilityRegistry ?? new ModelCapabilityRegistry()
+  }
 
   /**
-   * Resuelve el modelo primario y el fallback para un scope.
-   * Devuelve null si no hay ModelPolicy ni agentes con modelo configurado.
+   * Resuelve la cadena de modelos para un scope.
+   * Devuelve null si no hay absolutamente ningún modelo configurado.
    */
   async resolveForScope(
     level:   'agency' | 'department' | 'workspace',
     scopeId: string,
-  ): Promise<{ primaryModel: string; fallbackModel: string | null } | null> {
-    // 1. ModelPolicy directa del scope
-    const direct = await this.findModelPolicyForScope(level, scopeId)
-    if (direct) {
-      return { primaryModel: direct.primaryModel, fallbackModel: direct.fallbackModel }
+  ): Promise<ModelResolution | null> {
+    // 1. Recopilar TODOS los modelos configurados en el scope y su jerarquía
+    const allConfigured = await this.collectAllModelsForScope(level, scopeId)
+    if (allConfigured.length === 0) return null
+
+    // 2. El primario es el ModelPolicy.primaryModel más directo al scope
+    const primary = await this.findClosestPrimary(level, scopeId)
+    if (!primary) {
+      // Sin ModelPolicy pero hay modelos de agentes → usar el primero como primary
+      return {
+        primaryModel:  allConfigured[0]!,
+        fallbackChain: allConfigured.slice(1),
+      }
     }
 
-    // 2. Si es workspace → buscar en su department y agency
+    // 3. Construir fallback chain:
+    //    a) fallbackModel explícito del mismo registro
+    //    b) Modelos similares del scope ordenados por capacidad
+    const explicitFallback = await this.findExplicitFallback(level, scopeId, primary)
+    const remainingModels  = allConfigured.filter(
+      m => m !== primary && m !== explicitFallback,
+    )
+    const similarByCapability = this.capRegistry.resolveFallbackChain(primary, remainingModels)
+
+    const fallbackChain = [
+      ...(explicitFallback ? [explicitFallback] : []),
+      ...similarByCapability,
+    ]
+
+    return { primaryModel: primary, fallbackChain }
+  }
+
+  /**
+   * Recopila todos los modelos únicos configurados en el scope y su jerarquía:
+   *   - ModelPolicy.primaryModel y fallbackModel de cada nivel
+   *   - Agent.model de agentes activos en el scope
+   */
+  private async collectAllModelsForScope(
+    level:   'agency' | 'department' | 'workspace',
+    scopeId: string,
+  ): Promise<string[]> {
+    const models = new Set<string>()
+
+    const addPolicy = (p: { primaryModel: string; fallbackModel: string | null } | null) => {
+      if (!p) return
+      models.add(p.primaryModel)
+      if (p.fallbackModel) models.add(p.fallbackModel)
+    }
+
+    // Políticas del scope actual
+    const direct = await this.queryModelPolicy(level, scopeId)
+    addPolicy(direct)
+
+    // Políticas de niveles superiores
     if (level === 'workspace') {
       const ws = await this.prisma.workspace.findUnique({
         where:  { id: scopeId },
         select: { departmentId: true, department: { select: { agencyId: true } } },
       })
       if (ws) {
-        const deptPolicy = await this.findModelPolicyForScope('department', ws.departmentId)
-        if (deptPolicy) return { primaryModel: deptPolicy.primaryModel, fallbackModel: deptPolicy.fallbackModel }
-
+        addPolicy(await this.queryModelPolicy('department', ws.departmentId))
         if (ws.department.agencyId) {
-          const agencyPolicy = await this.findModelPolicyForScope('agency', ws.department.agencyId)
-          if (agencyPolicy) return { primaryModel: agencyPolicy.primaryModel, fallbackModel: agencyPolicy.fallbackModel }
+          addPolicy(await this.queryModelPolicy('agency', ws.department.agencyId))
+        }
+      }
+    } else if (level === 'department') {
+      const dept = await this.prisma.department.findUnique({
+        where:  { id: scopeId },
+        select: { agencyId: true },
+      })
+      if (dept?.agencyId) {
+        addPolicy(await this.queryModelPolicy('agency', dept.agencyId))
+      }
+    }
+
+    // Modelos de agentes activos en el scope (último recurso)
+    const agentModels = await this.collectAgentModels(level, scopeId)
+    agentModels.forEach(m => models.add(m))
+
+    return [...models]
+  }
+
+  /**
+   * Encuentra el primaryModel más directo al scope:
+   * scope → department → agency (en orden de cercanía)
+   */
+  private async findClosestPrimary(
+    level:   'agency' | 'department' | 'workspace',
+    scopeId: string,
+  ): Promise<string | null> {
+    const direct = await this.queryModelPolicy(level, scopeId)
+    if (direct) return direct.primaryModel
+
+    if (level === 'workspace') {
+      const ws = await this.prisma.workspace.findUnique({
+        where:  { id: scopeId },
+        select: { departmentId: true, department: { select: { agencyId: true } } },
+      })
+      if (ws) {
+        const deptPolicy = await this.queryModelPolicy('department', ws.departmentId)
+        if (deptPolicy) return deptPolicy.primaryModel
+        if (ws.department.agencyId) {
+          const agencyPolicy = await this.queryModelPolicy('agency', ws.department.agencyId)
+          if (agencyPolicy) return agencyPolicy.primaryModel
         }
       }
     }
 
-    // 3. Si es department → buscar en su agency
     if (level === 'department') {
       const dept = await this.prisma.department.findUnique({
         where:  { id: scopeId },
         select: { agencyId: true },
       })
       if (dept?.agencyId) {
-        const agencyPolicy = await this.findModelPolicyForScope('agency', dept.agencyId)
-        if (agencyPolicy) return { primaryModel: agencyPolicy.primaryModel, fallbackModel: agencyPolicy.fallbackModel }
+        const agencyPolicy = await this.queryModelPolicy('agency', dept.agencyId)
+        if (agencyPolicy) return agencyPolicy.primaryModel
       }
     }
-
-    // 4. Último recurso: Agent.model de cualquier agente activo en el scope
-    const agentWithModel = await this.findAgentModelInScope(level, scopeId)
-    if (agentWithModel) return { primaryModel: agentWithModel, fallbackModel: null }
 
     return null
   }
 
-  private async findModelPolicyForScope(
+  /**
+   * Devuelve el fallbackModel explícito del registro más directo al scope
+   * (ignorando el primaryModel que ya fue seleccionado).
+   */
+  private async findExplicitFallback(
+    level:   'agency' | 'department' | 'workspace',
+    scopeId: string,
+    primaryModel: string,
+  ): Promise<string | null> {
+    const direct = await this.queryModelPolicy(level, scopeId)
+    if (direct?.fallbackModel && direct.fallbackModel !== primaryModel) {
+      return direct.fallbackModel
+    }
+    return null
+  }
+
+  private async queryModelPolicy(
     level:   'agency' | 'department' | 'workspace',
     scopeId: string,
   ): Promise<{ primaryModel: string; fallbackModel: string | null } | null> {
@@ -250,57 +357,54 @@ export class OrchestratorModelResolver {
       level === 'department' ? { departmentId: scopeId } :
                                { workspaceId:  scopeId }
 
-    const policy = await this.prisma.modelPolicy.findFirst({
+    return this.prisma.modelPolicy.findFirst({
       where,
-      select: { primaryModel: true, fallbackModel: true },
+      select:  { primaryModel: true, fallbackModel: true },
       orderBy: { createdAt: 'desc' },
     })
-
-    return policy ?? null
   }
 
-  private async findAgentModelInScope(
+  private async collectAgentModels(
     level:   'agency' | 'department' | 'workspace',
     scopeId: string,
-  ): Promise<string | null> {
-    // Para workspace: agentes directos. Para department/agency: agentes anidados.
+  ): Promise<string[]> {
     const where =
       level === 'workspace'  ? { workspaceId: scopeId, model: { not: null } } :
       level === 'department' ? { workspace: { departmentId: scopeId }, model: { not: null } } :
                                { workspace: { department: { agencyId: scopeId } }, model: { not: null } }
 
-    const agent = await this.prisma.agent.findFirst({
-      where:  where as Parameters<typeof this.prisma.agent.findFirst>[0]['where'],
+    const agents = await this.prisma.agent.findMany({
+      where:  where as Parameters<typeof this.prisma.agent.findMany>[0]['where'],
       select: { model: true },
-      orderBy: { updatedAt: 'desc' },
+      distinct: ['model'],
     })
 
-    return (agent?.model as string | null) ?? null
+    return agents
+      .map(a => a.model as string | null)
+      .filter((m): m is string => !!m)
   }
 }
 
-// ── OrchestratorPromptPropagator ─────────────────────────────────────────────
+// ── OrchestratorPromptPropagator ──────────────────────────────────────────────
 
 /**
  * Sube por la jerarquía Agent → Workspace → Department → Agency
  * y regenera el systemPrompt de cada orchestrador con LLM.
  *
- * El modelo a usar se resuelve en Prisma (ModelPolicy) para cada scope,
- * sin ningún modelo hardcodeado en el código.
+ * El modelo a usar se resuelve en Prisma (ModelPolicy) para cada scope
+ * y puede ser de cualquier proveedor configurado.
+ * Los fallbacks se ordenan por similitud de capacidades via ModelCapabilityRegistry.
  */
 export class OrchestratorPromptPropagator {
   private readonly modelResolver: OrchestratorModelResolver
 
-  constructor(private readonly prisma: PrismaClient) {
-    this.modelResolver = new OrchestratorModelResolver(prisma)
+  constructor(
+    private readonly prisma: PrismaClient,
+    capabilityRegistry?: ModelCapabilityRegistry,
+  ) {
+    this.modelResolver = new OrchestratorModelResolver(prisma, capabilityRegistry)
   }
 
-  /**
-   * Punto de entrada — sube desde el agente hasta la agencia.
-   *
-   * @param agentId   ID del agente que fue creado/actualizado/eliminado
-   * @param operation Tipo de operación (informativo)
-   */
   async propagate(agentId: string, operation: 'added' | 'updated' | 'removed'): Promise<void> {
     const agent = await this.prisma.agent.findUnique({
       where:   { id: agentId },
@@ -322,7 +426,7 @@ export class OrchestratorPromptPropagator {
     const agency = department.agency
 
     const updates = await Promise.allSettled([
-      this.updateWorkspacePrompt(workspace.id, workspace.name),
+      this.updateWorkspacePrompt(workspace.id,   workspace.name),
       this.updateDepartmentPrompt(department.id, department.name),
       agency ? this.updateAgencyPrompt(agency.id, agency.name) : Promise.resolve(),
     ])
@@ -338,7 +442,7 @@ export class OrchestratorPromptPropagator {
     })
   }
 
-  // ── Actualizadores por nivel ──────────────────────────────────────────────
+  // ── Actualizadores por nivel ───────────────────────────────────────────────
 
   private async updateWorkspacePrompt(workspaceId: string, workspaceName: string): Promise<void> {
     const children  = await this.resolveChildren('workspace', workspaceId)
@@ -367,15 +471,8 @@ export class OrchestratorPromptPropagator {
     })
   }
 
-  // ── Resolución de children ────────────────────────────────────────────────
+  // ── Resolución de children ─────────────────────────────────────────────────
 
-  /**
-   * Resuelve los children directos del nivel dado.
-   *
-   * Agency     → sus Departments
-   * Department → sus Workspaces
-   * Workspace  → sus Agents (prefiriendo AgentProfile.systemPrompt si existe)
-   */
   async resolveChildren(
     level:   'agency' | 'department' | 'workspace',
     scopeId: string,
@@ -396,7 +493,6 @@ export class OrchestratorPromptPropagator {
       })
     }
 
-    // Workspace → Agents
     const agents = await this.prisma.agent.findMany({
       where:   { workspaceId: scopeId },
       select:  {
@@ -421,12 +517,12 @@ export class OrchestratorPromptPropagator {
   // ── Generación del prompt de orchestrador ─────────────────────────────────
 
   /**
-   * Genera el systemPrompt del orchestrador describiendo las capacidades de sus children.
+   * Genera el systemPrompt del orchestrador usando LLM con el modelo resuelto
+   * para este scope. Si todos los modelos fallan → template estático.
    *
-   * Resolución del modelo (en orden):
-   *   1. ModelPolicy.primaryModel del scope   → via OrchestratorModelResolver
-   *   2. ModelPolicy.fallbackModel del scope  → si el primary falla
-   *   3. Template estático                    → si no hay modelo disponible o LLM falla
+   * Cadena de intento:
+   *   [primaryModel, ...fallbackChain] — todos los modelos configurados en el scope,
+   *   ordenados: primary → fallback explícito → similares por capacidad (cualquier proveedor)
    */
   async buildOrchestratorPrompt(
     name:     string,
@@ -462,79 +558,74 @@ export class OrchestratorPromptPropagator {
       childList,
     ].join('\n')
 
-    // Resolver el modelo configurado para este scope
-    const resolved = await this.modelResolver.resolveForScope(level, scopeId)
+    const resolution = await this.modelResolver.resolveForScope(level, scopeId)
 
-    if (!resolved) {
-      // No hay modelo configurado → template estático directamente
+    if (!resolution) {
       console.warn(
-        `[OrchestratorPromptPropagator] No ModelPolicy found for ${level} "${scopeId}". Using static template.`,
+        `[OrchestratorPromptPropagator] No models configured for ${level} "${scopeId}". Using static template.`,
       )
       return this.buildStaticOrchestratorPrompt(name, level, children)
     }
 
-    // Intentar con primaryModel, luego fallbackModel si el primary falla
-    const modelsToTry = [
-      resolved.primaryModel,
-      ...(resolved.fallbackModel ? [resolved.fallbackModel] : []),
-    ]
+    // Iterar la cadena completa: primary + todos los fallbacks por similitud
+    const modelsToTry = [resolution.primaryModel, ...resolution.fallbackChain]
 
     for (const modelId of modelsToTry) {
       try {
         const content = await this.callLLM(modelId, systemInstruction, userPrompt)
-        if (content) return content
+        if (content) {
+          if (modelId !== resolution.primaryModel) {
+            console.info(
+              `[OrchestratorPromptPropagator] Used fallback model "${modelId}" for ${level} "${scopeId}".`,
+            )
+          }
+          return content
+        }
       } catch (err) {
         console.warn(
           `[OrchestratorPromptPropagator] Model "${modelId}" failed for ${level} "${scopeId}":`,
           err instanceof Error ? err.message : String(err),
         )
-        // Continuar al siguiente modelo en la cadena
       }
     }
 
-    // Todos los modelos fallaron → template estático
     console.error(
-      `[OrchestratorPromptPropagator] All models failed for ${level} "${scopeId}". Using static template.`,
+      `[OrchestratorPromptPropagator] All ${modelsToTry.length} models failed for ${level} "${scopeId}". Using static template.`,
     )
     return this.buildStaticOrchestratorPrompt(name, level, children)
   }
 
-  // ── LLM call (provider-agnostic) ──────────────────────────────────────────
+  // ── LLM call (provider-agnostic via fetch) ────────────────────────────────
 
   /**
-   * Llama al LLM usando el routing de provider de llm-step-executor.
+   * Routing de proveedor idéntico al de LlmStepExecutor:
+   *   'openai/*'    → OpenAI API          (OPENAI_API_KEY)
+   *   'anthropic/*' → Anthropic Messages  (ANTHROPIC_API_KEY)
+   *   resto         → OpenRouter-compat   (OPENROUTER_API_KEY o OPENAI_COMPAT_*)
    *
-   * Soporta los mismos providers que LlmStepExecutor sin duplicar lógica:
-   *   'openai/*'    → OpenAI API  (OPENAI_API_KEY)
-   *   'anthropic/*' → Anthropic   (ANTHROPIC_API_KEY)
-   *   resto         → OpenRouter-compat (OPENROUTER_API_KEY o OPENAI_COMPAT_*)
-   *
-   * El modelId viene de ModelPolicy.primaryModel/fallbackModel, que sigue
-   * la misma convención 'provider/model-name'.
+   * El modelId sigue la convención 'provider/model-name' de ModelPolicy.
    */
   private async callLLM(
     modelId:           string,
     systemInstruction: string,
     userPrompt:        string,
   ): Promise<string> {
-    const [providerPrefix] = modelId.split('/')
-    const modelName = modelId.includes('/') ? modelId.split('/').slice(1).join('/') : modelId
+    const providerPrefix = modelId.split('/')[0]
+    const modelName      = modelId.includes('/') ? modelId.split('/').slice(1).join('/') : modelId
 
-    // ── OpenAI / compatible ──────────────────────────────────────────────
     if (providerPrefix === 'openai') {
       const apiKey = process.env.OPENAI_API_KEY
       if (!apiKey) throw new Error('OPENAI_API_KEY not set')
       return this.callOpenAICompat('https://api.openai.com/v1', apiKey, modelName, systemInstruction, userPrompt)
     }
 
-    // ── Anthropic ────────────────────────────────────────────────────────
     if (providerPrefix === 'anthropic') {
       const apiKey = process.env.ANTHROPIC_API_KEY
       if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set')
       return this.callAnthropic(apiKey, modelName, systemInstruction, userPrompt)
     }
 
-    // ── OpenRouter / cualquier OpenAI-compat ─────────────────────────────
+    // OpenRouter / cualquier OpenAI-compat (qwen, deepseek, google, mistral, meta-llama, etc.)
     const apiKey  = process.env.OPENROUTER_API_KEY ?? process.env.OPENAI_COMPAT_API_KEY
     const baseURL = process.env.OPENAI_COMPAT_BASE_URL ?? 'https://openrouter.ai/api/v1'
     if (!apiKey) throw new Error(`No API key for provider "${providerPrefix}". Set OPENROUTER_API_KEY or OPENAI_COMPAT_API_KEY.`)
@@ -545,18 +636,18 @@ export class OrchestratorPromptPropagator {
   }
 
   private async callOpenAICompat(
-    baseURL:     string,
-    apiKey:      string,
-    model:       string,
-    system:      string,
-    user:        string,
+    baseURL:      string,
+    apiKey:       string,
+    model:        string,
+    system:       string,
+    user:         string,
     extraHeaders: Record<string, string> = {},
   ): Promise<string> {
     const res = await fetch(`${baseURL}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
+        Authorization:  `Bearer ${apiKey}`,
         ...extraHeaders,
       },
       body: JSON.stringify({
@@ -618,7 +709,7 @@ export class OrchestratorPromptPropagator {
     return content
   }
 
-  // ── Template estático (fallback final) ────────────────────────────────────
+  // ── Template estático (fallback final garantizado) ─────────────────────────
 
   private buildStaticOrchestratorPrompt(
     name:     string,
