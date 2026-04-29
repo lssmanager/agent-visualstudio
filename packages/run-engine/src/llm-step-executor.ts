@@ -32,6 +32,7 @@ import { calculateTokenCost } from '../../core-types/src';
 import { StepExecutor, type StepExecutionResult } from './step-executor';
 import { PolicyResolver, type PolicyResolverContext } from './policy-resolver';
 import { SkillInvoker } from './skill-invoker';
+import { buildToolDefinitions } from './build-tool-definitions';
 import {
   buildLLMClient,
   type ChatMessage,
@@ -335,16 +336,12 @@ export class LlmStepExecutor extends StepExecutor {
       }
     }
 
-    // ── Tools from skill links ────────────────────────────────────────────
+    // ── Tools from skill links (F1b-03: buildToolDefinitions) ────────────
+    // Each SkillFunctionSpec generates its own ToolDefinition with the
+    // correct JSON Schema in 'parameters'. Names are sanitized and
+    // descriptions are truncated to meet OpenAI API requirements.
     const skillLinks = agent.skillLinks ?? [];
-    const tools: ToolDefinition[] = skillLinks.map(({ skill }) => ({
-      type: 'function' as const,
-      function: {
-        name:        skill.name as string,
-        description: (skill.description as string) ?? undefined,
-        parameters:  (skill.functions as Record<string, unknown>) ?? { type: 'object', properties: {} },
-      },
-    }));
+    const tools      = buildToolDefinitions(skillLinks.map(({ skill }) => skill));
 
     const userContent = (node.config?.prompt as string)
                      ?? JSON.stringify(run.trigger.payload ?? {})
@@ -437,7 +434,7 @@ export class LlmStepExecutor extends StepExecutor {
     };
   }
 
-  // ─── Tool node execution (F1b-01) ─────────────────────────────────────────────
+  // ─── Tool node execution (F1b-01) ─────────────────────────────────────────
 
   protected override async executeTool(
     node:  FlowNode,
@@ -589,3 +586,8 @@ function buildHierarchyNode(agent: AgentWithRelations): import('../../hierarchy/
     })),
   };
 }
+
+// ToolDefinition is kept in the import block above for potential future use
+// in executeOrchestrated and test utilities. TypeScript will warn if unused
+// with --noUnusedLocals; suppress with the void trick below if needed.
+void (undefined as unknown as ToolDefinition);
