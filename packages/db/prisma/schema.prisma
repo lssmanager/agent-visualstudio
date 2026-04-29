@@ -4,9 +4,10 @@
 // Durable execution: Run → RunStep con checkpointData
 // Credenciales de modelos y canales: cifradas en DB (NO en .env)
 //
-// v3 — ProfilePropagatorService:
-//   + AgentProfile (system prompt, persona, knowledge base, memory config)
-//   + Agent.goal + Agent.backstory (usados por ProfilePropagatorService.buildFallbackPrompt)
+// v4 — Plan Maestro completo:
+//   + N8nConnection / N8nWorkflow (skill type=n8n_webhook)
+//   + ModelPolicy como tabla propia (primary/fallback model, jerarquía)
+//   + StepExecutor wired → LlmStepExecutor (ver packages/run-engine)
 // ============================================================
 
 generator client {
@@ -34,6 +35,7 @@ model Agency {
 
   departments  Department[]
   budgetPolicy BudgetPolicy[]
+  modelPolicy  ModelPolicy[]
   activityLogs ActivityLog[]
 
   @@map("agencies")
@@ -51,6 +53,7 @@ model Department {
   agency       Agency        @relation(fields: [agencyId], references: [id], onDelete: Cascade)
   workspaces   Workspace[]
   budgetPolicy BudgetPolicy[]
+  modelPolicy  ModelPolicy[]
   activityLogs ActivityLog[]
 
   @@unique([agencyId, slug])
@@ -62,7 +65,9 @@ model Workspace {
   departmentId String
   name         String
   slug         String
-  // Effective model policy stored as JSON (provider, model, maxTokens, temperature…)
+  // Cache de la ModelPolicy efectiva calculada (resolución jerárquica).
+  // Se actualiza cuando cambia ModelPolicy en cualquier nivel superior.
+  // NO es la fuente de verdad — eso es la tabla ModelPolicy.
   modelPolicy  Json?     @default("{}")
   metadata     Json?     @default("{}")
   createdAt    DateTime  @default(now())
@@ -74,6 +79,7 @@ model Workspace {
   runs           Run[]
   channelConfigs ChannelConfig[]
   budgetPolicy   BudgetPolicy[]
+  modelPolicies  ModelPolicy[]
   routines       Routine[]
   activityLogs   ActivityLog[]
 
@@ -93,10 +99,8 @@ model Agent {
   description     String   @default("")
   instructions    String   @default("")
 
-  // ── Nuevos campos v3 (ProfilePropagatorService) ───────────────────
-  // goal: objetivo principal del agente (usado en system prompt fallback)
+  // ── v3 (ProfilePropagatorService) ───────────────────────────────────
   goal            String?  @default("")
-  // backstory: contexto narrativo del agente (opcional)
   backstory       String?  @default("")
 
   model           String   @default("gpt-4o-mini")
@@ -106,7 +110,6 @@ model Agent {
   kind            String   @default("agent")     // agent | subagent | orchestrator
   parentAgentId   String?
   context         String[] @default([])
-  // JSON blobs for flexible config (triggers, permissions, handoffRules, channelBindings, policyBindings)
   triggers        Json?    @default("[]")
   permissions     Json?    @default("{}")
   handoffRules    Json?    @default("[]")
@@ -125,8 +128,8 @@ model Agent {
   gatewaySessions       GatewaySession[]
   wakeupRequests        AgentWakeupRequest[]
   budgetPolicy          BudgetPolicy[]
+  modelPolicy           ModelPolicy[]
   activityLogs          ActivityLog[]
-  // 1-to-1 con AgentProfile (puede ser null si no se ha propagado)
   agentProfile          AgentProfile?
 
   @@index([workspaceId])
@@ -135,47 +138,21 @@ model Agent {
 
 // ────────────────────────────────────────────────────────────
 // AGENT PROFILE — v3 (ProfilePropagatorService)
-//
-// Un registro por agente (1-to-1 con Agent).
-// Creado/actualizado por ProfilePropagatorService.propagate().
-//
-// Separado de Agent para:
-//   1. Mantener Agent como entidad ligera de configuración estructural
-//   2. Permitir versioning del perfil sin tocar el agente
-//   3. Cargar el perfil solo cuando el LLM lo necesita (lazy)
 // ────────────────────────────────────────────────────────────
 
 model AgentProfile {
   id              String   @id @default(cuid())
-  agentId         String   @unique  // 1-to-1 con Agent
+  agentId         String   @unique
 
-  // System prompt explícito (escrito por el builder o el admin).
-  // Si está presente, ProfilePropagatorService lo usa directamente.
-  // Si es null/empty, buildSystemPrompt() genera desde persona + rol + goal.
   systemPrompt    String?  @db.Text
-
-  // Persona del agente: tone, language, traits, name de presentación
-  // Estructura: { name?, tone?, language?, traits?: string[] }
   persona         Json     @default("{}")
-
-  // Knowledge base: URLs, textos, referencias de documentos
-  // Estructura: Array<{ type: 'url'|'text'|'file', label: string, value: string }>
   knowledgeBase   Json     @default("[]")
-
-  // Formato esperado de respuesta del LLM
-  responseFormat  String?  // null | 'json' | 'markdown' | 'plain'
-
-  // Ventana de contexto máxima en tokens (para este agente)
+  responseFormat  String?
   contextWindow   Int      @default(8192)
-
-  // Si el agente usa memoria persistente entre sesiones (future)
   memoryEnabled   Boolean  @default(false)
-  // Config de memoria: { provider, connectionString, topK, ... }
   memoryConfig    Json     @default("{}")
-
-  // Control de versiones del perfil
   version         Int      @default(1)
-  propagatedAt    DateTime @default(now())  // última vez que se propagó
+  propagatedAt    DateTime @default(now())
 
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -184,6 +161,57 @@ model AgentProfile {
 
   @@index([agentId])
   @@map("agent_profiles")
+}
+
+// ────────────────────────────────────────────────────────────
+// MODEL POLICY — tabla propia (v4)
+//
+// Una policy por scope (agency | department | workspace | agent).
+// PolicyResolver recorre la jerarquía de más específico a más general
+// y aplica la primera policy encontrada (con herencia de fallback).
+//
+// Workspace.modelPolicy Json? sirve como cache de la policy efectiva
+// calculada por PolicyResolver — NO es la fuente de verdad.
+// ────────────────────────────────────────────────────────────
+
+model ModelPolicy {
+  id            String   @id @default(cuid())
+  scopeType     String   // agency | department | workspace | agent
+  scopeId       String
+
+  // Modelo principal — formato 'provider/model-id'
+  // Ejemplos: 'openai/gpt-4o', 'anthropic/claude-3-5-sonnet', 'qwen/qwen-plus'
+  primaryModel  String
+
+  // Modelo de fallback — se usa si primaryModel falla (timeout, rate-limit, budget)
+  // Si es null, no hay fallback y el error se propaga.
+  fallbackModel String?
+
+  // Parámetros de generación
+  temperature   Float    @default(0.7)
+  maxTokens     Int      @default(4096)
+
+  // Si true, esta policy sobreescribe la del scope superior (no hereda).
+  // Si false, solo define los campos no cubiertos por el scope superior.
+  isOverride    Boolean  @default(false)
+
+  // Referencia al scope del cual hereda (null si es la raíz)
+  inheritedFrom String?
+
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // FKs opcionales a cada nivel de la jerarquía
+  // Prisma requiere FKs explícitas para cada relación polimórfica
+  agency     Agency?     @relation(fields: [scopeId], references: [id])
+  department Department? @relation(fields: [scopeId], references: [id])
+  workspace  Workspace?  @relation(fields: [scopeId], references: [id])
+  agent      Agent?      @relation(fields: [scopeId], references: [id])
+
+  @@unique([scopeType, scopeId])
+  @@index([scopeId])
+  @@map("model_policies")
 }
 
 // ────────────────────────────────────────────────────────────
@@ -199,14 +227,13 @@ model Skill {
   type         String   @default("builtin")
   category     String   @default("general")
   permissions  String[] @default([])
-  // functions[], plugin, files, dependencies stored as JSON
   functions    Json?    @default("[]")
   plugin       Json?
-  // Para type=openapi: spec URL o spec inline
   openapiSpec  Json?
-  // Para type=mcp: server URL y capabilities
   mcpConfig    Json?
-  // Para type=n8n_webhook: webhook URL y auth
+  // Para type=n8n_webhook: referencia al N8nWorkflow registrado
+  // { workflowId, webhookUrl, method, auth? }
+  // workflowId corresponde a N8nWorkflow.id (no el ID de n8n interno)
   n8nConfig    Json?
   files        String[] @default([])
   dependencies String[] @default([])
@@ -218,7 +245,6 @@ model Skill {
   @@map("skills")
 }
 
-// Junction table Agent ↔ Skill
 model AgentSkill {
   agentId   String
   skillId   String
@@ -232,6 +258,76 @@ model AgentSkill {
 }
 
 // ────────────────────────────────────────────────────────────
+// N8N INTEGRATION — v4
+//
+// N8nConnection: credenciales de una instancia n8n (puede haber varias).
+// N8nWorkflow: workflow registrado en esa instancia, expuesto como skill.
+//
+// Flujo de uso:
+//   1. Admin crea N8nConnection con baseUrl + apiKey cifrada
+//   2. Admin sincroniza workflows (GET /api/v1/workflows desde n8n)
+//      → crea N8nWorkflow por cada workflow activo con webhook trigger
+//   3. SkillRegistry crea un Skill type='n8n_webhook' con
+//      n8nConfig = { workflowId: N8nWorkflow.id, webhookUrl, method: 'POST' }
+//   4. SkillInvoker llama al webhookUrl cuando el agente invoca el tool
+// ────────────────────────────────────────────────────────────
+
+model N8nConnection {
+  id        String   @id @default(cuid())
+  name      String   @default("default")
+
+  // URL base de la instancia n8n — e.g. https://n8n.yourdomain.com
+  baseUrl   String
+
+  // API key cifrada con AES-256-GCM (mismo esquema que ChannelConfig.credentials)
+  // NUNCA texto plano. Cifrar en app antes de guardar.
+  apiKeyEncrypted String @db.Text
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workflows N8nWorkflow[]
+
+  @@map("n8n_connections")
+}
+
+model N8nWorkflow {
+  id             String        @id @default(cuid())
+  connectionId   String
+
+  // ID del workflow dentro del sistema n8n (para llamadas a la API de n8n)
+  n8nWorkflowId  String
+
+  name           String
+  description    String?       @default("")
+
+  // URL del webhook trigger del workflow
+  // Formato: https://n8n.yourdomain.com/webhook/<path>
+  webhookUrl     String?
+
+  // Método HTTP esperado por el webhook (default POST)
+  webhookMethod  String        @default("POST")
+
+  // JSON Schema de los parámetros que acepta el workflow
+  // Usado por SkillRegistry para generar la definición del tool
+  inputSchema    Json?         @default("{}")
+
+  // JSON Schema de la respuesta esperada (opcional, para validación)
+  outputSchema   Json?         @default("{}")
+
+  isActive       Boolean       @default(true)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  connection N8nConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, n8nWorkflowId])
+  @@index([connectionId])
+  @@map("n8n_workflows")
+}
+
+// ────────────────────────────────────────────────────────────
 // FLOWS
 // ────────────────────────────────────────────────────────────
 
@@ -242,7 +338,6 @@ model Flow {
   description String?  @default("")
   version     String?  @default("1.0.0")
   trigger     String   @default("manual")
-  // nodes[] and edges[] stored as JSON (FlowNode[], FlowEdge[])
   nodes       Json?    @default("[]")
   edges       Json?    @default("[]")
   tags        String[] @default([])
@@ -266,7 +361,6 @@ model Run {
   workspaceId String
   flowId      String
   status      String   @default("queued") // queued | running | waiting_approval | completed | failed | cancelled
-  // trigger stored as JSON (RunTrigger)
   trigger     Json     @default("{}")
   error       String?
   metadata    Json?    @default("{}")
@@ -292,9 +386,8 @@ model RunStep {
   runId       String
   nodeId      String
   nodeType    String
-  status      String   @default("queued") // queued | running | waiting_approval | completed | failed | skipped
+  status      String   @default("queued")
   agentId     String?
-  // input/output as JSON
   input       Json?    @default("{}")
   output      Json?    @default("{}")
   error       String?
@@ -307,12 +400,11 @@ model RunStep {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  // ── Durable execution fields ──────────────────────────────
-  // Snapshot del estado del step para reanudar tras crash/restart
+  // ── Durable execution ────────────────────────────────────
   checkpointData   Json?    // messages[], tool_calls[], observations[]
-  checkpointSeq    Int      @default(0) // iteración del loop ReAct
+  checkpointSeq    Int      @default(0)
   interruptReason  String?  // human_approval | budget_exceeded | tool_error | max_iter
-  resumePayload    Json?    // datos inyectados al resumir (aprobación humana, corrección, etc.)
+  resumePayload    Json?
   durableState     String   @default("none") // none | paused | resuming | replaying
 
   run        Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
@@ -330,14 +422,12 @@ model RunStep {
 // CHANNELS — gateway multi-canal
 // ────────────────────────────────────────────────────────────
 
-// Configuración de un canal (WhatsApp, Telegram, Slack, Email…)
-// IMPORTANTE: credentials se cifran en la aplicación antes de guardar
 model ChannelConfig {
   id          String   @id @default(cuid())
   workspaceId String
   channel     String   // whatsapp | telegram | slack | email | web | custom
   displayName String
-  // credentials CIFRADAS (AES-256-GCM) — nunca texto plano
+  // credentials CIFRADAS (AES-256-GCM)
   credentials Json     @default("{}")
   settings    Json?    @default("{}")
   isActive    Boolean  @default(true)
@@ -352,12 +442,11 @@ model ChannelConfig {
   @@map("channel_configs")
 }
 
-// Binding canal ↔ agente (un agente puede atender múltiples rutas)
 model ChannelBinding {
   id              String   @id @default(cuid())
   channelConfigId String
   agentId         String
-  route           String   // número, room, thread prefix, etc.
+  route           String
   isEnabled       Boolean  @default(true)
   createdAt       DateTime @default(now())
 
@@ -370,26 +459,16 @@ model ChannelBinding {
 
 // ────────────────────────────────────────────────────────────
 // GATEWAY SESSION + CONVERSATION MESSAGES
-//
-// Patrón anti-TOAST (inspirado en LangGraph Thread pattern):
-//   GatewaySession.activeContextJson  → ventana compacta para el LLM (<3KB)
-//                                        se reescribe con summarización
-//   ConversationMessage               → historial permanente, append-only,
-//                                        queryable, auditable por mensaje
-//
-// SessionManager resuelve GatewaySession vía (channelConfigId, externalId)
-// y usa session.id como FK en ConversationMessage.
+// Patrón anti-TOAST
 // ────────────────────────────────────────────────────────────
 
 model GatewaySession {
   id              String   @id @default(cuid())
   channelConfigId String
-  externalId      String   // user ID / thread ID del canal
+  externalId      String
   agentId         String
 
-  // Ventana activa para el LLM: últimos N msgs + resumen. Siempre pequeño (<3KB).
-  // Se compacta con summarización cuando el historial crece.
-  // NO es el historial completo — eso vive en ConversationMessage.
+  // Ventana activa para el LLM (<3KB). Se compacta con summarización.
   activeContextJson Json?  @default("[]")
 
   state          String   @default("active") // active | idle | closed
@@ -407,30 +486,22 @@ model GatewaySession {
   @@map("gateway_sessions")
 }
 
-// Historial permanente de conversación — append-only, nunca updates
-// Cada registro es un mensaje individual (~1KB JSONB — seguro anti-TOAST)
 model ConversationMessage {
   id               String   @id @default(cuid())
   sessionId        String
   role             String   // user | assistant | system | tool
 
-  // contentText: texto plano para búsqueda full-text y visualización
   contentText      String?  @db.Text
-  // contentJson: estructura completa OpenAI-compatible:
-  //   user/assistant: [{ type: 'text', text: string }]
-  //   tool:           [{ type: 'tool_result', tool_use_id, content }]
-  //   system:         string
-  contentJson      Json     // estructura completa
+  contentJson      Json
 
-  channelMessageId String?  // ID externo del canal (Telegram msg_id, etc.)
-  toolCallId       String?  // si es resultado de un tool call
+  channelMessageId String?
+  toolCallId       String?
   toolName         String?
 
-  // Scope jerárquico del agente que respondió o recibió
-  scopeType        String?  // agency | department | workspace | agent
+  scopeType        String?
   scopeId          String?
 
-  tokenCount       Int?     // tokens del mensaje (estimado o real)
+  tokenCount       Int?
   createdAt        DateTime @default(now())
 
   session GatewaySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
@@ -447,9 +518,9 @@ model ConversationMessage {
 
 model BudgetPolicy {
   id                  String   @id @default(cuid())
-  scopeType           String   // agency | department | workspace | agent
+  scopeType           String
   scopeId             String
-  window              String   @default("monthly") // daily | weekly | monthly | custom
+  window              String   @default("monthly")
 
   softCapUsd          Float?
   hardCapUsd          Float?
@@ -484,7 +555,7 @@ model BudgetIncident {
   policyId     String
   scopeType    String
   scopeId      String
-  incidentType String   // soft_cap_reached | hard_cap_reached | approval_required | per_model_cap_reached
+  incidentType String
   triggeredAt  DateTime @default(now())
   resolvedAt   DateTime?
   runId        String?
