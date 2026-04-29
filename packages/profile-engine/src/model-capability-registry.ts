@@ -1,19 +1,20 @@
 /**
  * ModelCapabilityRegistry
  *
- * Catálogo estático de modelos conocidos con sus familias y capacidades.
- * Permite resolver cadenas de fallback por similitud cuando un modelo falla,
- * priorizando modelos del mismo proveedor o con capacidades equivalentes.
+ * Catálogo SEED de capacidades por modelo.
+ * Este registro ya NO es la fuente de verdad en runtime — ese rol lo tiene
+ * ModelCatalogEntry (DB). Su función ahora es actuar como fuente SECUNDARIA
+ * de enrichment cuando el proveedor no devuelve metadata de families.
  *
- * Diseño:
- *   - Cada modelo tiene un array de `families` (ej: ['reasoning', 'fast'])
- *   - Las familias permiten encontrar sustitutos similares entre proveedores
- *   - El catálogo cubre los providers configurables del sistema:
- *     openai/*, anthropic/*, qwen/*, deepseek/*, google/*, mistral/*, meta-llama/*
+ * ProviderCatalogService.inferFamilies() consulta CAPABILITY_REGISTRY[modelId]
+ * como fallback cuando la respuesta del proveedor no tiene architecture.modality
+ * ni context_length suficiente.
  *
- * Uso:
- *   const chain = resolveModelFallbackChain('openai/gpt-4o', availableModels)
- *   // → ['anthropic/claude-3-5-sonnet', 'qwen/qwen-2.5-72b', ...]
+ * La función seedFamiliesForModel() es el punto de entrada público usado
+ * por ProviderCatalogService:
+ *
+ *   const families = seedFamiliesForModel('openai/gpt-4o')
+ *   // → ['reasoning', 'vision', 'coding', 'instruction', 'multilingual']
  */
 
 export type ModelFamily =
@@ -36,8 +37,9 @@ export interface ModelCapability {
 }
 
 /**
- * Catálogo de capacidades por modelo.
+ * Catálogo seed de capacidades por modelo.
  * Clave = modelId canónico (mismo formato que ModelPolicy.primaryModel).
+ * Usado como fuente secundaria de families en ProviderCatalogService.
  */
 export const CAPABILITY_REGISTRY: Record<string, ModelCapability> = {
   // ── OpenAI ──────────────────────────────────────────────────────────────
@@ -210,20 +212,27 @@ export const CAPABILITY_REGISTRY: Record<string, ModelCapability> = {
   },
 }
 
-// ── Resolución de fallback por similitud ─────────────────────────────────────
+/**
+ * Devuelve las families del seed para un modelId dado.
+ * Retorna array vacío si el modelo no está en el catálogo seed.
+ * Usado por ProviderCatalogService como fuente secundaria de enrichment.
+ */
+export function seedFamiliesForModel(modelId: string): ModelFamily[] {
+  return CAPABILITY_REGISTRY[modelId]?.families ?? []
+}
 
 /**
- * Dado el `failedModelId` y una lista de `availableModels` configurados
- * en el scope, devuelve una cadena de candidatos ordenados por similitud
- * de capacidades (mayor intersección de families primero).
- *
- * El modelo fallido nunca aparece en el resultado.
- * Modelos desconocidos en el catálogo reciben score 0 pero se incluyen al final.
- *
- * @param failedModelId  - El modelo que falló ('provider/model-name')
- * @param availableModels - Modelos configurados en el scope (de ModelPolicy + Agent.model)
- * @returns Array de modelIds ordenados por similitud descendente
+ * Devuelve el contextK del seed para un modelId dado.
+ * Retorna 0 si el modelo no está en el catálogo seed.
  */
+export function seedContextKForModel(modelId: string): number {
+  return CAPABILITY_REGISTRY[modelId]?.contextK ?? 0
+}
+
+// ── Resolución de fallback por similitud (uso legacy / sin DB) ────────────────
+// Mantenida para compatibilidad con OrchestratorModelResolver en tests.
+// En producción usar ProviderCatalogService.filterActiveFallbackChain().
+
 export function resolveModelFallbackChain(
   failedModelId:   string,
   availableModels: string[],
@@ -232,14 +241,10 @@ export function resolveModelFallbackChain(
   if (candidates.length === 0) return []
 
   const failedCap = CAPABILITY_REGISTRY[failedModelId]
-  if (!failedCap) {
-    // Modelo fallido desconocido → devolver candidatos sin ordenar
-    return candidates
-  }
+  if (!failedCap) return candidates
 
   const failedFamilies = new Set(failedCap.families)
 
-  // Score = intersección de families + bonus si mismo proveedor
   const scored = candidates.map(modelId => {
     const cap           = CAPABILITY_REGISTRY[modelId]
     const sameProvider  = modelId.split('/')[0] === failedModelId.split('/')[0]
@@ -254,11 +259,6 @@ export function resolveModelFallbackChain(
   return scored.map(s => s.modelId)
 }
 
-/**
- * Clase wrapper para uso inyectable en servicios.
- * Permite sobreescribir el catálogo en tests o para agregar modelos
- * custom sin modificar el registro global.
- */
 export class ModelCapabilityRegistry {
   private readonly registry: Record<string, ModelCapability>
 
@@ -266,12 +266,10 @@ export class ModelCapabilityRegistry {
     this.registry = { ...CAPABILITY_REGISTRY, ...overrides }
   }
 
-  /** Registra o sobreescribe un modelo en runtime (ej: modelos fine-tuned del tenant) */
   register(capability: ModelCapability): void {
     this.registry[capability.id] = capability
   }
 
-  /** Resuelve la cadena de fallback por similitud */
   resolveFallbackChain(failedModelId: string, availableModels: string[]): string[] {
     const candidates = availableModels.filter(m => m !== failedModelId)
     if (candidates.length === 0) return []
@@ -295,12 +293,10 @@ export class ModelCapabilityRegistry {
     return scored.map(s => s.modelId)
   }
 
-  /** Devuelve las capacidades de un modelo (undefined si no está en catálogo) */
   get(modelId: string): ModelCapability | undefined {
     return this.registry[modelId]
   }
 
-  /** Lista todos los modelos registrados */
   list(): ModelCapability[] {
     return Object.values(this.registry)
   }
