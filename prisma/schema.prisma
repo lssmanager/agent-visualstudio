@@ -1,51 +1,37 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // prisma/schema.prisma
-// Agent Visual Studio — Full Platform Schema
+// Agent Visual Studio — Full Platform Schema — Versión F0 (canónica)
 //
 // Hierarchy:    Agency → Department → Workspace → Agent → Subagent
 // Execution:    Flow → Run → RunStep  (LangGraph-style checkpoints)
-// Gateway:      ChannelConfig → ChannelBinding → GatewaySession
+// Gateway:      ChannelConfig → ChannelBinding → GatewaySession → ConversationMessage
 // Integrations: N8nConnection → N8nWorkflow
 // Providers:    ProviderCredential → ModelCatalogEntry
 // Policies:     BudgetPolicy, ModelPolicy  (scope-inherited, exactly-one-FK)
 // Audit:        AuditEvent
 //
-// ── ProviderCredential ───────────────────────────────────────────────────────
-// Almacena credenciales de proveedores LLM configurados por el tenant.
-// Reemplaza las env vars OPENAI_API_KEY / ANTHROPIC_API_KEY / OPENROUTER_API_KEY.
-// La API key se cifra con AES-256-GCM usando PROVIDER_SECRET (env var).
-// El campo `type` determina el routing en ProviderCatalogService y callLLM():
-//   'openai'       → api.openai.com/v1
-//   'anthropic'    → api.anthropic.com/v1/messages
-//   'openrouter'   → openrouter.ai/api/v1  (cubre 50+ proveedores)
-//   'openai_compat'→ baseUrl personalizada con protocolo OpenAI-compat
+// ── D-15 ─────────────────────────────────────────────────────────────────────
+// GatewaySession.messageHistory ELIMINADO.
+// Reemplazado por activeContextJson Json? (contexto activo de la sesión)
+// + modelo ConversationMessage (historial append-only, indexado).
 //
-// ── ModelCatalogEntry ────────────────────────────────────────────────────────
-// Cache de modelos disponibles, sincronizados desde las APIs de cada proveedor.
-// ProviderCatalogService.sync() llama /models de cada ProviderCredential activo
-// y upserta los resultados enriquecidos con families del CAPABILITY_REGISTRY seed.
+// ── D-24d ────────────────────────────────────────────────────────────────────
+// isLevelOrchestrator Boolean @default(false) en Agent, Workspace, Department.
+// Solo UN agente/workspace/department por scope puede tener isLevelOrchestrator=true.
+// Prisma no puede expresar "@@unique donde el valor sea true";
+// por eso el partial unique index se aplica vía SQL raw en la migración:
+//   CREATE UNIQUE INDEX "agent_one_orchestrator_per_workspace"
+//     ON "Agent" ("workspaceId") WHERE "isLevelOrchestrator" = true;
+//   (ídem para Workspace y Department — ver C-20 en Plan Maestro)
 //
-// ── ModelPolicy.fallbackChain ────────────────────────────────────────────────
-// String[] reemplaza fallbackModel String?.
-// Permite lista ordenada de fallbacks de libre elección entre cualquier modelo
-// del catálogo activo, de cualquier proveedor configurado.
+// ── D-07 ─────────────────────────────────────────────────────────────────────
+// Flow.agentId: el ownership real es Flow → Agent → Workspace → Department → Agency.
 //
 // ── Exactly-one-FK invariant on Policy tables ────────────────────────────────
-// BudgetPolicy and ModelPolicy each belong to exactly ONE scope level
-// (agency | department | workspace | agent). Enforced at two layers:
-//
-//   1. DB layer — raw CHECK constraint added via a manual migration:
-//      ALTER TABLE "BudgetPolicy" ADD CONSTRAINT "budget_policy_exactly_one_scope"
-//        CHECK (
-//          (CASE WHEN "agencyId"     IS NOT NULL THEN 1 ELSE 0 END +
-//           CASE WHEN "departmentId" IS NOT NULL THEN 1 ELSE 0 END +
-//           CASE WHEN "workspaceId"  IS NOT NULL THEN 1 ELSE 0 END +
-//           CASE WHEN "agentId"      IS NOT NULL THEN 1 ELSE 0 END) = 1
-//        );
-//      (Same for "ModelPolicy". See prisma/migrations/README.md.)
-//
+// BudgetPolicy and ModelPolicy each belong to exactly ONE scope level.
+// Enforced at two layers:
+//   1. DB layer — raw CHECK constraint added via a manual migration.
 //   2. App layer — PolicyScopeGuard in apps/api validates before upsert.
-//      Import: import { assertExactlyOneScope } from '@agent-vs/core-types';
 // ─────────────────────────────────────────────────────────────────────────────
 
 generator client {
@@ -56,10 +42,6 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
-
-// ─── Scope enum (used by app-layer validation, NOT a Prisma enum in DB) ───────
-// Values: 'agency' | 'department' | 'workspace' | 'agent'
-// Kept as String fields in the DB so we can extend without migrations.
 
 // ─── Hierarchy ────────────────────────────────────────────────────────────────
 
@@ -91,6 +73,9 @@ model Department {
   systemPrompt String?     @db.Text
   model        String      @default("openai/gpt-4o")
   profileJson  Json?
+  /// true = este Department es el orquestador de nivel 2 de su Agency.
+  /// Solo uno por Agency. Enforced por partial unique index en migración (C-20).
+  isLevelOrchestrator Boolean  @default(false)
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
@@ -110,6 +95,9 @@ model Workspace {
   systemPrompt String?    @db.Text
   model        String     @default("openai/gpt-4o")
   profileJson  Json?
+  /// true = este Workspace es el orquestador de nivel 3 de su Department.
+  /// Solo uno por Department. Enforced por partial unique index en migración (C-20).
+  isLevelOrchestrator Boolean  @default(false)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
@@ -128,6 +116,10 @@ model Agent {
   slug         String
   /// 'orchestrator' | 'specialist' | 'subagent'
   role         String    @default("specialist")
+  /// true = este Agent es el orquestador de nivel 4 de su Workspace.
+  /// Solo uno por Workspace. Enforced por partial unique index en migración (C-20).
+  /// El ProfilePropagatorService actualiza SOLO el agente con isLevelOrchestrator=true (D-24f).
+  isLevelOrchestrator Boolean  @default(false)
   systemPrompt String?   @db.Text
   model        String    @default("openai/gpt-4o")
   profileJson  Json?
@@ -138,6 +130,7 @@ model Agent {
   channelBindings ChannelBinding[]
   flows           Flow[]
   subagents       Subagent[]
+  runSteps        RunStep[]
   budgetPolicy    BudgetPolicy? @relation("AgentBudget")
   modelPolicy     ModelPolicy?  @relation("AgentModel")
 
@@ -205,6 +198,7 @@ model SubagentSkill {
 
 model Flow {
   id          String   @id @default(uuid())
+  /// Ownership real: Flow → Agent → Workspace → Department → Agency (D-07)
   agentId     String
   agent       Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
   name        String
@@ -225,6 +219,8 @@ model Run {
   id           String    @id @default(uuid())
   flowId       String
   flow         Flow      @relation(fields: [flowId], references: [id])
+  /// Solo referencia para queries de dashboard.
+  /// El ownership real es el path Flow → Agent → Workspace → Department → Agency (D-07).
   agencyId     String?
   agency       Agency?   @relation(fields: [agencyId], references: [id])
   /// 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'waiting_approval'
@@ -242,7 +238,8 @@ model Run {
   steps RunStep[]
 
   @@index([flowId, status])
-  @@index([agencyId, createdAt])
+  /// D-10: índice corregido — agrega status al compuesto
+  @@index([agencyId, status, createdAt])
 }
 
 model RunStep {
@@ -254,6 +251,7 @@ model RunStep {
   /// 'agent' | 'tool' | 'condition' | 'loop' | 'approval' | 'input' | 'output'
   nodeType    String
   agentId     String?
+  agent       Agent?    @relation(fields: [agentId], references: [id])
   /// 'queued' | 'running' | 'completed' | 'failed' | 'skipped' | 'waiting_approval'
   status      String    @default("queued")
   input       Json?
@@ -266,7 +264,9 @@ model RunStep {
   startedAt   DateTime  @default(now())
   completedAt DateTime?
 
-  @@index([runId, nodeId])
+  /// D-10: índices de performance obligatorios
+  @@index([runId, status])
+  @@index([agentId, createdAt])
 }
 
 // ─── Gateway / Channels ──────────────────────────────────────────────────────
@@ -311,16 +311,49 @@ model GatewaySession {
   /// External user ID in the channel (Telegram chat_id, WhatsApp phone, etc.)
   externalUserId  String
   agentId         String
-  /// Conversation message history — [{ role, content, ts }]
-  messageHistory  Json          @default("[]")
+  /// D-15: messageHistory ELIMINADO.
+  /// Contexto activo de la sesión (ventana de tokens para el LLM).
+  /// El historial completo vive en ConversationMessage (append-only).
+  activeContextJson Json?
   /// 'active' | 'paused' | 'closed'
   state           String        @default("active")
   metadata        Json?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
+  messages ConversationMessage[]
+
   @@unique([channelConfigId, externalUserId])
   @@index([agentId, state])
+}
+
+/// D-11: Historial append-only de mensajes por sesión.
+/// La transformación al formato del proveedor LLM ocurre en runtime, no en almacenamiento.
+model ConversationMessage {
+  id               String         @id @default(uuid())
+  sessionId        String
+  session          GatewaySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  /// 'user' | 'assistant' | 'tool' | 'system'
+  role             String
+  /// Texto plano del mensaje (null si es tool call o contenido binario)
+  contentText      String?        @db.Text
+  /// Contenido estructurado completo (siempre presente)
+  contentJson      Json
+  /// ID del mensaje en el canal externo (Telegram message_id, etc.)
+  channelMessageId String?
+  /// Para mensajes de tipo tool: ID de la llamada
+  toolCallId       String?
+  /// Para mensajes de tipo tool: nombre del skill invocado
+  toolName         String?
+  /// Scope que generó este mensaje (para queries de dashboard)
+  scopeType        String?
+  scopeId          String?
+  tokenCount       Int?
+  createdAt        DateTime       @default(now())
+
+  @@index([sessionId, createdAt])
+  @@index([sessionId, role])
+  @@index([scopeId, createdAt])
 }
 
 // ─── n8n Integration ─────────────────────────────────────────────────────────
@@ -362,19 +395,6 @@ model N8nWorkflow {
 // Reemplaza OPENAI_API_KEY / ANTHROPIC_API_KEY / OPENROUTER_API_KEY como
 // env vars hardcodeadas — la API key vive en DB cifrada con AES-256-GCM
 // usando la env var PROVIDER_SECRET como clave maestra.
-//
-// type:
-//   'openai'        → https://api.openai.com/v1  (Authorization: Bearer)
-//   'anthropic'     → https://api.anthropic.com/v1  (x-api-key header)
-//   'openrouter'    → https://openrouter.ai/api/v1  (Bearer, cubre 50+ proveedores)
-//   'openai_compat' → baseUrl personalizada con protocolo OpenAI Chat Completions
-//
-// extraHeaders: Json opcional — headers adicionales enviados en cada request
-//   ej: { "HTTP-Referer": "https://app.example.com", "X-Title": "My App" }
-//   (útil para OpenRouter site tracking)
-//
-// syncedAt: timestamp del último sync exitoso de ModelCatalogEntry desde este proveedor.
-//   null = nunca sincronizado.
 
 model ProviderCredential {
   id               String    @id @default(uuid())
@@ -385,7 +405,6 @@ model ProviderCredential {
   /// 'openai' | 'anthropic' | 'openrouter' | 'openai_compat'
   type             String
   /// Base URL — obligatorio para 'openai_compat', ignorado para 'openai' y 'anthropic'
-  /// Para 'openrouter' puede omitirse (default: https://openrouter.ai/api/v1)
   baseUrl          String?
   /// AES-256-GCM encrypted API key. Clave maestra: env PROVIDER_SECRET
   apiKeyEncrypted  String    @db.Text
@@ -404,43 +423,19 @@ model ProviderCredential {
 }
 
 // ─── Model Catalog ────────────────────────────────────────────────────────────
-//
-// Cache de modelos disponibles sincronizados desde las APIs de cada proveedor.
-// ProviderCatalogService.sync(providerId) llama:
-//   - OpenAI:      GET /v1/models
-//   - Anthropic:   GET /v1/models
-//   - OpenRouter:  GET /v1/models  (devuelve todos los providers con metadata rica)
-//   - openai_compat: GET /v1/models (si el endpoint existe)
-//
-// families: String[] — tags de capacidad asignados automáticamente.
-//   Fuente primaria: metadata del proveedor (OpenRouter incluye context_length,
-//   architecture.modality, etc.).
-//   Fuente secundaria: CAPABILITY_REGISTRY seed en model-capability-registry.ts,
-//   usado para enriquecer cuando el proveedor no devuelve families.
-//
-// contextK: ventana de contexto en miles de tokens (0 = desconocido).
-//
-// isActive: true si el proveedor devolvió este modelo en el último sync.
-//   false = modelo retirado pero conservado en historial.
-//
-// raw: respuesta original del proveedor (para audit y enriquecimiento futuro).
 
 model ModelCatalogEntry {
   id           String             @id @default(uuid())
   providerId   String
   provider     ProviderCredential @relation(fields: [providerId], references: [id], onDelete: Cascade)
   /// Canónico: 'provider/model-name' — mismo formato que ModelPolicy.primaryModel
-  /// Para openrouter el modelId incluye el sub-provider: 'meta-llama/llama-3.3-70b-instruct'
   modelId      String
-  /// Display name del modelo (del proveedor)
   displayName  String
   /// Familias de capacidad: ['reasoning','fast','vision','coding','multilingual','long-context','instruction','mini']
   families     String[]
   /// Contexto máximo en miles de tokens (0 = desconocido)
   contextK     Int                @default(0)
-  /// true si el proveedor devolvió este modelo en el último sync
   isActive     Boolean            @default(true)
-  /// Respuesta original del proveedor para audit
   raw          Json?
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
@@ -453,24 +448,8 @@ model ModelCatalogEntry {
 // ─── Budget / Model Policies ─────────────────────────────────────────────────
 //
 // INVARIANT: exactly one FK is non-null per row.
-//
-// Prisma @unique prevents two policies at the same scope, but cannot prevent:
-//   (a) a row with ALL FKs null, or
-//   (b) a row with MORE THAN ONE FK set.
-//
-// Both cases are blocked by the CHECK constraints documented at the top of
-// this file. Run `npx prisma migrate dev --name add_policy_scope_check` then
-// edit the generated SQL file to add the constraints before applying.
-//
+// Enforced by CHECK constraints in manual migration.
 // Resolution order at runtime: agent → workspace → department → agency
-// See: packages/run-engine/src/policy-resolver.ts
-//
-// ModelPolicy.fallbackChain: String[] (lista ordenada de modelos de fallback)
-//   Reemplaza fallbackModel String? del schema anterior.
-//   Cada elemento es un modelId canónico ('provider/model-name') de libre
-//   elección entre los modelos activos en ModelCatalogEntry.
-//   OrchestratorModelResolver itera la cadena en orden hasta que un modelo
-//   responde exitosamente; si todos fallan → template estático.
 
 model BudgetPolicy {
   id         String   @id @default(uuid())
@@ -500,8 +479,6 @@ model ModelPolicy {
   /// Modelo principal: 'provider/model-name' — debe existir en ModelCatalogEntry
   primaryModel  String
   /// Cadena ordenada de fallbacks de libre elección.
-  /// Cada elemento es un modelId canónico activo en ModelCatalogEntry.
-  /// Reemplaza fallbackModel String? — ahora admite N fallbacks de cualquier proveedor.
   fallbackChain String[]
   temperature   Float?   @default(0.7)
   maxTokens     Int?     @default(4096)
