@@ -1,7 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Prisma schema — agent-visualstudio
-// Cubre: Workspace, Agent, Flow, Skill, Policy, Hook (WorkspaceStore contract)
-//        + Channel, LlmProvider (channels module)
+// Modelos base:  Workspace, Agent, Flow, Skill, Policy, Hook
+//                Channel, LlmProvider
+// Modelos plan:  Run, RunStep, ConversationMessage
+//                BudgetPolicy, BudgetIncident, CostEvent
+//                ModelPolicy, AgentProfile
+//                Approval, ActivityLog
 // ─────────────────────────────────────────────────────────────────────────────
 
 generator client {
@@ -22,18 +26,23 @@ model Workspace {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  agents      Agent[]
-  flows       Flow[]
-  skills      Skill[]
-  policies    Policy[]
-  hooks       Hook[]
-  channels    Channel[]
-  llmProviders LlmProvider[]
+  agents        Agent[]
+  flows         Flow[]
+  skills        Skill[]
+  policies      Policy[]
+  hooks         Hook[]
+  channels      Channel[]
+  llmProviders  LlmProvider[]
+  runs          Run[]
+  budgetPolicies BudgetPolicy[]
+  modelPolicies  ModelPolicy[]
+  approvals      Approval[]
+  activityLogs   ActivityLog[]
 }
 
 // ── Agent ─────────────────────────────────────────────────────────────────────
 model Agent {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
@@ -42,77 +51,83 @@ model Agent {
   role        String?
   goal        String?
   backstory   String?
-  model       String   @default("gpt-4o-mini")
-  tools       Json     @default("[]")
-  config      Json     @default("{}")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  model       String    @default("gpt-4o-mini")
+  tools       Json      @default("[]")
+  config      Json      @default("{}")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
-  boundChannels Channel[] @relation("ChannelAgent")
+  boundChannels  Channel[]    @relation("ChannelAgent")
+  profile        AgentProfile?
+  runs           Run[]
+  modelPolicies  ModelPolicy[]
+  approvals      Approval[]
 
   @@index([workspaceId])
 }
 
 // ── Flow ──────────────────────────────────────────────────────────────────────
 model Flow {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   name        String
   description String?
-  nodes       Json     @default("[]")
-  edges       Json     @default("[]")
-  config      Json     @default("{}")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  nodes       Json      @default("[]")
+  edges       Json      @default("[]")
+  config      Json      @default("{}")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  runs        Run[]
 
   @@index([workspaceId])
 }
 
 // ── Skill ─────────────────────────────────────────────────────────────────────
 model Skill {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   name        String
   description String?
-  type        String   @default("function")
-  config      Json     @default("{}")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  type        String    @default("function")
+  config      Json      @default("{}")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([workspaceId])
 }
 
 // ── Policy ────────────────────────────────────────────────────────────────────
 model Policy {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   name        String
   description String?
-  rules       Json     @default("[]")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  rules       Json      @default("[]")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([workspaceId])
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 model Hook {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   name        String
   event       String
-  action      Json     @default("{}")
-  enabled     Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  action      Json      @default("{}")
+  enabled     Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([workspaceId])
 }
@@ -145,6 +160,8 @@ model Channel {
   boundAgentId String?
   boundAgent   Agent?        @relation("ChannelAgent", fields: [boundAgentId], references: [id])
 
+  messages    ConversationMessage[]
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -154,17 +171,351 @@ model Channel {
 
 // ── LlmProvider ───────────────────────────────────────────────────────────────
 model LlmProvider {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  provider    String   // openai | anthropic | qwen | deepseek | openrouter
-  apiKeyEnc   String   // AES-256-GCM cifrado
+  provider    String    // openai | anthropic | qwen | deepseek | openrouter
+  apiKeyEnc   String    // AES-256-GCM cifrado
   baseUrl     String?
-  isDefault   Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  isDefault   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@unique([workspaceId, provider])
   @@index([workspaceId])
+}
+
+// ── Run ───────────────────────────────────────────────────────────────────────
+// Representa una ejecución de un Flow por un Agent (LangGraph Thread)
+enum RunStatus {
+  pending
+  running
+  paused
+  completed
+  failed
+  cancelled
+}
+
+model Run {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  flowId      String?
+  flow        Flow?     @relation(fields: [flowId], references: [id])
+  agentId     String?
+  agent       Agent?    @relation(fields: [agentId], references: [id])
+
+  // Referencia a sesión de canal (nullable — runs sin canal = API directo)
+  sessionId   String?
+  channelKind String?
+
+  status      RunStatus @default(pending)
+  inputData   Json      @default("{}")   // payload inicial
+  outputData  Json?                      // resultado final
+  error       String?
+  metadata    Json      @default("{}")
+
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  steps       RunStep[]
+  costEvents  CostEvent[]
+
+  @@index([workspaceId])
+  @@index([agentId])
+  @@index([flowId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ── RunStep ───────────────────────────────────────────────────────────────────
+// Checkpoint por nodo del flow (equivalente a LangGraph step)
+enum RunStepStatus {
+  pending
+  running
+  completed
+  failed
+  skipped
+}
+
+model RunStep {
+  id        String        @id @default(cuid())
+  runId     String
+  run       Run           @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  nodeId    String        // id del nodo en el Flow
+  nodeType  String        // llm | tool | condition | subflow | etc.
+  index     Int           // orden de ejecución dentro del run
+
+  status    RunStepStatus @default(pending)
+  input     Json          @default("{}")
+  output    Json?
+  error     String?
+
+  // LLM-specific
+  model     String?
+  provider  String?
+  promptTokens    Int?
+  completionTokens Int?
+  totalTokens     Int?
+  costUsd         Decimal? @db.Decimal(12, 8)
+
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([runId])
+  @@index([runId, index])
+}
+
+// ── ConversationMessage ────────────────────────────────────────────────────────
+// Historial TOAST por sesión de canal
+enum MessageRole {
+  user
+  assistant
+  system
+  tool
+}
+
+model ConversationMessage {
+  id          String      @id @default(cuid())
+  channelId   String
+  channel     Channel     @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  sessionId   String      // id de sesión del gateway (no FK — es efímero)
+  role        MessageRole
+  content     String      @db.Text
+  toolName    String?     // cuando role = tool
+  toolCallId  String?
+  metadata    Json        @default("{}")
+
+  createdAt   DateTime    @default(now())
+
+  @@index([channelId, sessionId])
+  @@index([channelId, createdAt])
+  @@index([sessionId])
+}
+
+// ── BudgetPolicy ──────────────────────────────────────────────────────────────
+// Presupuesto de gasto en LLM — scope: workspace | agent | model
+enum BudgetScope {
+  workspace
+  agent
+  model
+}
+
+enum BudgetPeriod {
+  daily
+  weekly
+  monthly
+  total
+}
+
+model BudgetPolicy {
+  id          String       @id @default(cuid())
+  workspaceId String
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  name        String
+  scope       BudgetScope
+  targetId    String?      // agentId o modelId según scope
+  limitUsd    Decimal      @db.Decimal(10, 4)
+  period      BudgetPeriod @default(monthly)
+  periodDays  Int?         // override si period = total o custom
+  enabled     Boolean      @default(true)
+  alertPct    Int          @default(80)  // % para alerta (0-100)
+
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  incidents   BudgetIncident[]
+  costEvents  CostEvent[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, scope])
+}
+
+// ── BudgetIncident ────────────────────────────────────────────────────────────
+enum IncidentKind {
+  alert      // llegó al alertPct
+  exceeded   // superó el límite
+  reset      // inicio de nuevo período
+}
+
+model BudgetIncident {
+  id             String       @id @default(cuid())
+  budgetPolicyId String
+  budgetPolicy   BudgetPolicy @relation(fields: [budgetPolicyId], references: [id], onDelete: Cascade)
+
+  kind           IncidentKind
+  usageUsd       Decimal      @db.Decimal(10, 4)
+  limitUsd       Decimal      @db.Decimal(10, 4)
+  pct            Int          // usageUsd / limitUsd * 100
+  detail         Json         @default("{}")
+
+  occurredAt     DateTime     @default(now())
+
+  @@index([budgetPolicyId])
+  @@index([occurredAt])
+}
+
+// ── CostEvent ─────────────────────────────────────────────────────────────────
+// Registro granular de cada llamada LLM con costo calculado
+model CostEvent {
+  id             String        @id @default(cuid())
+  runId          String?
+  run            Run?          @relation(fields: [runId], references: [id])
+  budgetPolicyId String?
+  budgetPolicy   BudgetPolicy? @relation(fields: [budgetPolicyId], references: [id])
+
+  provider       String        // openai | anthropic | qwen | deepseek | openrouter
+  model          String
+  promptTokens   Int
+  completionTokens Int
+  totalTokens    Int
+  costUsd        Decimal       @db.Decimal(12, 8)
+
+  agentId        String?
+  workspaceId    String?
+  metadata       Json          @default("{}")
+
+  createdAt      DateTime      @default(now())
+
+  @@index([runId])
+  @@index([budgetPolicyId])
+  @@index([workspaceId, createdAt])
+  @@index([agentId, createdAt])
+  @@index([provider, model, createdAt])
+}
+
+// ── ModelPolicy ───────────────────────────────────────────────────────────────
+// Scope hierarchy: workspace > agent > flow-node
+// resolveModelPolicy() busca de más específico a más general
+enum ModelPolicyScope {
+  workspace
+  agent
+  flow_node
+}
+
+model ModelPolicy {
+  id          String           @id @default(cuid())
+  workspaceId String
+  workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  scope       ModelPolicyScope
+  // targetId = agentId si scope=agent, nodeId si scope=flow_node, null si scope=workspace
+  targetId    String?
+  agent       Agent?           @relation(fields: [targetId], references: [id])
+
+  provider    String           // openai | anthropic | qwen | deepseek | openrouter
+  model       String           // e.g. gpt-4o-mini, qwen-turbo, deepseek-chat
+  temperature Decimal          @default(0.7) @db.Decimal(3, 2)
+  maxTokens   Int              @default(4096)
+  topP        Decimal          @default(1.0) @db.Decimal(3, 2)
+  config      Json             @default("{}") // parámetros extra del provider
+  enabled     Boolean          @default(true)
+
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([workspaceId, scope, targetId])
+  @@index([workspaceId])
+  @@index([workspaceId, scope])
+}
+
+// ── AgentProfile ──────────────────────────────────────────────────────────────
+// Datos de propagación para ProfilePropagatorService
+model AgentProfile {
+  id          String   @id @default(cuid())
+  agentId     String   @unique
+  agent       Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  // Datos propagados desde AgentBuilder
+  systemPrompt     String?  @db.Text
+  persona          Json     @default("{}")   // name, tone, language, etc.
+  knowledgeBase    Json     @default("[]")   // referencias a docs, URLs, etc.
+  responseFormat   String?                   // json | markdown | plain
+  contextWindow    Int      @default(8192)
+  memoryEnabled    Boolean  @default(false)
+  memoryConfig     Json     @default("{}")
+
+  // Versión del profile — incrementa con cada propagación
+  version      Int      @default(1)
+  propagatedAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ── Approval ──────────────────────────────────────────────────────────────────
+// Human-in-the-loop — pausa un Run hasta aprobación
+enum ApprovalStatus {
+  pending
+  approved
+  rejected
+  expired
+}
+
+model Approval {
+  id          String         @id @default(cuid())
+  workspaceId String
+  workspace   Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  agentId     String?
+  agent       Agent?         @relation(fields: [agentId], references: [id])
+
+  // Run que está esperando aprobación
+  runId       String?
+  stepId      String?        // RunStep específico que disparó la aprobación
+
+  status      ApprovalStatus @default(pending)
+  title       String
+  description String?        @db.Text
+  payload     Json           @default("{}") // datos del step para que el revisor decida
+  reviewedBy  String?        // userId del revisor
+  reviewNote  String?        @db.Text
+  expiresAt   DateTime?
+
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([workspaceId, status])
+  @@index([runId])
+}
+
+// ── ActivityLog ───────────────────────────────────────────────────────────────
+// Audit trail persistente (reemplaza archivo JSON en disk)
+enum ActivityResource {
+  workspace
+  agent
+  flow
+  skill
+  policy
+  channel
+  run
+  budget
+  model_policy
+  approval
+}
+
+model ActivityLog {
+  id          String           @id @default(cuid())
+  workspaceId String?
+  workspace   Workspace?       @relation(fields: [workspaceId], references: [id])
+
+  resource    ActivityResource
+  resourceId  String?
+  action      String           // created | updated | deleted | run.started | run.completed | etc.
+  detail      String           @db.Text
+  userId      String?
+  metadata    Json             @default("{}")
+
+  createdAt   DateTime         @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([resource, resourceId])
+  @@index([createdAt])
 }
