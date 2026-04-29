@@ -27,8 +27,8 @@ import { registerCorefilesRoutes } from './modules/corefiles/corefiles.controlle
 import { registerBuilderAgentRoutes } from './modules/builder-agent/builder-agent.controller';
 import { registerRuntimeInspectionRoutes } from './modules/runtime/runtime-inspection.controller';
 import { registerRunsStreamRoutes } from './modules/runtime/runs-stream.controller';
-// ── Fases 4-5: Dashboard analítico ──────────────────────────────────────────
 import { registerDashboardRoutes } from './modules/dashboard/dashboard.controller';
+import { registerLlmProvidersRoutes } from './modules/llm-providers/llm-providers.controller';
 
 export function registerRoutes(app: Express) {
   const router = Router();
@@ -43,6 +43,7 @@ export function registerRoutes(app: Express) {
   registerSkillsRoutes(router);
   registerFlowsRoutes(router);
   registerPoliciesRoutes(router);
+  registerProfilesRoutes(router);
   registerProfilesRoutes(router);
   registerRoutinesRoutes(router);
   registerRoutingRoutes(router);
@@ -62,10 +63,10 @@ export function registerRoutes(app: Express) {
   registerCorefilesRoutes(router);
   registerBuilderAgentRoutes(router);
   registerRuntimeInspectionRoutes(router);
-  // SSE streaming + async queue routes (must come after registerRunsRoutes)
   registerRunsStreamRoutes(router);
-  // Dashboard analítico Fases 4-5
   registerDashboardRoutes(router);
+  // LLM Providers + OAuth
+  registerLlmProvidersRoutes(router);
 
   app.use(studioConfig.apiPrefix, router);
 }
