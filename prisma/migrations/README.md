@@ -1,49 +1,63 @@
-# Migrations — Notas de migraciones manuales
+# Prisma Migrations — Agent Visual Studio
 
-## C-20 — Partial unique index para `isLevelOrchestrator`
+> **Orden de aplicación** (Prisma aplica en orden alfanumérico de carpeta):
 
-Prisma no puede expresar un `UNIQUE` condicional ("solo un `true` por scope").
-Después de ejecutar `prisma migrate dev`, editar la migración generada y agregar
-al final del archivo SQL:
+| # | Carpeta | Descripción |
+|---|---------|-------------|
+| 1 | `20260428000000_init` | Schema base completo + partial unique indexes (C-20) |
+| 2 | `20260429_provider_catalog` | ProviderCredential, ModelCatalogEntry, CHECK constraints exactly-one-scope |
+
+---
+
+## Cómo aplicar las migraciones
+
+```bash
+# Aplicar en desarrollo (crea la DB si no existe)
+npx prisma migrate dev
+
+# Aplicar en producción / CI
+npx prisma migrate deploy
+
+# Verificar estado
+npx prisma migrate status
+```
+
+---
+
+## Notas de diseño
+
+### C-20 — Partial unique indexes para `isLevelOrchestrator`
+
+Prisma no puede expresar `@@unique WHERE value = true`. Los tres índices parciales
+están en `20260428000000_init/migration.sql` como SQL raw:
 
 ```sql
--- C-20: Garantiza que solo un Agent por Workspace sea isLevelOrchestrator=true
-CREATE UNIQUE INDEX "agent_one_orchestrator_per_workspace"
-  ON "Agent" ("workspaceId")
-  WHERE "isLevelOrchestrator" = true;
+CREATE UNIQUE INDEX "dept_one_orchestrator_per_agency"
+  ON "Department"("agencyId") WHERE "isLevelOrchestrator" = TRUE;
 
--- C-20: Garantiza que solo un Workspace por Department sea isLevelOrchestrator=true
 CREATE UNIQUE INDEX "workspace_one_orchestrator_per_department"
-  ON "Workspace" ("departmentId")
-  WHERE "isLevelOrchestrator" = true;
+  ON "Workspace"("departmentId") WHERE "isLevelOrchestrator" = TRUE;
 
--- C-20: Garantiza que solo un Department por Agency sea isLevelOrchestrator=true
-CREATE UNIQUE INDEX "department_one_orchestrator_per_agency"
-  ON "Department" ("agencyId")
-  WHERE "isLevelOrchestrator" = true;
+CREATE UNIQUE INDEX "agent_one_orchestrator_per_workspace"
+  ON "Agent"("workspaceId") WHERE "isLevelOrchestrator" = TRUE;
 ```
 
-Este bloque SQL va al FINAL del archivo de migración, después de las instrucciones
-generadas por Prisma. Aplicar con `prisma migrate dev` (no `migrate deploy`).
+### D-10 — Índices de performance
 
-## Budget/Model Policy — CHECK constraints
+- `Run`: compuestos en `(flowId, status)` y `(agencyId, status, createdAt)`.
+- `RunStep`: compuestos en `(runId, status)` y `(agentId, startedAt)`.
+- `ConversationMessage`: en `(sessionId, createdAt)`, `(sessionId, role)`, `(scopeId, createdAt)`.
+- `AuditEvent`: en `(eventType, createdAt)`, `(scopeType, scopeId, createdAt)`, `(userId, createdAt)`.
 
-También agregar en la misma migración (o en una migración separada):
+### D-15 — ConversationMessage append-only
 
-```sql
-ALTER TABLE "BudgetPolicy" ADD CONSTRAINT "budget_policy_exactly_one_scope"
-  CHECK (
-    (CASE WHEN "agencyId"     IS NOT NULL THEN 1 ELSE 0 END +
-     CASE WHEN "departmentId" IS NOT NULL THEN 1 ELSE 0 END +
-     CASE WHEN "workspaceId"  IS NOT NULL THEN 1 ELSE 0 END +
-     CASE WHEN "agentId"      IS NOT NULL THEN 1 ELSE 0 END) = 1
-  );
+`GatewaySession.messageHistory` fue eliminado. El historial completo vive en
+`ConversationMessage` (append-only). El contexto activo de la ventana LLM
+se guarda en `GatewaySession.activeContextJson`.
 
-ALTER TABLE "ModelPolicy" ADD CONSTRAINT "model_policy_exactly_one_scope"
-  CHECK (
-    (CASE WHEN "agencyId"     IS NOT NULL THEN 1 ELSE 0 END +
-     CASE WHEN "departmentId" IS NOT NULL THEN 1 ELSE 0 END +
-     CASE WHEN "workspaceId"  IS NOT NULL THEN 1 ELSE 0 END +
-     CASE WHEN "agentId"      IS NOT NULL THEN 1 ELSE 0 END) = 1
-  );
-```
+### Policy invariant (exactly-one-FK)
+
+`BudgetPolicy` y `ModelPolicy` cada una pertenece exactamente a UN scope.
+Reforzado en dos capas:
+1. **DB layer** — CHECK constraint en `20260429_provider_catalog`.
+2. **App layer** — `PolicyScopeGuard` en `apps/api` valida antes de upsert.
