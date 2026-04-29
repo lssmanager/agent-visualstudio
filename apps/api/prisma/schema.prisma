@@ -6,6 +6,7 @@
 //                BudgetPolicy, BudgetIncident, CostEvent
 //                ModelPolicy, AgentProfile
 //                Approval, ActivityLog
+// Catálogo LLM:  ProviderCredential, ModelCatalogEntry
 // ─────────────────────────────────────────────────────────────────────────────
 
 generator client {
@@ -26,18 +27,19 @@ model Workspace {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  agents        Agent[]
-  flows         Flow[]
-  skills        Skill[]
-  policies      Policy[]
-  hooks         Hook[]
-  channels      Channel[]
-  llmProviders  LlmProvider[]
-  runs          Run[]
-  budgetPolicies BudgetPolicy[]
-  modelPolicies  ModelPolicy[]
-  approvals      Approval[]
-  activityLogs   ActivityLog[]
+  agents              Agent[]
+  flows               Flow[]
+  skills              Skill[]
+  policies            Policy[]
+  hooks               Hook[]
+  channels            Channel[]
+  llmProviders        LlmProvider[]
+  runs                Run[]
+  budgetPolicies      BudgetPolicy[]
+  modelPolicies       ModelPolicy[]
+  approvals           Approval[]
+  activityLogs        ActivityLog[]
+  providerCredentials ProviderCredential[]
 }
 
 // ── Agent ─────────────────────────────────────────────────────────────────────
@@ -255,48 +257,109 @@ model LlmProvider {
 }
 
 // ── OAuthToken ────────────────────────────────────────────────────────────────
-// Almacena credenciales OAuth 2.0 (PKCE) por LlmProvider.
-// Ciclo de vida manejado por OAuthService:
-//   - Se crea tras el exchange code → token
-//   - Se refresca automáticamente cuando expiresAt < now() + BUFFER
-//   - accessTokenEnc y refreshTokenEnc cifrados con AES-256-GCM
-//
-// Diseño de token sink (doc OpenClaw):
-//   Un solo registro por LlmProvider garantiza que el refresh token
-//   es canónico en la DB — evita invalidaciones por multi-login.
-
 model OAuthToken {
   id              String      @id @default(cuid())
 
-  // 1-to-1 con LlmProvider
   llmProviderId   String      @unique
   llmProvider     LlmProvider @relation(fields: [llmProviderId], references: [id], onDelete: Cascade)
 
-  // Tokens cifrados (AES-256-GCM: iv:authTag:ciphertext)
   accessTokenEnc  String      @db.Text
-  refreshTokenEnc String?     @db.Text  // null si el provider no emite refresh token
+  refreshTokenEnc String?     @db.Text
 
-  // Expiración del access token (Unix ms en UTC)
   expiresAt       DateTime
-
-  // accountId extraído del JWT del access token (sub claim)
-  // Útil para detectar cambio de cuenta sin descifrar el token
   accountId       String?
-
-  // Scopes concedidos (lista separada por espacios, como en RFC 6749)
   scopes          String?
-
-  // Metadatos del proveedor OAuth (client_id usado, etc.)
   meta            Json        @default("{}")
 
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
-  @@index([expiresAt])  // para queries de tokens próximos a vencer
+  @@index([expiresAt])
+}
+
+// ── ProviderCredential ────────────────────────────────────────────────────────
+// Credencial de una agencia (workspace) hacia un proveedor LLM externo.
+// Usada por ProviderCatalogService para sync de catálogo de modelos y
+// resolución de modelo → proveedor para callLLM().
+//
+// Diferencia con LlmProvider:
+//   LlmProvider   → apunta a ProviderCatalog (slug estático, semilla)
+//   ProviderCredential → credencial dinámica con sync de modelos en DB
+//
+// type enum:
+//   'openai'        → https://api.openai.com/v1/models
+//   'anthropic'     → https://api.anthropic.com/v1/models
+//   'openrouter'    → https://openrouter.ai/api/v1/models  (50+ sub-providers)
+//   'openai_compat' → {baseUrl}/v1/models
+
+model ProviderCredential {
+  id          String   @id @default(cuid())
+
+  // agencyId = workspaceId (el servicio usa el término "agency" internamente)
+  agencyId    String
+  agency      Workspace @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  name             String    // nombre legible: "OpenAI Production", "OpenRouter"
+  type             String    // openai | anthropic | openrouter | openai_compat
+  baseUrl          String?   // requerido para openai_compat; null = usar default
+  apiKeyEncrypted  String    // AES-256-GCM: iv:authTag:ciphertext
+  extraHeaders     Json?     // headers extra para el proveedor (e.g. HTTP-Referer)
+  isActive         Boolean   @default(true)
+  syncedAt         DateTime? // última vez que se ejecutó syncProvider()
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  models      ModelCatalogEntry[]
+
+  @@index([agencyId])
+  @@index([agencyId, isActive])
+}
+
+// ── ModelCatalogEntry ─────────────────────────────────────────────────────────
+// Una entrada del catálogo de modelos disponibles para una agencia.
+// Se sincroniza desde las APIs de los proveedores vía ProviderCatalogService.
+//
+// families: array de ModelFamily strings
+//   ['reasoning', 'vision', 'coding', 'instruction', 'fast', 'mini',
+//    'multilingual', 'long-context']
+//
+// Pricing (nullable — solo OpenRouter lo devuelve en /models):
+//   promptCostPer1kUsd      → costo por 1000 tokens de prompt en USD
+//   completionCostPer1kUsd  → costo por 1000 tokens de completion en USD
+//   Ejemplo: gpt-4o → prompt: 0.005, completion: 0.015
+
+model ModelCatalogEntry {
+  id          String   @id @default(cuid())
+
+  providerId  String
+  provider    ProviderCredential @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  modelId     String   // canónico: 'openai/gpt-4o', 'meta-llama/llama-3.3-70b'
+  displayName String
+
+  // Capacidades
+  families    String[] // ModelFamily[]
+  contextK    Int      @default(0)  // contexto en K tokens (0 = desconocido)
+
+  // Pricing — null si el proveedor no lo devuelve (OpenAI, Anthropic)
+  // Valor: USD por 1000 tokens
+  promptCostPer1kUsd      Decimal? @db.Decimal(12, 8)
+  completionCostPer1kUsd  Decimal? @db.Decimal(12, 8)
+
+  isActive    Boolean  @default(true)
+  raw         Json     @default("{}") // respuesta raw del proveedor (para debug)
+
+  updatedAt   DateTime @updatedAt
+
+  // Constraint: un modelo es único por proveedor
+  @@unique([providerId, modelId])
+  @@index([providerId])
+  @@index([providerId, isActive])
+  @@index([modelId])
 }
 
 // ── Run ───────────────────────────────────────────────────────────────────────
-// Representa una ejecución de un Flow por un Agent (LangGraph Thread)
 enum RunStatus {
   pending
   running
@@ -316,7 +379,6 @@ model Run {
   agentId     String?
   agent       Agent?    @relation(fields: [agentId], references: [id])
 
-  // Referencia a sesión de canal (nullable — runs sin canal = API directo)
   sessionId   String?
   channelKind String?
 
@@ -342,7 +404,6 @@ model Run {
 }
 
 // ── RunStep ───────────────────────────────────────────────────────────────────
-// Checkpoint por nodo del flow (equivalente a LangGraph step)
 enum RunStepStatus {
   pending
   running
@@ -356,22 +417,21 @@ model RunStep {
   runId     String
   run       Run           @relation(fields: [runId], references: [id], onDelete: Cascade)
 
-  nodeId    String        // id del nodo en el Flow
-  nodeType  String        // llm | tool | condition | subflow | etc.
-  index     Int           // orden de ejecución dentro del run
+  nodeId    String
+  nodeType  String
+  index     Int
 
   status    RunStepStatus @default(pending)
   input     Json          @default("{}")
   output    Json?
   error     String?
 
-  // LLM-specific
   model     String?
   provider  String?
-  promptTokens    Int?
+  promptTokens     Int?
   completionTokens Int?
-  totalTokens     Int?
-  costUsd         Decimal? @db.Decimal(12, 8)
+  totalTokens      Int?
+  costUsd          Decimal? @db.Decimal(12, 8)
 
   startedAt   DateTime?
   completedAt DateTime?
@@ -382,7 +442,6 @@ model RunStep {
 }
 
 // ── ConversationMessage ────────────────────────────────────────────────────────
-// Historial TOAST por sesión de canal
 enum MessageRole {
   user
   assistant
@@ -395,10 +454,10 @@ model ConversationMessage {
   channelId   String
   channel     Channel     @relation(fields: [channelId], references: [id], onDelete: Cascade)
 
-  sessionId   String      // id de sesión del gateway (no FK — es efímero)
+  sessionId   String
   role        MessageRole
   content     String      @db.Text
-  toolName    String?     // cuando role = tool
+  toolName    String?
   toolCallId  String?
   metadata    Json        @default("{}")
 
@@ -410,7 +469,6 @@ model ConversationMessage {
 }
 
 // ── BudgetPolicy ──────────────────────────────────────────────────────────────
-// Presupuesto de gasto en LLM — scope: workspace | agent | model
 enum BudgetScope {
   workspace
   agent
@@ -431,12 +489,12 @@ model BudgetPolicy {
 
   name        String
   scope       BudgetScope
-  targetId    String?      // agentId o modelId según scope
+  targetId    String?
   limitUsd    Decimal      @db.Decimal(10, 4)
   period      BudgetPeriod @default(monthly)
-  periodDays  Int?         // override si period = total o custom
+  periodDays  Int?
   enabled     Boolean      @default(true)
-  alertPct    Int          @default(80)  // % para alerta (0-100)
+  alertPct    Int          @default(80)
 
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
@@ -450,9 +508,9 @@ model BudgetPolicy {
 
 // ── BudgetIncident ────────────────────────────────────────────────────────────
 enum IncidentKind {
-  alert      // llegó al alertPct
-  exceeded   // superó el límite
-  reset      // inicio de nuevo período
+  alert
+  exceeded
+  reset
 }
 
 model BudgetIncident {
@@ -463,7 +521,7 @@ model BudgetIncident {
   kind           IncidentKind
   usageUsd       Decimal      @db.Decimal(10, 4)
   limitUsd       Decimal      @db.Decimal(10, 4)
-  pct            Int          // usageUsd / limitUsd * 100
+  pct            Int
   detail         Json         @default("{}")
 
   occurredAt     DateTime     @default(now())
@@ -473,7 +531,6 @@ model BudgetIncident {
 }
 
 // ── CostEvent ─────────────────────────────────────────────────────────────────
-// Registro granular de cada llamada LLM con costo calculado
 model CostEvent {
   id             String        @id @default(cuid())
   runId          String?
@@ -481,7 +538,7 @@ model CostEvent {
   budgetPolicyId String?
   budgetPolicy   BudgetPolicy? @relation(fields: [budgetPolicyId], references: [id])
 
-  provider       String        // slug del ProviderCatalog
+  provider       String
   model          String
   promptTokens   Int
   completionTokens Int
@@ -502,8 +559,6 @@ model CostEvent {
 }
 
 // ── ModelPolicy ───────────────────────────────────────────────────────────────
-// Scope hierarchy: workspace > agent > flow-node
-// resolveModelPolicy() busca de más específico a más general
 enum ModelPolicyScope {
   workspace
   agent
@@ -516,16 +571,15 @@ model ModelPolicy {
   workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   scope       ModelPolicyScope
-  // targetId = agentId si scope=agent, nodeId si scope=flow_node, null si scope=workspace
   targetId    String?
   agent       Agent?           @relation(fields: [targetId], references: [id])
 
-  provider    String           // slug del ProviderCatalog
-  model       String           // e.g. gpt-4o-mini, qwen-turbo, deepseek-chat
+  provider    String
+  model       String
   temperature Decimal          @default(0.7) @db.Decimal(3, 2)
   maxTokens   Int              @default(4096)
   topP        Decimal          @default(1.0) @db.Decimal(3, 2)
-  config      Json             @default("{}") // parámetros extra del provider
+  config      Json             @default("{}")
   enabled     Boolean          @default(true)
 
   createdAt   DateTime         @default(now())
@@ -537,22 +591,19 @@ model ModelPolicy {
 }
 
 // ── AgentProfile ──────────────────────────────────────────────────────────────
-// Datos de propagación para ProfilePropagatorService
 model AgentProfile {
   id          String   @id @default(cuid())
   agentId     String   @unique
   agent       Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
 
-  // Datos propagados desde AgentBuilder
   systemPrompt     String?  @db.Text
-  persona          Json     @default("{}")   // name, tone, language, etc.
-  knowledgeBase    Json     @default("[]")   // referencias a docs, URLs, etc.
-  responseFormat   String?                   // json | markdown | plain
+  persona          Json     @default("{}")
+  knowledgeBase    Json     @default("[]")
+  responseFormat   String?
   contextWindow    Int      @default(8192)
   memoryEnabled    Boolean  @default(false)
   memoryConfig     Json     @default("{}")
 
-  // Versión del profile — incrementa con cada propagación
   version      Int      @default(1)
   propagatedAt DateTime @default(now())
   createdAt    DateTime @default(now())
@@ -560,7 +611,6 @@ model AgentProfile {
 }
 
 // ── Approval ──────────────────────────────────────────────────────────────────
-// Human-in-the-loop — pausa un Run hasta aprobación
 enum ApprovalStatus {
   pending
   approved
@@ -576,15 +626,14 @@ model Approval {
   agentId     String?
   agent       Agent?         @relation(fields: [agentId], references: [id])
 
-  // Run que está esperando aprobación
   runId       String?
-  stepId      String?        // RunStep específico que disparó la aprobación
+  stepId      String?
 
   status      ApprovalStatus @default(pending)
   title       String
   description String?        @db.Text
-  payload     Json           @default("{}") // datos del step para que el revisor decida
-  reviewedBy  String?        // userId del revisor
+  payload     Json           @default("{}")
+  reviewedBy  String?
   reviewNote  String?        @db.Text
   expiresAt   DateTime?
 
@@ -596,7 +645,6 @@ model Approval {
 }
 
 // ── ActivityLog ───────────────────────────────────────────────────────────────
-// Audit trail persistente (reemplaza archivo JSON en disk)
 enum ActivityResource {
   workspace
   agent
@@ -617,7 +665,7 @@ model ActivityLog {
 
   resource    ActivityResource
   resourceId  String?
-  action      String           // created | updated | deleted | run.started | run.completed | etc.
+  action      String
   detail      String           @db.Text
   userId      String?
   metadata    Json             @default("{}")

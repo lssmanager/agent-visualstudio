@@ -73,6 +73,11 @@ export interface ResolvedModel {
   baseUrl:  string
 }
 
+export interface SyncResult {
+  upserted:    number
+  deactivated: number
+}
+
 // ── Crypto helpers ────────────────────────────────────────────────────────────
 
 /**
@@ -156,10 +161,7 @@ function inferFamilies(
   const modality = arch?.['modality'] as string | undefined
   if (modality) {
     if (modality.includes('image')) set.add('vision')
-    if (modality.includes('text')) {
-      // todos los modelos de texto tienen instruction por defecto
-      set.add('instruction')
-    }
+    if (modality.includes('text'))  set.add('instruction')
   }
 
   // 3. Heurísticas por modelId
@@ -181,7 +183,24 @@ interface ParsedModel {
   displayName: string
   families:    ModelFamily[]
   contextK:    number
+  /** USD por 1000 tokens de prompt. null = proveedor no lo devuelve */
+  pricingPrompt:     number | null
+  /** USD por 1000 tokens de completion. null = proveedor no lo devuelve */
+  pricingCompletion: number | null
   raw:         Record<string, unknown>
+}
+
+/**
+ * Convierte el string de pricing de OpenRouter (USD/token) a USD/1000 tokens.
+ * OpenRouter devuelve strings como "0.000002" (USD por 1 token).
+ * Retorna null si el valor no es parseable o es 0.
+ */
+function parseOpenRouterPrice(value: unknown): number | null {
+  if (value === null || value === undefined || value === '0') return null
+  const n = typeof value === 'string' ? parseFloat(value) : Number(value)
+  if (!isFinite(n) || n <= 0) return null
+  // Convertir de USD/token → USD/1000 tokens
+  return Math.round(n * 1000 * 1e8) / 1e8
 }
 
 /** Parser para OpenAI GET /v1/models */
@@ -189,14 +208,16 @@ function parseOpenAIModels(data: unknown[]): ParsedModel[] {
   return data
     .filter((m: any) => typeof m.id === 'string')
     .map((m: any) => {
-      const modelId = `openai/${m.id}` as string
+      const modelId  = `openai/${m.id}` as string
       const contextK = 0  // OpenAI no devuelve context_length en /models
       return {
         modelId,
-        displayName: m.id,
-        families:    inferFamilies(modelId, m, contextK),
+        displayName:       m.id,
+        families:          inferFamilies(modelId, m, contextK),
         contextK,
-        raw: m as Record<string, unknown>,
+        pricingPrompt:     null,  // OpenAI no devuelve pricing en /models
+        pricingCompletion: null,
+        raw:               m as Record<string, unknown>,
       }
     })
 }
@@ -206,22 +227,31 @@ function parseAnthropicModels(data: unknown[]): ParsedModel[] {
   return data
     .filter((m: any) => typeof m.id === 'string')
     .map((m: any) => {
-      const modelId   = `anthropic/${m.id}`
-      const contextK  = 0
+      const modelId  = `anthropic/${m.id}`
+      const contextK = 0
       return {
         modelId,
-        displayName: (m.display_name ?? m.id) as string,
-        families:    inferFamilies(modelId, m as Record<string, unknown>, contextK),
+        displayName:       (m.display_name ?? m.id) as string,
+        families:          inferFamilies(modelId, m as Record<string, unknown>, contextK),
         contextK,
-        raw: m as Record<string, unknown>,
+        pricingPrompt:     null,  // Anthropic no devuelve pricing en /models
+        pricingCompletion: null,
+        raw:               m as Record<string, unknown>,
       }
     })
 }
 
 /**
  * Parser para OpenRouter GET /v1/models.
- * OpenRouter devuelve metadata rica: context_length, architecture.modality,
- * pricing, etc. El modelId ya incluye el sub-provider ('meta-llama/llama-3.3-70b').
+ *
+ * OpenRouter devuelve metadata rica:
+ *   - context_length: número (tokens)
+ *   - architecture.modality: string ('text+image->text', 'text->text', etc.)
+ *   - pricing.prompt: string (USD por 1 token, e.g. "0.000002")
+ *   - pricing.completion: string (USD por 1 token, e.g. "0.000006")
+ *
+ * El modelId ya incluye el sub-provider ('meta-llama/llama-3.3-70b').
+ * Esto cubre automáticamente 50+ proveedores sin parsers adicionales.
  */
 function parseOpenRouterModels(data: unknown[]): ParsedModel[] {
   return data
@@ -231,12 +261,20 @@ function parseOpenRouterModels(data: unknown[]): ParsedModel[] {
       const contextK = typeof m.context_length === 'number'
         ? Math.round(m.context_length / 1000)
         : 0
+
+      // Pricing — pricing.prompt y pricing.completion son strings USD/token
+      const pricing          = m.pricing as Record<string, unknown> | undefined
+      const pricingPrompt    = parseOpenRouterPrice(pricing?.['prompt'])
+      const pricingCompletion = parseOpenRouterPrice(pricing?.['completion'])
+
       return {
         modelId,
-        displayName: (m.name ?? m.id) as string,
-        families:    inferFamilies(modelId, m as Record<string, unknown>, contextK),
+        displayName:       (m.name ?? m.id) as string,
+        families:          inferFamilies(modelId, m as Record<string, unknown>, contextK),
         contextK,
-        raw: m as Record<string, unknown>,
+        pricingPrompt,
+        pricingCompletion,
+        raw:               m as Record<string, unknown>,
       }
     })
 }
@@ -251,10 +289,12 @@ function parseCompatModels(data: unknown[], providerName: string): ParsedModel[]
       const contextK = 0
       return {
         modelId,
-        displayName: (m.name ?? m.id) as string,
-        families:    inferFamilies(modelId, m as Record<string, unknown>, contextK),
+        displayName:       (m.name ?? m.id) as string,
+        families:          inferFamilies(modelId, m as Record<string, unknown>, contextK),
         contextK,
-        raw: m as Record<string, unknown>,
+        pricingPrompt:     null,
+        pricingCompletion: null,
+        raw:               m as Record<string, unknown>,
       }
     })
 }
@@ -318,10 +358,10 @@ export class ProviderCatalogService {
 
   /**
    * Sincroniza el catálogo de modelos de un proveedor específico.
-   * Upserta ModelCatalogEntry con families enriquecidas.
+   * Upserta ModelCatalogEntry con families enriquecidas y pricing (si aplica).
    * Marca como isActive=false los modelos que el proveedor ya no devuelve.
    */
-  async syncProvider(providerId: string): Promise<{ upserted: number; deactivated: number }> {
+  async syncProvider(providerId: string): Promise<SyncResult> {
     const provider = await this.prisma.providerCredential.findUniqueOrThrow({
       where: { id: providerId },
     })
@@ -358,27 +398,34 @@ export class ProviderCatalogService {
       default:           parsed = parseCompatModels(rawArr, provider.name);       break
     }
 
-    // Upsert en batch
+    // Upsert en batch — incluye pricing cuando está disponible
     let upserted = 0
     for (const model of parsed) {
       await this.prisma.modelCatalogEntry.upsert({
         where:  { providerId_modelId: { providerId, modelId: model.modelId } },
         create: {
           providerId,
-          modelId:     model.modelId,
-          displayName: model.displayName,
-          families:    model.families,
-          contextK:    model.contextK,
-          isActive:    true,
-          raw:         model.raw,
+          modelId:                model.modelId,
+          displayName:            model.displayName,
+          families:               model.families,
+          contextK:               model.contextK,
+          promptCostPer1kUsd:     model.pricingPrompt     ?? null,
+          completionCostPer1kUsd: model.pricingCompletion ?? null,
+          isActive:               true,
+          raw:                    model.raw,
         },
         update: {
-          displayName: model.displayName,
-          families:    model.families,
-          contextK:    model.contextK,
-          isActive:    true,
-          raw:         model.raw,
-          updatedAt:   new Date(),
+          displayName:            model.displayName,
+          families:               model.families,
+          contextK:               model.contextK,
+          // Solo sobreescribir pricing si el proveedor devuelve un valor nuevo.
+          // Preservar el valor anterior si el nuevo es null (evitar borrar pricing
+          // de un sync anterior de OpenRouter con data completa).
+          ...(model.pricingPrompt     !== null && { promptCostPer1kUsd:     model.pricingPrompt }),
+          ...(model.pricingCompletion !== null && { completionCostPer1kUsd: model.pricingCompletion }),
+          isActive:               true,
+          raw:                    model.raw,
+          updatedAt:              new Date(),
         },
       })
       upserted++
@@ -395,7 +442,7 @@ export class ProviderCatalogService {
       data: { isActive: false, updatedAt: new Date() },
     })
 
-    // Actualizar syncedAt
+    // Actualizar syncedAt del proveedor
     await this.prisma.providerCredential.update({
       where: { id: providerId },
       data:  { syncedAt: new Date() },
@@ -406,12 +453,12 @@ export class ProviderCatalogService {
 
   /**
    * Sincroniza todos los proveedores activos de la agencia.
-   * Los errores por proveedor se capturan y reportan sin interrumpir los demás.
+   * Los errores por proveedor se capturan sin interrumpir los demás.
    */
   async syncAll(agencyId: string): Promise<Array<{
     providerId: string
     name:       string
-    result:     { upserted: number; deactivated: number } | null
+    result:     SyncResult | null
     error?:     string
   }>> {
     const providers = await this.prisma.providerCredential.findMany({
@@ -438,7 +485,6 @@ export class ProviderCatalogService {
 
   /**
    * Devuelve el catálogo de modelos activos de la agencia, filtrable.
-   * Incluye entries de todos los proveedores activos de la agencia.
    */
   async listModels(
     agencyId: string,
@@ -455,7 +501,6 @@ export class ProviderCatalogService {
       where['contextK'] = { gte: filters.minContextK }
     }
     if (filters.families?.length) {
-      // modelo debe tener AL MENOS una de las families pedidas
       where['families'] = { hasSome: filters.families }
     }
 
@@ -465,7 +510,6 @@ export class ProviderCatalogService {
       orderBy: [{ providerId: 'asc' }, { modelId: 'asc' }],
     })
 
-    // Filtro de texto (substring en modelId o displayName)
     if (filters.search) {
       const q = filters.search.toLowerCase()
       return entries.filter(
@@ -478,10 +522,9 @@ export class ProviderCatalogService {
   }
 
   /**
-   * Resuelve un modelId a su ProviderCredential + ModelCatalogEntry + apiKey.
+   * Resuelve un modelId a su ProviderCredential + ModelCatalogEntry + apiKey descifrada.
    * Devuelve null si el modelo no está activo en ningún proveedor de la agencia.
-   *
-   * Usado por callLLM() para determinar a qué endpoint llamar y con qué key.
+   * Usado por callLLM() para determinar endpoint y credencial.
    */
   async resolveModel(
     modelId:  string,
@@ -504,8 +547,7 @@ export class ProviderCatalogService {
   }
 
   /**
-   * Dada una fallbackChain y una agencyId, devuelve la cadena filtrada
-   * a solo los modelos que existen y están activos en el catálogo.
+   * Filtra una fallbackChain a solo los modelos activos en el catálogo.
    * Preserva el orden original.
    */
   async filterActiveFallbackChain(

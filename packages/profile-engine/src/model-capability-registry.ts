@@ -2,19 +2,24 @@
  * ModelCapabilityRegistry
  *
  * Catálogo SEED de capacidades por modelo.
- * Este registro ya NO es la fuente de verdad en runtime — ese rol lo tiene
- * ModelCatalogEntry (DB). Su función ahora es actuar como fuente SECUNDARIA
- * de enrichment cuando el proveedor no devuelve metadata de families.
+ *
+ * RESPONSABILIDAD ÚNICA: actuar como fuente SECUNDARIA de enrichment cuando
+ * el proveedor no devuelve metadata de families en su respuesta /models.
  *
  * ProviderCatalogService.inferFamilies() consulta CAPABILITY_REGISTRY[modelId]
- * como fallback cuando la respuesta del proveedor no tiene architecture.modality
- * ni context_length suficiente.
+ * como fallback de enriquecimiento:
+ *   1. Seed del registry  ← este archivo
+ *   2. architecture.modality de OpenRouter
+ *   3. Heurísticas por nombre del modelo
  *
- * La función seedFamiliesForModel() es el punto de entrada público usado
- * por ProviderCatalogService:
+ * Las funciones públicas seedFamiliesForModel() y seedContextKForModel() son
+ * el contrato de uso recomendado.
  *
- *   const families = seedFamiliesForModel('openai/gpt-4o')
- *   // → ['reasoning', 'vision', 'coding', 'instruction', 'multilingual']
+ * @deprecated ModelCapabilityRegistry (clase) — usar las funciones standalone
+ * seedFamiliesForModel() / seedContextKForModel() directamente.
+ * La clase se mantiene solo para compatibilidad con OrchestratorModelResolver
+ * en tests sin DB. En producción, ProviderCatalogService + ModelCatalogEntry
+ * (DB) son la fuente de verdad.
  */
 
 export type ModelFamily =
@@ -39,7 +44,14 @@ export interface ModelCapability {
 /**
  * Catálogo seed de capacidades por modelo.
  * Clave = modelId canónico (mismo formato que ModelPolicy.primaryModel).
- * Usado como fuente secundaria de families en ProviderCatalogService.
+ *
+ * Cuándo actualizar este archivo:
+ *   - Se lanza un modelo nuevo relevante y OpenAI/Anthropic no devuelven
+ *     metadata de families en /models (nunca lo hacen actualmente).
+ *   - OpenRouter cambia su schema de architecture.modality.
+ *   - Se quiere corregir una inferencia heurística incorrecta.
+ *
+ * En todos los demás casos, el catálogo vivo está en ModelCatalogEntry (DB).
  */
 export const CAPABILITY_REGISTRY: Record<string, ModelCapability> = {
   // ── OpenAI ──────────────────────────────────────────────────────────────
@@ -212,10 +224,13 @@ export const CAPABILITY_REGISTRY: Record<string, ModelCapability> = {
   },
 }
 
+// ── Funciones públicas de seed ────────────────────────────────────────────────
+// Estas son el contrato de uso recomendado de este módulo.
+// ProviderCatalogService.inferFamilies() las usa como fuente primaria de seed.
+
 /**
  * Devuelve las families del seed para un modelId dado.
  * Retorna array vacío si el modelo no está en el catálogo seed.
- * Usado por ProviderCatalogService como fuente secundaria de enrichment.
  */
 export function seedFamiliesForModel(modelId: string): ModelFamily[] {
   return CAPABILITY_REGISTRY[modelId]?.families ?? []
@@ -229,8 +244,8 @@ export function seedContextKForModel(modelId: string): number {
   return CAPABILITY_REGISTRY[modelId]?.contextK ?? 0
 }
 
-// ── Resolución de fallback por similitud (uso legacy / sin DB) ────────────────
-// Mantenida para compatibilidad con OrchestratorModelResolver en tests.
+// ── Funciones de resolución de fallback (standalone) ─────────────────────────
+// Mantenidas para compatibilidad con OrchestratorModelResolver en tests sin DB.
 // En producción usar ProviderCatalogService.filterActiveFallbackChain().
 
 export function resolveModelFallbackChain(
@@ -246,9 +261,9 @@ export function resolveModelFallbackChain(
   const failedFamilies = new Set(failedCap.families)
 
   const scored = candidates.map(modelId => {
-    const cap           = CAPABILITY_REGISTRY[modelId]
-    const sameProvider  = modelId.split('/')[0] === failedModelId.split('/')[0]
-    const intersection  = cap
+    const cap          = CAPABILITY_REGISTRY[modelId]
+    const sameProvider = modelId.split('/')[0] === failedModelId.split('/')[0]
+    const intersection = cap
       ? cap.families.filter(f => failedFamilies.has(f)).length
       : 0
     const score = intersection + (sameProvider ? 0.5 : 0)
@@ -259,6 +274,11 @@ export function resolveModelFallbackChain(
   return scored.map(s => s.modelId)
 }
 
+/**
+ * @deprecated Usar las funciones standalone (seedFamiliesForModel, etc.) o
+ * ProviderCatalogService para acceso a DB.
+ * Esta clase se mantiene solo para compatibilidad con OrchestratorModelResolver.
+ */
 export class ModelCapabilityRegistry {
   private readonly registry: Record<string, ModelCapability>
 
