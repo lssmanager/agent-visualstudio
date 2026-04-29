@@ -15,8 +15,13 @@
  *  4. PolicyResolver integration — resolves ModelPolicy (which model to
  *     use + fallback) and BudgetPolicy (spend limit) before execution.
  *     Throws BudgetExceededError if the rolling limit is already breached.
- *  5. GatewayRpcClient kept for backward compat but bypassed when
- *     a PrismaClient is provided.
+ *  5. HierarchyOrchestrator wiring — when agent.executionMode is
+ *     'orchestrated' (or node.config.executionMode === 'orchestrated'),
+ *     delegates to HierarchyOrchestrator instead of direct LLM loop.
+ *     The orchestrator receives an AgentExecutorFn that recursively
+ *     calls this same LlmStepExecutor for each leaf agent.
+ *  6. ProfilePropagatorService — resolveForAgent() provides the compiled
+ *     system prompt when AgentProfile exists.
  *
  * Provider routing key (ModelPolicy.primaryModel format):
  *   'openai/*'    → OpenAI API  (requires OPENAI_API_KEY)
@@ -70,7 +75,6 @@ export class BudgetExceededError extends Error {
 
 // ─── Provider adapters ───────────────────────────────────────────────────────
 
-// Common shapes used across adapters
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string | null;
@@ -84,7 +88,7 @@ interface ToolCallRequest {
   type: 'function';
   function: {
     name: string;
-    arguments: string; // JSON string
+    arguments: string;
   };
 }
 
@@ -109,11 +113,7 @@ interface ProviderAdapter {
   chat(
     messages: ChatMessage[],
     tools: ToolDefinition[],
-    options: {
-      model:       string;
-      temperature: number;
-      maxTokens:   number;
-    },
+    options: { model: string; temperature: number; maxTokens: number },
   ): Promise<LlmResponse>;
 }
 
@@ -131,8 +131,6 @@ class OpenAIAdapter implements ProviderAdapter {
     tools: ToolDefinition[],
     options: { model: string; temperature: number; maxTokens: number },
   ): Promise<LlmResponse> {
-    // Use the openai npm package if available, otherwise fall back to raw fetch.
-    // This avoids hard-coding a peer dependency version.
     let client: OpenAIClientLike | null = null;
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -146,9 +144,7 @@ class OpenAIAdapter implements ProviderAdapter {
       // openai package not installed — fall through to fetch
     }
 
-    if (client) {
-      return this.chatViaSDK(client, messages, tools, options);
-    }
+    if (client) return this.chatViaSDK(client, messages, tools, options);
     return this.chatViaFetch(messages, tools, options);
   }
 
@@ -231,37 +227,30 @@ class AnthropicAdapter implements ProviderAdapter {
     tools: ToolDefinition[],
     options: { model: string; temperature: number; maxTokens: number },
   ): Promise<LlmResponse> {
-    // Separate system message from the rest
     const systemMsg = messages.find(m => m.role === 'system');
     const chatMessages = messages.filter(m => m.role !== 'system');
     const modelId = options.model.includes('/') ? options.model.split('/').slice(1).join('/') : options.model;
 
-    // Convert tool format: OpenAI → Anthropic
     const anthropicTools = tools.map(t => ({
-      name:        t.function.name,
-      description: t.function.description ?? '',
+      name:         t.function.name,
+      description:  t.function.description ?? '',
       input_schema: t.function.parameters ?? { type: 'object', properties: {} },
     }));
 
-    // Convert messages: tool role → Anthropic tool_result
     const anthropicMessages = chatMessages.map(m => {
       if (m.role === 'tool') {
         return {
           role: 'user' as const,
-          content: [{
-            type: 'tool_result',
-            tool_use_id: m.tool_call_id,
-            content: m.content ?? '',
-          }],
+          content: [{ type: 'tool_result', tool_use_id: m.tool_call_id, content: m.content ?? '' }],
         };
       }
       if (m.role === 'assistant' && m.tool_calls?.length) {
         return {
           role: 'assistant' as const,
           content: m.tool_calls.map(tc => ({
-            type: 'tool_use',
-            id:   tc.id,
-            name: tc.function.name,
+            type:  'tool_use',
+            id:    tc.id,
+            name:  tc.function.name,
             input: JSON.parse(tc.function.arguments || '{}') as Record<string, unknown>,
           })),
         };
@@ -275,8 +264,8 @@ class AnthropicAdapter implements ProviderAdapter {
       temperature: options.temperature,
       messages:    anthropicMessages,
     };
-    if (systemMsg?.content) body.system = systemMsg.content;
-    if (anthropicTools.length)  body.tools  = anthropicTools;
+    if (systemMsg?.content)    body.system = systemMsg.content;
+    if (anthropicTools.length) body.tools  = anthropicTools;
 
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -294,23 +283,19 @@ class AnthropicAdapter implements ProviderAdapter {
     }
 
     const data = await res.json() as AnthropicResponse;
-
-    // Convert response back to OpenAI-like shape
     const textContent  = data.content.find(c => c.type === 'text')?.text ?? null;
     const toolUseItems = data.content.filter(c => c.type === 'tool_use');
 
-    const toolCalls: ToolCallRequest[] = toolUseItems.map(tc => ({
-      id:   tc.id ?? '',
-      type: 'function' as const,
-      function: {
-        name:      tc.name ?? '',
-        arguments: JSON.stringify(tc.input ?? {}),
-      },
-    }));
-
     return {
-      content:      textContent,
-      tool_calls:   toolCalls,
+      content:    textContent,
+      tool_calls: toolUseItems.map(tc => ({
+        id:   tc.id ?? '',
+        type: 'function' as const,
+        function: {
+          name:      tc.name ?? '',
+          arguments: JSON.stringify(tc.input ?? {}),
+        },
+      })),
       usage: {
         input:  data.usage?.input_tokens  ?? 0,
         output: data.usage?.output_tokens ?? 0,
@@ -338,7 +323,6 @@ function buildAdapter(model: string): ProviderAdapter {
     return new OpenAIAdapter(key);
   }
 
-  // OpenRouter / Qwen ModelStudio / DeepSeek — all speak OpenAI-compat
   const key     = process.env.OPENROUTER_API_KEY ?? process.env.OPENAI_COMPAT_API_KEY;
   const baseURL = process.env.OPENAI_COMPAT_BASE_URL ?? 'https://openrouter.ai/api/v1';
   if (!key) {
@@ -354,22 +338,15 @@ function buildAdapter(model: string): ProviderAdapter {
   return new OpenAIAdapter(key, baseURL, defaultHeaders);
 }
 
-// ─── Type shims (avoid importing full SDK types) ────────────────────────────
+// ─── Type shims ────────────────────────────────────────────────────────────
 
 interface OpenAIClientLike {
-  chat: {
-    completions: {
-      create(params: Record<string, unknown>): Promise<unknown>;
-    };
-  };
+  chat: { completions: { create(params: Record<string, unknown>): Promise<unknown> } };
 }
 
 interface OpenAICompletionResponse {
   choices: Array<{
-    message: {
-      content: string | null;
-      tool_calls?: unknown[];
-    };
+    message: { content: string | null; tool_calls?: unknown[] };
     finish_reason?: string;
   }>;
   usage?: { prompt_tokens: number; completion_tokens: number };
@@ -414,8 +391,8 @@ export class LlmStepExecutor extends StepExecutor {
     step: RunStep,
     run: RunSpec,
   ): Promise<StepExecutionResult> {
-    // ── 1. Load agent + resolve hierarchy context ────────────────────────
-    const agentId = (node.config.agentId as string) ?? step.agentId ?? '';
+    // ── 1. Load agent ────────────────────────────────────────────────────
+    const agentId = (node.config?.agentId as string) ?? step.agentId ?? '';
     if (!agentId) {
       return { status: 'failed', error: 'agent node missing agentId in config' };
     }
@@ -423,8 +400,9 @@ export class LlmStepExecutor extends StepExecutor {
     const agent = await this.db.agent.findUnique({
       where: { id: agentId },
       include: {
-        workspace: { include: { department: { include: { agency: true } } } },
-        skills:    { include: { skill: true } },
+        workspace:  { include: { department: { include: { agency: true } } } },
+        skillLinks: { include: { skill: true } },
+        subagents:  { include: { skillLinks: { include: { skill: true } } } },
       },
     });
 
@@ -432,19 +410,173 @@ export class LlmStepExecutor extends StepExecutor {
       return { status: 'failed', error: `Agent '${agentId}' not found` };
     }
 
+    // ── 2. Detect execution mode ─────────────────────────────────────────
+    //
+    // Priority: node.config.executionMode > agent.executionMode > 'direct'
+    //
+    // 'orchestrated' → delegate to HierarchyOrchestrator
+    //   Used when the agent has subagents and needs to decompose/delegate.
+    // 'direct' (default) → run the LLM tool_calls loop directly.
+    // 'handoff' → treated as direct for now (handoff routing is in gateway).
+    const executionMode =
+      (node.config?.executionMode as string) ??
+      (agent.executionMode as string) ??
+      'direct';
+
+    if (executionMode === 'orchestrated') {
+      return this.executeOrchestrated(node, step, run, agent);
+    }
+
+    return this.executeDirect(node, step, run, agent);
+  }
+
+  // ─── Orchestrated path ─────────────────────────────────────────────────
+  //
+  // Builds a HierarchyNode tree from agent.subagents and delegates to
+  // HierarchyOrchestrator.orchestrate().
+  //
+  // AgentExecutorFn is a closure that calls this same LlmStepExecutor
+  // recursively for each leaf agent — so subagents also benefit from
+  // policy resolution, budget checks, and skill invocation.
+
+  private async executeOrchestrated(
+    node:  FlowNode,
+    _step: RunStep,
+    run:   RunSpec,
+    agent: AgentWithRelations,
+  ): Promise<StepExecutionResult> {
+    // Lazy require to avoid circular dependency at module parse time
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { HierarchyOrchestrator } = require('../../hierarchy/src/index.js') as {
+      HierarchyOrchestrator: new (
+        hierarchy:    import('../../hierarchy/src').HierarchyNode,
+        executorFn:   import('../../hierarchy/src').AgentExecutorFn,
+        prisma:       PrismaClient,
+        supervisorFn?: import('../../hierarchy/src').SupervisorFn,
+        opts?:        import('../../hierarchy/src').OrchestratorOptions,
+      ) => { orchestrate(workspaceId: string, task: string, input?: Record<string, unknown>): Promise<import('../../hierarchy/src').OrchestrationResult> };
+    };
+
+    // Build HierarchyNode tree from agent + subagents
+    const hierarchy = buildHierarchyNode(agent);
+
+    // AgentExecutorFn: recursively calls this executor for each leaf agent.
+    // Each call goes through the full direct path (policy, budget, tools).
+    const executorFn: import('../../hierarchy/src').AgentExecutorFn = async (
+      leafAgentId: string,
+      systemPrompt: string,
+      task: string,
+    ) => {
+      // Synthesize a minimal FlowNode and RunStep for the leaf
+      const leafNode: FlowNode = {
+        id:     `orchestrated-${leafAgentId}`,
+        type:   'agent',
+        config: {
+          agentId:       leafAgentId,
+          executionMode: 'direct',   // leaf agents always run direct
+          systemPrompt,
+          prompt: task,
+        },
+      };
+      const leafStep: RunStep = {
+        id:         `${_step.id}-leaf-${leafAgentId}`,
+        runId:      run.id,
+        nodeId:     leafNode.id,
+        nodeType:   'agent',
+        status:     'running',
+        agentId:    leafAgentId,
+        retryCount: 0,
+        startedAt:  new Date().toISOString(),
+      };
+      const result = await this.executeDirect(leafNode, leafStep, run, null);
+      if (result.status === 'failed') throw new Error(result.error ?? 'Leaf agent failed');
+      return String((result.output as Record<string, unknown>)?.response ?? '');
+    };
+
+    // SupervisorFn: uses this agent's own model for decomposition + consolidation
+    const modelId = (agent.model as string) ?? 'openai/gpt-4o-mini';
+    const adapter  = buildAdapter(modelId);
+    const supervisorFn: import('../../hierarchy/src').SupervisorFn = async (prompt: string) => {
+      const resp = await adapter.chat(
+        [{ role: 'user', content: prompt }],
+        [],
+        { model: modelId, temperature: 0.3, maxTokens: 2048 },
+      );
+      return resp.content ?? '';
+    };
+
+    const task = (node.config?.prompt as string)
+              ?? JSON.stringify(run.trigger.payload ?? {})
+              ?? 'Complete the assigned task.';
+
+    const orchestrator = new HierarchyOrchestrator(
+      hierarchy,
+      executorFn,
+      this.db,
+      supervisorFn,
+      { parallel: true, maxRetries: 2 },
+    );
+
+    const result = await orchestrator.orchestrate(
+      agent.workspaceId,
+      task,
+      run.trigger.payload as Record<string, unknown> | undefined,
+    );
+
+    return {
+      status: result.status === 'failed' ? 'failed' : 'completed',
+      output: {
+        agentId:            agent.id,
+        executionMode:      'orchestrated',
+        orchestrationRunId: result.runId,
+        consolidatedOutput: result.consolidatedOutput,
+        subtaskResults:     result.subtaskResults,
+        totalDurationMs:    result.totalDurationMs,
+      },
+      error: result.status === 'failed' ? result.consolidatedOutput : undefined,
+    };
+  }
+
+  // ─── Direct path (default) ──────────────────────────────────────────────
+  //
+  // agent may be null when called from executeOrchestrated for a leaf
+  // (the leaf agent data is loaded fresh inside this method).
+
+  private async executeDirect(
+    node:  FlowNode,
+    step:  RunStep,
+    run:   RunSpec,
+    agentOrNull: AgentWithRelations | null,
+  ): Promise<StepExecutionResult> {
+    // Load agent if not already provided (leaf agent path)
+    const agentId = (node.config?.agentId as string) ?? step.agentId ?? '';
+    let agent = agentOrNull;
+    if (!agent) {
+      const loaded = await this.db.agent.findUnique({
+        where: { id: agentId },
+        include: {
+          workspace:  { include: { department: { include: { agency: true } } } },
+          skillLinks: { include: { skill: true } },
+          subagents:  { include: { skillLinks: { include: { skill: true } } } },
+        },
+      });
+      if (!loaded) return { status: 'failed', error: `Agent '${agentId}' not found` };
+      agent = loaded;
+    }
+
     const policyCtx: PolicyResolverContext = {
-      agentId,
+      agentId:      agent.id,
       workspaceId:  agent.workspaceId,
       departmentId: agent.workspace.departmentId,
       agencyId:     agent.workspace.department.agencyId,
     };
 
-    // ── 2. Resolve effective policies ────────────────────────────────
+    // ── Policy resolution ────────────────────────────────────────────────
     const effectivePolicy = await this.policyResolver.resolve(policyCtx);
     const budgetPolicy    = effectivePolicy.budget;
     const modelPolicy     = effectivePolicy.model;
 
-    // ── 3. Budget pre-check ──────────────────────────────────────────
+    // ── Budget pre-check ─────────────────────────────────────────────────
     if (budgetPolicy) {
       const windowStart = new Date(
         Date.now() - budgetPolicy.periodDays * 24 * 60 * 60 * 1000,
@@ -452,7 +584,7 @@ export class LlmStepExecutor extends StepExecutor {
       const { _sum } = await this.db.runStep.aggregate({
         where: {
           run: {
-            flow: { agentId },
+            flow: { workspaceId: agent.workspaceId },
             startedAt: { gte: windowStart },
             status: { in: ['completed', 'failed'] },
           },
@@ -469,32 +601,43 @@ export class LlmStepExecutor extends StepExecutor {
       }
     }
 
-    // ── 4. Determine model ─────────────────────────────────────────────
-    const modelId    = (node.config.model as string)
-                    ?? modelPolicy?.primaryModel
-                    ?? agent.model
-                    ?? 'openai/gpt-4o-mini';
+    // ── Model resolution ─────────────────────────────────────────────────
+    const modelId     = (node.config?.model as string) ?? modelPolicy?.primaryModel ?? (agent.model as string) ?? 'openai/gpt-4o-mini';
     const temperature = modelPolicy?.temperature ?? 0.7;
     const maxTokens   = modelPolicy?.maxTokens   ?? 4096;
-    const systemPrompt = (node.config.systemPrompt as string)
-                      ?? agent.systemPrompt
-                      ?? 'You are a helpful assistant.';
 
-    // ── 5. Build tools list from agent skills ─────────────────────────
-    const tools: ToolDefinition[] = agent.skills.map(({ skill }) => ({
+    // ── System prompt: ProfilePropagatorService > node.config > fallback ─
+    let systemPrompt = (node.config?.systemPrompt as string) ?? '';
+    if (!systemPrompt) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { ProfilePropagatorService } = require('../../profile-engine/src/index.js') as {
+          ProfilePropagatorService: new (prisma: PrismaClient) => {
+            resolveForAgent(id: string): Promise<{ systemPrompt: string }>;
+          };
+        };
+        const propagator = new ProfilePropagatorService(this.db);
+        const resolved   = await propagator.resolveForAgent(agent.id);
+        systemPrompt      = resolved.systemPrompt;
+      } catch {
+        // profile-engine not available or agent has no profile — use field fallback
+        systemPrompt = (agent.instructions as string) ?? 'You are a helpful assistant.';
+      }
+    }
+
+    // ── Tools from agent skills ──────────────────────────────────────────
+    const skillLinks = agent.skillLinks ?? [];
+    const tools: ToolDefinition[] = skillLinks.map(({ skill }) => ({
       type: 'function' as const,
       function: {
-        name:        skill.name,
-        description: skill.description ?? undefined,
-        parameters:  (skill.schema as Record<string, unknown>) ?? {
-          type: 'object',
-          properties: {},
-        },
+        name:        skill.name as string,
+        description: (skill.description as string) ?? undefined,
+        parameters:  (skill.functions as Record<string, unknown>) ?? { type: 'object', properties: {} },
       },
     }));
 
-    // ── 6. Build initial messages ─────────────────────────────────
-    const userContent = (node.config.prompt as string)
+    // ── Initial messages ─────────────────────────────────────────────────
+    const userContent = (node.config?.prompt as string)
                      ?? JSON.stringify(run.trigger.payload ?? {})
                      ?? 'Continue.';
 
@@ -503,7 +646,7 @@ export class LlmStepExecutor extends StepExecutor {
       { role: 'user',   content: userContent  },
     ];
 
-    // ── 7. Agentic tool_calls loop ─────────────────────────────────
+    // ── Agentic tool_calls loop ──────────────────────────────────────────
     const adapter = buildAdapter(modelId);
     let totalInput  = 0;
     let totalOutput = 0;
@@ -513,13 +656,8 @@ export class LlmStepExecutor extends StepExecutor {
     for (let round = 0; round < this.maxToolRounds; round++) {
       let llmResp: LlmResponse;
       try {
-        llmResp = await adapter.chat(messages, tools, {
-          model:       modelId,
-          temperature,
-          maxTokens,
-        });
+        llmResp = await adapter.chat(messages, tools, { model: modelId, temperature, maxTokens });
       } catch (err) {
-        // If primary model fails and there’s a fallback, retry once
         if (modelPolicy?.fallbackModel && modelPolicy.fallbackModel !== modelId) {
           const fallbackAdapter = buildAdapter(modelPolicy.fallbackModel);
           llmResp = await fallbackAdapter.chat(messages, tools, {
@@ -537,30 +675,22 @@ export class LlmStepExecutor extends StepExecutor {
       totalOutput += llmResp.usage.output;
       lastContent  = llmResp.content;
 
-      // No tool calls — model is done
       if (!llmResp.tool_calls.length) break;
 
-      // Append assistant message with tool_calls
       messages.push({
         role:       'assistant',
         content:    llmResp.content,
         tool_calls: llmResp.tool_calls,
       });
 
-      // Dispatch all tool calls in this round in parallel
       const toolResults = await Promise.all(
         llmResp.tool_calls.map(async tc => {
           const args = parseToolArgs(tc.function.arguments);
           const res  = await this.skillInvoker.invoke(tc.function.name, args);
-          return {
-            tool_call_id: tc.id,
-            skillName:    tc.function.name,
-            result:       res,
-          };
+          return { tool_call_id: tc.id, skillName: tc.function.name, result: res };
         }),
       );
 
-      // Feed tool results back as tool messages
       for (const tr of toolResults) {
         messages.push({
           role:         'tool',
@@ -571,19 +701,17 @@ export class LlmStepExecutor extends StepExecutor {
       }
     }
 
-    // ── 8. Calculate cost ────────────────────────────────────────────
     const costUsd = calculateTokenCost(lastModel, totalInput, totalOutput);
 
-    // ── 9. Return result ─────────────────────────────────────────────
     return {
       status: 'completed',
       output: {
-        agentId,
-        response: lastContent,
-        model:    lastModel,
+        agentId:       agent.id,
+        response:      lastContent,
+        model:         lastModel,
+        executionMode: 'direct',
         toolRoundsUsed: Math.ceil(
-          messages.filter(m => m.role === 'tool').length /
-          Math.max(tools.length, 1)
+          messages.filter(m => m.role === 'tool').length / Math.max(tools.length, 1),
         ),
       },
       tokenUsage: { input: totalInput, output: totalOutput },
@@ -592,18 +720,16 @@ export class LlmStepExecutor extends StepExecutor {
   }
 
   // ─── Tool node execution ──────────────────────────────────────────────
-  // Direct skill invocation without LLM — used for 'tool' node type
-  // when a flow step calls a skill deterministically (no model involved).
 
   protected override async executeTool(
-    node: FlowNode,
-    step: RunStep,
-    _run: RunSpec,
+    node:  FlowNode,
+    _step: RunStep,
+    _run:  RunSpec,
   ): Promise<StepExecutionResult> {
-    const skillName = (node.config.skillName as string)
-                   ?? (node.config.skillId   as string)
+    const skillName = (node.config?.skillName as string)
+                   ?? (node.config?.skillId   as string)
                    ?? 'unknown';
-    const args = (node.config.params as Record<string, unknown>) ?? {};
+    const args = (node.config?.params as Record<string, unknown>) ?? {};
 
     const res = await this.skillInvoker.invoke(skillName, args);
 
@@ -617,11 +743,7 @@ export class LlmStepExecutor extends StepExecutor {
 
     return {
       status: 'completed',
-      output: {
-        skillName,
-        result:     res.result,
-        durationMs: res.durationMs,
-      },
+      output: { skillName, result: res.result, durationMs: res.durationMs },
     };
   }
 }
@@ -635,4 +757,53 @@ function parseToolArgs(argsJson: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+// Minimal type for the agent with relations we need
+type AgentWithRelations = {
+  id: string;
+  workspaceId: string;
+  model: unknown;
+  instructions: unknown;
+  executionMode: unknown;
+  workspace: {
+    departmentId: string;
+    department: { agencyId: string };
+  };
+  skillLinks: Array<{ skill: { name: unknown; description: unknown; functions: unknown } }>;
+  subagents: Array<{
+    id: string;
+    name: string;
+    model: unknown;
+    instructions: unknown;
+    executionMode: unknown;
+    skillLinks: Array<{ skill: unknown }>;
+    agentConfig?: {
+      model: string;
+      systemPrompt: string;
+      skills?: string[];
+      requiresApproval?: boolean;
+    };
+  }>;
+};
+
+/**
+ * Converts the flat agent + subagents structure into the HierarchyNode tree
+ * expected by HierarchyOrchestrator.
+ */
+function buildHierarchyNode(agent: AgentWithRelations): import('../../hierarchy/src').HierarchyNode {
+  return {
+    id:    agent.id,
+    name:  agent.id,  // name from DB would require extra select; id is sufficient
+    level: 'agent',
+    children: (agent.subagents ?? []).map(sub => ({
+      id:    sub.id,
+      name:  sub.id,
+      level: 'subagent' as const,
+      agentConfig: sub.agentConfig ?? {
+        model:        (sub.model as string) ?? 'openai/gpt-4o-mini',
+        systemPrompt: (sub.instructions as string) ?? 'You are a helpful assistant.',
+      },
+    })),
+  };
 }

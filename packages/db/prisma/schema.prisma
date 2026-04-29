@@ -4,10 +4,11 @@
 // Durable execution: Run → RunStep con checkpointData
 // Credenciales de modelos y canales: cifradas en DB (NO en .env)
 //
-// v4 — Plan Maestro completo:
-//   + N8nConnection / N8nWorkflow (skill type=n8n_webhook)
-//   + ModelPolicy como tabla propia (primary/fallback model, jerarquía)
-//   + StepExecutor wired → LlmStepExecutor (ver packages/run-engine)
+// v5 — Gaps cerrados:
+//   + ActivityLog: +resourceType +resourceId +diff +ipAddress
+//     (alineación con Plan Maestro OV-06 Audit Trail)
+//   + llm-step-executor: HierarchyOrchestrator wired (ver packages/run-engine)
+//   + ProfilePropagatorService: llamado desde agent.hooks.ts
 // ============================================================
 
 generator client {
@@ -99,7 +100,7 @@ model Agent {
   description     String   @default("")
   instructions    String   @default("")
 
-  // ── v3 (ProfilePropagatorService) ───────────────────────────────────
+  // v3 (ProfilePropagatorService)
   goal            String?  @default("")
   backstory       String?  @default("")
 
@@ -165,13 +166,6 @@ model AgentProfile {
 
 // ────────────────────────────────────────────────────────────
 // MODEL POLICY — tabla propia (v4)
-//
-// Una policy por scope (agency | department | workspace | agent).
-// PolicyResolver recorre la jerarquía de más específico a más general
-// y aplica la primera policy encontrada (con herencia de fallback).
-//
-// Workspace.modelPolicy Json? sirve como cache de la policy efectiva
-// calculada por PolicyResolver — NO es la fuente de verdad.
 // ────────────────────────────────────────────────────────────
 
 model ModelPolicy {
@@ -179,31 +173,17 @@ model ModelPolicy {
   scopeType     String   // agency | department | workspace | agent
   scopeId       String
 
-  // Modelo principal — formato 'provider/model-id'
-  // Ejemplos: 'openai/gpt-4o', 'anthropic/claude-3-5-sonnet', 'qwen/qwen-plus'
   primaryModel  String
-
-  // Modelo de fallback — se usa si primaryModel falla (timeout, rate-limit, budget)
-  // Si es null, no hay fallback y el error se propaga.
   fallbackModel String?
-
-  // Parámetros de generación
   temperature   Float    @default(0.7)
   maxTokens     Int      @default(4096)
-
-  // Si true, esta policy sobreescribe la del scope superior (no hereda).
-  // Si false, solo define los campos no cubiertos por el scope superior.
   isOverride    Boolean  @default(false)
-
-  // Referencia al scope del cual hereda (null si es la raíz)
   inheritedFrom String?
 
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  // FKs opcionales a cada nivel de la jerarquía
-  // Prisma requiere FKs explícitas para cada relación polimórfica
   agency     Agency?     @relation(fields: [scopeId], references: [id])
   department Department? @relation(fields: [scopeId], references: [id])
   workspace  Workspace?  @relation(fields: [scopeId], references: [id])
@@ -231,9 +211,7 @@ model Skill {
   plugin       Json?
   openapiSpec  Json?
   mcpConfig    Json?
-  // Para type=n8n_webhook: referencia al N8nWorkflow registrado
-  // { workflowId, webhookUrl, method, auth? }
-  // workflowId corresponde a N8nWorkflow.id (no el ID de n8n interno)
+  // Para type=n8n_webhook: { workflowId, webhookUrl, method, auth? }
   n8nConfig    Json?
   files        String[] @default([])
   dependencies String[] @default([])
@@ -259,33 +237,16 @@ model AgentSkill {
 
 // ────────────────────────────────────────────────────────────
 // N8N INTEGRATION — v4
-//
-// N8nConnection: credenciales de una instancia n8n (puede haber varias).
-// N8nWorkflow: workflow registrado en esa instancia, expuesto como skill.
-//
-// Flujo de uso:
-//   1. Admin crea N8nConnection con baseUrl + apiKey cifrada
-//   2. Admin sincroniza workflows (GET /api/v1/workflows desde n8n)
-//      → crea N8nWorkflow por cada workflow activo con webhook trigger
-//   3. SkillRegistry crea un Skill type='n8n_webhook' con
-//      n8nConfig = { workflowId: N8nWorkflow.id, webhookUrl, method: 'POST' }
-//   4. SkillInvoker llama al webhookUrl cuando el agente invoca el tool
 // ────────────────────────────────────────────────────────────
 
 model N8nConnection {
-  id        String   @id @default(cuid())
-  name      String   @default("default")
-
-  // URL base de la instancia n8n — e.g. https://n8n.yourdomain.com
-  baseUrl   String
-
-  // API key cifrada con AES-256-GCM (mismo esquema que ChannelConfig.credentials)
-  // NUNCA texto plano. Cifrar en app antes de guardar.
-  apiKeyEncrypted String @db.Text
-
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id              String   @id @default(cuid())
+  name            String   @default("default")
+  baseUrl         String
+  apiKeyEncrypted String   @db.Text
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   workflows N8nWorkflow[]
 
@@ -295,27 +256,13 @@ model N8nConnection {
 model N8nWorkflow {
   id             String        @id @default(cuid())
   connectionId   String
-
-  // ID del workflow dentro del sistema n8n (para llamadas a la API de n8n)
   n8nWorkflowId  String
-
   name           String
   description    String?       @default("")
-
-  // URL del webhook trigger del workflow
-  // Formato: https://n8n.yourdomain.com/webhook/<path>
   webhookUrl     String?
-
-  // Método HTTP esperado por el webhook (default POST)
   webhookMethod  String        @default("POST")
-
-  // JSON Schema de los parámetros que acepta el workflow
-  // Usado por SkillRegistry para generar la definición del tool
   inputSchema    Json?         @default("{}")
-
-  // JSON Schema de la respuesta esperada (opcional, para validación)
   outputSchema   Json?         @default("{}")
-
   isActive       Boolean       @default(true)
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
@@ -360,7 +307,7 @@ model Run {
   id          String   @id @default(cuid())
   workspaceId String
   flowId      String
-  status      String   @default("queued") // queued | running | waiting_approval | completed | failed | cancelled
+  status      String   @default("queued")
   trigger     Json     @default("{}")
   error       String?
   metadata    Json?    @default("{}")
@@ -400,7 +347,6 @@ model RunStep {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  // ── Durable execution ────────────────────────────────────
   checkpointData   Json?    // messages[], tool_calls[], observations[]
   checkpointSeq    Int      @default(0)
   interruptReason  String?  // human_approval | budget_exceeded | tool_error | max_iter
@@ -427,7 +373,6 @@ model ChannelConfig {
   workspaceId String
   channel     String   // whatsapp | telegram | slack | email | web | custom
   displayName String
-  // credentials CIFRADAS (AES-256-GCM)
   credentials Json     @default("{}")
   settings    Json?    @default("{}")
   isActive    Boolean  @default(true)
@@ -459,7 +404,6 @@ model ChannelBinding {
 
 // ────────────────────────────────────────────────────────────
 // GATEWAY SESSION + CONVERSATION MESSAGES
-// Patrón anti-TOAST
 // ────────────────────────────────────────────────────────────
 
 model GatewaySession {
@@ -467,11 +411,8 @@ model GatewaySession {
   channelConfigId String
   externalId      String
   agentId         String
-
-  // Ventana activa para el LLM (<3KB). Se compacta con summarización.
   activeContextJson Json?  @default("[]")
-
-  state          String   @default("active") // active | idle | closed
+  state          String   @default("active")
   lastActivityAt DateTime @default(now())
   metadata       Json?    @default("{}")
   createdAt      DateTime @default(now())
@@ -490,17 +431,13 @@ model ConversationMessage {
   id               String   @id @default(cuid())
   sessionId        String
   role             String   // user | assistant | system | tool
-
   contentText      String?  @db.Text
   contentJson      Json
-
   channelMessageId String?
   toolCallId       String?
   toolName         String?
-
   scopeType        String?
   scopeId          String?
-
   tokenCount       Int?
   createdAt        DateTime @default(now())
 
@@ -521,20 +458,16 @@ model BudgetPolicy {
   scopeType           String
   scopeId             String
   window              String   @default("monthly")
-
   softCapUsd          Float?
   hardCapUsd          Float?
   requireApproval     Boolean  @default(false)
   approvalThreshold   Float?
   replayBudgetUsd     Float?
   escalationThreshold Float?
-
   perModelCaps        Json?    @default("{}")
-
   inheritedFrom       String?
   effectiveValue      Json?
   isOverride          Boolean  @default(false)
-
   isActive            Boolean  @default(true)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
@@ -670,18 +603,31 @@ model Routine {
 }
 
 // ────────────────────────────────────────────────────────────
-// ACTIVITY LOG
+// ACTIVITY LOG — v5: alineado con Plan Maestro OV-06 Audit Trail
+//
+// Campos nuevos (opcionales, no rompen datos existentes):
+//   resourceType  — tipo del recurso afectado (agent | flow | skill | policy...)
+//   resourceId    — ID del recurso afectado
+//   diff          — JSON diff antes/después del cambio (para auditoría granular)
+//   ipAddress     — IP del actor (requerido por OV-06 para trazabilidad)
 // ────────────────────────────────────────────────────────────
 
 model ActivityLog {
-  id         String   @id @default(cuid())
-  scopeType  String
-  scopeId    String
-  actorType  String
-  actorId    String?
-  action     String
-  payload    Json?    @default("{}")
-  createdAt  DateTime @default(now())
+  id           String   @id @default(cuid())
+  scopeType    String
+  scopeId      String
+  actorType    String
+  actorId      String?
+  action       String
+  payload      Json?    @default("{}")
+
+  // v5: campos OV-06 Audit Trail
+  resourceType String?  // agent | flow | skill | policy | workspace | channel...
+  resourceId   String?  // ID del recurso afectado (distinto de scopeId cuando aplica)
+  diff         Json?    // { before: {...}, after: {...} } — diff del estado del recurso
+  ipAddress    String?  // IPv4 o IPv6 del actor
+
+  createdAt    DateTime @default(now())
 
   agency     Agency?     @relation(fields: [scopeId], references: [id])
   department Department? @relation(fields: [scopeId], references: [id])
@@ -691,6 +637,7 @@ model ActivityLog {
   @@index([scopeId, createdAt])
   @@index([action, createdAt])
   @@index([actorId, createdAt])
+  @@index([resourceId, createdAt])
   @@map("activity_logs")
 }
 
