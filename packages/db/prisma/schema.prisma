@@ -4,14 +4,9 @@
 // Durable execution: Run → RunStep con checkpointData
 // Credenciales de modelos y canales: cifradas en DB (NO en .env)
 //
-// v2 — Integración Paperclip migration plan:
-//   + ConversationMessage (anti-TOAST pattern para historial gateway)
-//   + BudgetPolicy + BudgetIncident (governance de presupuesto por scope)
-//   + CostEvent (registro granular costo/tokens/latencia por modelo)
-//   + Approval + ApprovalComment (human-in-the-loop)
-//   + Routine (tareas recurrentes por schedule)
-//   + ActivityLog (audit log inmutable scope-aware)
-//   + AgentWakeupRequest (wakeup para runs pausados)
+// v3 — ProfilePropagatorService:
+//   + AgentProfile (system prompt, persona, knowledge base, memory config)
+//   + Agent.goal + Agent.backstory (usados por ProfilePropagatorService.buildFallbackPrompt)
 // ============================================================
 
 generator client {
@@ -97,6 +92,13 @@ model Agent {
   role            String
   description     String   @default("")
   instructions    String   @default("")
+
+  // ── Nuevos campos v3 (ProfilePropagatorService) ───────────────────
+  // goal: objetivo principal del agente (usado en system prompt fallback)
+  goal            String?  @default("")
+  // backstory: contexto narrativo del agente (opcional)
+  backstory       String?  @default("")
+
   model           String   @default("gpt-4o-mini")
   tags            String[] @default([])
   visibility      String   @default("private")   // private | workspace | public
@@ -124,9 +126,64 @@ model Agent {
   wakeupRequests        AgentWakeupRequest[]
   budgetPolicy          BudgetPolicy[]
   activityLogs          ActivityLog[]
+  // 1-to-1 con AgentProfile (puede ser null si no se ha propagado)
+  agentProfile          AgentProfile?
 
   @@index([workspaceId])
   @@map("agents")
+}
+
+// ────────────────────────────────────────────────────────────
+// AGENT PROFILE — v3 (ProfilePropagatorService)
+//
+// Un registro por agente (1-to-1 con Agent).
+// Creado/actualizado por ProfilePropagatorService.propagate().
+//
+// Separado de Agent para:
+//   1. Mantener Agent como entidad ligera de configuración estructural
+//   2. Permitir versioning del perfil sin tocar el agente
+//   3. Cargar el perfil solo cuando el LLM lo necesita (lazy)
+// ────────────────────────────────────────────────────────────
+
+model AgentProfile {
+  id              String   @id @default(cuid())
+  agentId         String   @unique  // 1-to-1 con Agent
+
+  // System prompt explícito (escrito por el builder o el admin).
+  // Si está presente, ProfilePropagatorService lo usa directamente.
+  // Si es null/empty, buildSystemPrompt() genera desde persona + rol + goal.
+  systemPrompt    String?  @db.Text
+
+  // Persona del agente: tone, language, traits, name de presentación
+  // Estructura: { name?, tone?, language?, traits?: string[] }
+  persona         Json     @default("{}")
+
+  // Knowledge base: URLs, textos, referencias de documentos
+  // Estructura: Array<{ type: 'url'|'text'|'file', label: string, value: string }>
+  knowledgeBase   Json     @default("[]")
+
+  // Formato esperado de respuesta del LLM
+  responseFormat  String?  // null | 'json' | 'markdown' | 'plain'
+
+  // Ventana de contexto máxima en tokens (para este agente)
+  contextWindow   Int      @default(8192)
+
+  // Si el agente usa memoria persistente entre sesiones (future)
+  memoryEnabled   Boolean  @default(false)
+  // Config de memoria: { provider, connectionString, topK, ... }
+  memoryConfig    Json     @default("{}")
+
+  // Control de versiones del perfil
+  version         Int      @default(1)
+  propagatedAt    DateTime @default(now())  // última vez que se propagó
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId])
+  @@map("agent_profiles")
 }
 
 // ────────────────────────────────────────────────────────────
@@ -320,10 +377,8 @@ model ChannelBinding {
 //   ConversationMessage               → historial permanente, append-only,
 //                                        queryable, auditable por mensaje
 //
-// El problema de acumular contextWindow como JSONB creciente en la sesión:
-//   - Postgres mueve JSONB >~2KB a TOAST, degradando lecturas/escrituras
-//   - Cada nuevo msg requiere leer y reescribir el array completo
-//   - No es queryable por campos individuales sin deserializar toda la sesión
+// SessionManager resuelve GatewaySession vía (channelConfigId, externalId)
+// y usa session.id como FK en ConversationMessage.
 // ────────────────────────────────────────────────────────────
 
 model GatewaySession {
@@ -355,22 +410,28 @@ model GatewaySession {
 // Historial permanente de conversación — append-only, nunca updates
 // Cada registro es un mensaje individual (~1KB JSONB — seguro anti-TOAST)
 model ConversationMessage {
-  id               String         @id @default(cuid())
+  id               String   @id @default(cuid())
   sessionId        String
-  role             String         // user | assistant | system | tool
-  contentText      String?        @db.Text   // texto plano para búsqueda full-text
-  contentJson      Json           // estructura completa: [{type, text}] o tool_calls
-  channelMessageId String?        // ID externo del canal (Telegram msg_id, etc.)
+  role             String   // user | assistant | system | tool
 
-  toolCallId       String?        // si es resultado de un tool call
+  // contentText: texto plano para búsqueda full-text y visualización
+  contentText      String?  @db.Text
+  // contentJson: estructura completa OpenAI-compatible:
+  //   user/assistant: [{ type: 'text', text: string }]
+  //   tool:           [{ type: 'tool_result', tool_use_id, content }]
+  //   system:         string
+  contentJson      Json     // estructura completa
+
+  channelMessageId String?  // ID externo del canal (Telegram msg_id, etc.)
+  toolCallId       String?  // si es resultado de un tool call
   toolName         String?
 
   // Scope jerárquico del agente que respondió o recibió
-  scopeType        String?        // agency | department | workspace | agent
+  scopeType        String?  // agency | department | workspace | agent
   scopeId          String?
 
-  tokenCount       Int?           // tokens del mensaje (estimado o real)
-  createdAt        DateTime       @default(now())
+  tokenCount       Int?     // tokens del mensaje (estimado o real)
+  createdAt        DateTime @default(now())
 
   session GatewaySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
@@ -382,39 +443,31 @@ model ConversationMessage {
 
 // ────────────────────────────────────────────────────────────
 // BUDGET GOVERNANCE
-// Extraído y reescrito desde Paperclip (Drizzle → Prisma)
-// Cubre: OP-05 Cost Budget Gauge, OP-06 Cost by Model/Role,
-//        OP-08 Governance Widgets del catálogo Phase 3
 // ────────────────────────────────────────────────────────────
 
-// Políticas de presupuesto por scope con herencia en cascada
-// Resolución: agent → workspace → department → agency → global
 model BudgetPolicy {
   id                  String   @id @default(cuid())
   scopeType           String   // agency | department | workspace | agent
   scopeId             String
   window              String   @default("monthly") // daily | weekly | monthly | custom
 
-  softCapUsd          Float?   // límite de advertencia
-  hardCapUsd          Float?   // límite de bloqueo
+  softCapUsd          Float?
+  hardCapUsd          Float?
   requireApproval     Boolean  @default(false)
-  approvalThreshold   Float?   // monto a partir del cual requiere aprobación
-  replayBudgetUsd     Float?   // presupuesto extra para replays/retries
-  escalationThreshold Float?   // % de consumo para escalar alerta
+  approvalThreshold   Float?
+  replayBudgetUsd     Float?
+  escalationThreshold Float?
 
-  // Caps por modelo individual: { "gpt-4o": 50.0, "claude-3-opus": 30.0 }
   perModelCaps        Json?    @default("{}")
 
-  // Herencia: si inheritedFrom != null, effectiveValue es el valor calculado
-  inheritedFrom       String?  // scopeId padre del que hereda
-  effectiveValue      Json?    // valor calculado post-herencia en cascada
-  isOverride          Boolean  @default(false) // true = override local, false = heredado
+  inheritedFrom       String?
+  effectiveValue      Json?
+  isOverride          Boolean  @default(false)
 
   isActive            Boolean  @default(true)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
-  // Relaciones opcionales por scopeType
   agency     Agency?     @relation(fields: [scopeId], references: [id])
   department Department? @relation(fields: [scopeId], references: [id])
   workspace  Workspace?  @relation(fields: [scopeId], references: [id])
@@ -426,7 +479,6 @@ model BudgetPolicy {
   @@map("budget_policies")
 }
 
-// Registro de incidentes de presupuesto — append-only
 model BudgetIncident {
   id           String   @id @default(cuid())
   policyId     String
@@ -437,7 +489,7 @@ model BudgetIncident {
   resolvedAt   DateTime?
   runId        String?
   runStepId    String?
-  amountUsd    Float    // monto que disparó el incidente
+  amountUsd    Float
   metadata     Json?    @default("{}")
 
   policy BudgetPolicy @relation(fields: [policyId], references: [id])
@@ -448,10 +500,7 @@ model BudgetIncident {
 }
 
 // ────────────────────────────────────────────────────────────
-// COST EVENTS — registro granular de costo por modelo
-// Extraído de Paperclip cost_events, re-escrito en Prisma
-// Materia prima para OV-03 Tokens, OV-06 Model Mix,
-// OV-07 Model Spend Ranked, OV-09 Latency P50/P95
+// COST EVENTS
 // ────────────────────────────────────────────────────────────
 
 model CostEvent {
@@ -459,17 +508,16 @@ model CostEvent {
   runStepId     String?
   runId         String?
   agentId       String?
-  scopeType     String   // agency | department | workspace | agent
+  scopeType     String
   scopeId       String
-  model         String   // gpt-4o | gpt-4o-mini | claude-3-opus | qwen-32b | etc.
-  provider      String   @default("openai") // openai | anthropic | qwen | deepseek | openrouter
+  model         String
+  provider      String   @default("openai")
   promptTokens  Int      @default(0)
   completTokens Int      @default(0)
   totalTokens   Int      @default(0)
   costUsd       Float    @default(0)
-  latencyMs     Int?     // latencia total de la llamada en ms
-  // Rol del modelo en este step del run
-  role          String?  // primary | fallback | tool-overhead | long-context
+  latencyMs     Int?
+  role          String?
   timestamp     DateTime @default(now())
 
   run     Run?     @relation(fields: [runId], references: [id])
@@ -483,9 +531,7 @@ model CostEvent {
 }
 
 // ────────────────────────────────────────────────────────────
-// APPROVALS — governance human-in-the-loop
-// Extraído de Paperclip approvals + approval_comments
-// Cubre: OP-08 Governance Widgets, nodo approval del canvas
+// APPROVALS
 // ────────────────────────────────────────────────────────────
 
 model Approval {
@@ -494,12 +540,11 @@ model Approval {
   runStepId   String?
   scopeType   String
   scopeId     String
-  status      String    @default("pending") // pending | approved | rejected | expired | cancelled
+  status      String    @default("pending")
   requestedAt DateTime  @default(now())
   resolvedAt  DateTime?
-  resolvedBy  String?   // userId o agentId que resolvió
-  reason      String?   // motivo de aprobación o rechazo
-  // contexto del step que requiere aprobación
+  resolvedBy  String?
+  reason      String?
   context     Json?     @default("{}")
   metadata    Json?     @default("{}")
 
@@ -515,8 +560,8 @@ model Approval {
 model ApprovalComment {
   id         String   @id @default(cuid())
   approvalId String
-  authorId   String   // userId o agentId
-  authorType String   @default("user") // user | agent | system
+  authorId   String
+  authorType String   @default("user")
   content    String   @db.Text
   createdAt  DateTime @default(now())
 
@@ -527,8 +572,7 @@ model ApprovalComment {
 }
 
 // ────────────────────────────────────────────────────────────
-// ROUTINES — tareas recurrentes por schedule
-// Extraído de Paperclip routines
+// ROUTINES
 // ────────────────────────────────────────────────────────────
 
 model Routine {
@@ -538,14 +582,12 @@ model Routine {
   flowId      String?
   name        String
   description String?  @default("")
-  // cron expression: "0 9 * * 1-5" = lunes a viernes 9am
   schedule    String
-  // payload inyectado como trigger del run
   payload     Json?    @default("{}")
   isEnabled   Boolean  @default(true)
   lastRunAt   DateTime?
   nextRunAt   DateTime?
-  lastRunId   String?  // FK al último Run generado
+  lastRunId   String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -557,26 +599,19 @@ model Routine {
 }
 
 // ────────────────────────────────────────────────────────────
-// ACTIVITY LOG — audit log inmutable scope-aware
-// Extraído de Paperclip activity_log
-// Append-only: nunca updates, nunca deletes
+// ACTIVITY LOG
 // ────────────────────────────────────────────────────────────
 
 model ActivityLog {
   id         String   @id @default(cuid())
-  scopeType  String   // agency | department | workspace | agent
+  scopeType  String
   scopeId    String
-  actorType  String   // user | agent | system
+  actorType  String
   actorId    String?
-  // Acciones: run.started | run.completed | run.failed | approval.requested |
-  //           approval.resolved | budget.soft_cap | budget.hard_cap |
-  //           policy.updated | agent.enabled | agent.disabled | routine.triggered
   action     String
-  // datos relevantes del evento (no duplicar scopeId/actorId ya en columnas)
   payload    Json?    @default("{}")
   createdAt  DateTime @default(now())
 
-  // Relaciones opcionales por scopeType para queries directas
   agency     Agency?     @relation(fields: [scopeId], references: [id])
   department Department? @relation(fields: [scopeId], references: [id])
   workspace  Workspace?  @relation(fields: [scopeId], references: [id])
@@ -590,8 +625,6 @@ model ActivityLog {
 
 // ────────────────────────────────────────────────────────────
 // AGENT WAKEUP REQUESTS
-// Extraído de Paperclip agent_wakeup_requests
-// Mecanismo para reanudar runs pausados por approval, budget o schedule
 // ────────────────────────────────────────────────────────────
 
 model AgentWakeupRequest {
@@ -599,11 +632,9 @@ model AgentWakeupRequest {
   agentId     String
   runId       String?
   runStepId   String?
-  // Por qué se debe despertar el agente
-  reason      String    // approval_received | budget_reset | manual | schedule | error_resolved
-  // datos inyectados al reanudar (ej: resultado de aprobación)
+  reason      String
   payload     Json?     @default("{}")
-  status      String    @default("pending") // pending | processing | processed | failed
+  status      String    @default("pending")
   scheduledAt DateTime?
   processedAt DateTime?
   createdAt   DateTime  @default(now())
