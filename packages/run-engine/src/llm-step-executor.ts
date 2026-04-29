@@ -22,6 +22,10 @@
  *     calls this same LlmStepExecutor for each leaf agent.
  *  6. ProfilePropagatorService — resolveForAgent() provides the compiled
  *     system prompt when AgentProfile exists.
+ *  7. executeCondition — override completo que expone el contexto más rico
+ *     del run (payload, metadata, status, outputs de pasos anteriores).
+ *     Usa named-arg Function constructor, compatible con "use strict".
+ *     No usa `with()` ni `eval()` directo.
  *
  * Provider routing key (ModelPolicy.primaryModel format):
  *   'openai/*'    → OpenAI API  (requires OPENAI_API_KEY)
@@ -366,22 +370,139 @@ interface AnthropicResponse {
   stop_reason?: string;
 }
 
+// ─── Condition context ────────────────────────────────────────────────────────
+//
+// Variables disponibles en expresiones de condición.
+// Deben ser tipos serializables (no funciones, no clases).
+
+interface ConditionContext {
+  /** Payload del trigger que inició el run */
+  payload:  Record<string, unknown>;
+  /** Metadata del run (campos extra del RunSpec) */
+  metadata: Record<string, unknown>;
+  /** Estado actual del run */
+  status:   string;
+  /**
+   * Outputs de pasos anteriores del flow, indexados por nodeId.
+   * Permite condiciones como: outputs['step-1']?.response?.includes('error')
+   */
+  outputs:  Record<string, unknown>;
+}
+
 // ─── LlmStepExecutor ───────────────────────────────────────────────────────────
 
 export class LlmStepExecutor extends StepExecutor {
   private readonly db: PrismaClient;
-  private readonly maxToolRounds: number;
+  private readonly maxToolRoundsOverride: number;
   private readonly gateway?: GatewayRpcClient;
   private readonly policyResolver: PolicyResolver;
   private readonly skillInvoker: SkillInvoker;
 
   constructor(options: LlmStepExecutorOptions) {
     super();
-    this.db             = options.db;
-    this.maxToolRounds  = options.maxToolRounds ?? 10;
-    this.gateway        = options.gateway;
-    this.policyResolver = new PolicyResolver(this.db);
-    this.skillInvoker   = new SkillInvoker(this.db);
+    this.db                   = options.db;
+    this.maxToolRoundsOverride = options.maxToolRounds ?? 10;
+    this.gateway              = options.gateway;
+    this.policyResolver       = new PolicyResolver(this.db);
+    this.skillInvoker         = new SkillInvoker(this.db);
+  }
+
+  // ─── Condition node execution ─────────────────────────────────────────
+  //
+  // Override completo de StepExecutor.executeCondition().
+  //
+  // Diferencias vs la implementación base:
+  //   1. Contexto más rico: expone `outputs` (resultados de pasos anteriores).
+  //   2. Named-arg Function constructor — compatible con "use strict".
+  //      El base usaba `with(ctx)` que lanza SyntaxError en strict mode,
+  //      siendo capturado silenciosamente y forzando siempre evaluated=true.
+  //   3. Errores de expresión resultan en status:'failed' + branch:'false',
+  //      no en fallback silencioso a la primera rama.
+  //
+  // Variables disponibles en la expresión:
+  //   payload  — run.trigger.payload  (ej: payload.score > 80)
+  //   metadata — run.metadata         (ej: metadata.retries < 3)
+  //   status   — run.status           (ej: status === 'running')
+  //   outputs  — map de nodeId→output (ej: outputs['classify']?.label === 'urgent')
+  //
+  // Ejemplo de expresión:
+  //   "payload.score >= 90 && outputs['validate']?.ok === true"
+
+  protected override async executeCondition(
+    node:  FlowNode,
+    _step: RunStep,
+    run:   RunSpec,
+  ): Promise<StepExecutionResult> {
+    const expression = (node.config?.expression as string)?.trim();
+    const branches   = (node.config?.branches   as string[]) ?? ['true', 'false'];
+
+    if (!expression) {
+      // Nodo mal configurado — fallback a primera rama con advertencia
+      console.warn(
+        `[LlmStepExecutor] Condition node '${node.id}' has no expression — defaulting to branch[0]`,
+      );
+      return {
+        status: 'completed',
+        output: { expression: '', evaluated: true, branch: branches[0] ?? 'true' },
+        branch: branches[0] ?? 'true',
+      };
+    }
+
+    // Construir contexto de evaluación
+    // `outputs` se extrae de run si está disponible (RunSpec puede tenerlo
+    // como campo extendido según la implementación de FlowExecutor).
+    const ctx: ConditionContext = {
+      payload:  (run.trigger?.payload  as Record<string, unknown>) ?? {},
+      metadata: (run.metadata          as Record<string, unknown>) ?? {},
+      status:   run.status ?? 'running',
+      outputs:  (run as unknown as { outputs?: Record<string, unknown> }).outputs ?? {},
+    };
+
+    let evaluated: boolean;
+    try {
+      // Named-arg Function constructor:
+      //   - Cada variable del contexto es un argumento nombrado explícito.
+      //   - El cuerpo usa "use strict" — incompatible con `with()`,
+      //     por eso NO usamos `with(ctx)` como hacía la versión anterior.
+      //   - No usamos eval() directo para evitar acceso al scope global.
+      // eslint-disable-next-line @typescript-eslint/no-implied-eval
+      const fn = new Function(
+        'payload',
+        'metadata',
+        'status',
+        'outputs',
+        `"use strict"; return Boolean(${expression});`,
+      ) as (p: unknown, m: unknown, s: unknown, o: unknown) => boolean;
+
+      evaluated = fn(ctx.payload, ctx.metadata, ctx.status, ctx.outputs);
+    } catch (err) {
+      // Error en la expresión → rama 'false' + status failed
+      // No silenciamos el error — el FlowExecutor decide si reintentar.
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[LlmStepExecutor] Condition node '${node.id}' expression error: ${errMsg}`,
+        { expression, context: ctx },
+      );
+      return {
+        status: 'failed',
+        error:  `Condition expression error in node '${node.id}': ${errMsg}`,
+        output: {
+          expression,
+          evaluated: false,
+          branch:    branches[1] ?? 'false',
+          context:   ctx,
+        },
+        branch: branches[1] ?? 'false',
+      };
+    }
+
+    const branch = evaluated ? (branches[0] ?? 'true') : (branches[1] ?? 'false');
+
+    return {
+      status: 'completed',
+      output: { expression, evaluated, branch, context: ctx },
+      branch,
+    };
   }
 
   // ─── Agent node execution ─────────────────────────────────────────────
@@ -411,13 +532,6 @@ export class LlmStepExecutor extends StepExecutor {
     }
 
     // ── 2. Detect execution mode ─────────────────────────────────────────
-    //
-    // Priority: node.config.executionMode > agent.executionMode > 'direct'
-    //
-    // 'orchestrated' → delegate to HierarchyOrchestrator
-    //   Used when the agent has subagents and needs to decompose/delegate.
-    // 'direct' (default) → run the LLM tool_calls loop directly.
-    // 'handoff' → treated as direct for now (handoff routing is in gateway).
     const executionMode =
       (node.config?.executionMode as string) ??
       (agent.executionMode as string) ??
@@ -431,13 +545,6 @@ export class LlmStepExecutor extends StepExecutor {
   }
 
   // ─── Orchestrated path ─────────────────────────────────────────────────
-  //
-  // Builds a HierarchyNode tree from agent.subagents and delegates to
-  // HierarchyOrchestrator.orchestrate().
-  //
-  // AgentExecutorFn is a closure that calls this same LlmStepExecutor
-  // recursively for each leaf agent — so subagents also benefit from
-  // policy resolution, budget checks, and skill invocation.
 
   private async executeOrchestrated(
     node:  FlowNode,
@@ -445,7 +552,6 @@ export class LlmStepExecutor extends StepExecutor {
     run:   RunSpec,
     agent: AgentWithRelations,
   ): Promise<StepExecutionResult> {
-    // Lazy require to avoid circular dependency at module parse time
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { HierarchyOrchestrator } = require('../../hierarchy/src/index.js') as {
       HierarchyOrchestrator: new (
@@ -457,23 +563,19 @@ export class LlmStepExecutor extends StepExecutor {
       ) => { orchestrate(workspaceId: string, task: string, input?: Record<string, unknown>): Promise<import('../../hierarchy/src').OrchestrationResult> };
     };
 
-    // Build HierarchyNode tree from agent + subagents
     const hierarchy = buildHierarchyNode(agent);
 
-    // AgentExecutorFn: recursively calls this executor for each leaf agent.
-    // Each call goes through the full direct path (policy, budget, tools).
     const executorFn: import('../../hierarchy/src').AgentExecutorFn = async (
       leafAgentId: string,
       systemPrompt: string,
       task: string,
     ) => {
-      // Synthesize a minimal FlowNode and RunStep for the leaf
       const leafNode: FlowNode = {
         id:     `orchestrated-${leafAgentId}`,
         type:   'agent',
         config: {
           agentId:       leafAgentId,
-          executionMode: 'direct',   // leaf agents always run direct
+          executionMode: 'direct',
           systemPrompt,
           prompt: task,
         },
@@ -493,7 +595,6 @@ export class LlmStepExecutor extends StepExecutor {
       return String((result.output as Record<string, unknown>)?.response ?? '');
     };
 
-    // SupervisorFn: uses this agent's own model for decomposition + consolidation
     const modelId = (agent.model as string) ?? 'openai/gpt-4o-mini';
     const adapter  = buildAdapter(modelId);
     const supervisorFn: import('../../hierarchy/src').SupervisorFn = async (prompt: string) => {
@@ -538,9 +639,6 @@ export class LlmStepExecutor extends StepExecutor {
   }
 
   // ─── Direct path (default) ──────────────────────────────────────────────
-  //
-  // agent may be null when called from executeOrchestrated for a leaf
-  // (the leaf agent data is loaded fresh inside this method).
 
   private async executeDirect(
     node:  FlowNode,
@@ -548,7 +646,6 @@ export class LlmStepExecutor extends StepExecutor {
     run:   RunSpec,
     agentOrNull: AgentWithRelations | null,
   ): Promise<StepExecutionResult> {
-    // Load agent if not already provided (leaf agent path)
     const agentId = (node.config?.agentId as string) ?? step.agentId ?? '';
     let agent = agentOrNull;
     if (!agent) {
@@ -571,12 +668,10 @@ export class LlmStepExecutor extends StepExecutor {
       agencyId:     agent.workspace.department.agencyId,
     };
 
-    // ── Policy resolution ────────────────────────────────────────────────
     const effectivePolicy = await this.policyResolver.resolve(policyCtx);
     const budgetPolicy    = effectivePolicy.budget;
     const modelPolicy     = effectivePolicy.model;
 
-    // ── Budget pre-check ─────────────────────────────────────────────────
     if (budgetPolicy) {
       const windowStart = new Date(
         Date.now() - budgetPolicy.periodDays * 24 * 60 * 60 * 1000,
@@ -601,12 +696,10 @@ export class LlmStepExecutor extends StepExecutor {
       }
     }
 
-    // ── Model resolution ─────────────────────────────────────────────────
     const modelId     = (node.config?.model as string) ?? modelPolicy?.primaryModel ?? (agent.model as string) ?? 'openai/gpt-4o-mini';
     const temperature = modelPolicy?.temperature ?? 0.7;
     const maxTokens   = modelPolicy?.maxTokens   ?? 4096;
 
-    // ── System prompt: ProfilePropagatorService > node.config > fallback ─
     let systemPrompt = (node.config?.systemPrompt as string) ?? '';
     if (!systemPrompt) {
       try {
@@ -620,12 +713,10 @@ export class LlmStepExecutor extends StepExecutor {
         const resolved   = await propagator.resolveForAgent(agent.id);
         systemPrompt      = resolved.systemPrompt;
       } catch {
-        // profile-engine not available or agent has no profile — use field fallback
         systemPrompt = (agent.instructions as string) ?? 'You are a helpful assistant.';
       }
     }
 
-    // ── Tools from agent skills ──────────────────────────────────────────
     const skillLinks = agent.skillLinks ?? [];
     const tools: ToolDefinition[] = skillLinks.map(({ skill }) => ({
       type: 'function' as const,
@@ -636,7 +727,6 @@ export class LlmStepExecutor extends StepExecutor {
       },
     }));
 
-    // ── Initial messages ─────────────────────────────────────────────────
     const userContent = (node.config?.prompt as string)
                      ?? JSON.stringify(run.trigger.payload ?? {})
                      ?? 'Continue.';
@@ -646,14 +736,13 @@ export class LlmStepExecutor extends StepExecutor {
       { role: 'user',   content: userContent  },
     ];
 
-    // ── Agentic tool_calls loop ──────────────────────────────────────────
     const adapter = buildAdapter(modelId);
     let totalInput  = 0;
     let totalOutput = 0;
     let lastContent: string | null = null;
     let lastModel = modelId;
 
-    for (let round = 0; round < this.maxToolRounds; round++) {
+    for (let round = 0; round < this.maxToolRoundsOverride; round++) {
       let llmResp: LlmResponse;
       try {
         llmResp = await adapter.chat(messages, tools, { model: modelId, temperature, maxTokens });
@@ -759,7 +848,6 @@ function parseToolArgs(argsJson: string): Record<string, unknown> {
   }
 }
 
-// Minimal type for the agent with relations we need
 type AgentWithRelations = {
   id: string;
   workspaceId: string;
@@ -787,14 +875,10 @@ type AgentWithRelations = {
   }>;
 };
 
-/**
- * Converts the flat agent + subagents structure into the HierarchyNode tree
- * expected by HierarchyOrchestrator.
- */
 function buildHierarchyNode(agent: AgentWithRelations): import('../../hierarchy/src').HierarchyNode {
   return {
     id:    agent.id,
-    name:  agent.id,  // name from DB would require extra select; id is sufficient
+    name:  agent.id,
     level: 'agent',
     children: (agent.subagents ?? []).map(sub => ({
       id:    sub.id,

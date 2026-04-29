@@ -15,10 +15,11 @@ export interface StepExecutionResult {
 export interface StepExecutorOptions {
   /**
    * PrismaClient opcional.
-   * Cuando se provee, executeAgent() y executeTool() delegan a LlmStepExecutor
-   * (cargado con lazy require para evitar dependencias circulares en el grafo
-   * de módulos durante la construcción).
-   * Sin db, el executor retorna un error descriptivo en lugar de un stub silencioso.
+   * Cuando se provee, executeAgent(), executeTool() y executeCondition()
+   * delegan a LlmStepExecutor (cargado con lazy require para evitar
+   * dependencias circulares en el grafo de módulos durante la construcción).
+   * Sin db, el executor retorna un error descriptivo en lugar de un stub
+   * silencioso.
    */
   db?: PrismaClient;
   maxToolRounds?: number;
@@ -28,13 +29,20 @@ export interface StepExecutorOptions {
  * Handles execution of individual flow nodes by type.
  *
  * StepExecutor es la clase base extensible del run-engine.
- * LlmStepExecutor la extiende e implementa executeAgent() y executeTool()
- * con llamadas LLM reales, tool_calls loop y budget checks.
+ * LlmStepExecutor la extiende e implementa executeAgent(), executeTool()
+ * y executeCondition() con lógica real.
  *
  * Cuando se construye con { db }, este StepExecutor base delega
- * executeAgent() y executeTool() a una instancia de LlmStepExecutor
- * lazy-construida — así FlowExecutor puede usar StepExecutor directamente
- * sin necesitar saber si hay LLM real disponible.
+ * executeAgent(), executeTool() y executeCondition() a una instancia
+ * de LlmStepExecutor lazy-construida — así FlowExecutor puede usar
+ * StepExecutor directamente sin necesitar saber si hay LLM real disponible.
+ *
+ * ⚠️  NOTA executeCondition en esta clase base:
+ *     La implementación base es un fallback mínimo para cuando NO hay db
+ *     (entornos de test / preview). En producción, con db disponible,
+ *     delega automáticamente a LlmStepExecutor.executeCondition() que
+ *     provee contexto completo (outputs del run, metadata, payload) y
+ *     no usa `with()` (incompatible con "use strict").
  */
 export class StepExecutor {
   protected readonly db?: PrismaClient;
@@ -68,7 +76,11 @@ export class StepExecutor {
     }
   }
 
-  protected async executeTrigger(_node: FlowNode, _step: RunStep, run: RunSpec): Promise<StepExecutionResult> {
+  protected async executeTrigger(
+    _node: FlowNode,
+    _step: RunStep,
+    run: RunSpec,
+  ): Promise<StepExecutionResult> {
     return {
       status: 'completed',
       output: { triggerType: run.trigger.type, payload: run.trigger.payload },
@@ -79,16 +91,20 @@ export class StepExecutor {
    * executeAgent: delega a LlmStepExecutor si hay db disponible.
    * Sin db retorna error descriptivo (no stub silencioso).
    */
-  protected async executeAgent(node: FlowNode, step: RunStep, run: RunSpec): Promise<StepExecutionResult> {
+  protected async executeAgent(
+    node: FlowNode,
+    step: RunStep,
+    run: RunSpec,
+  ): Promise<StepExecutionResult> {
     const llm = this.getLlmExecutor();
-    if (llm) {
-      return llm.executeAgent(node, step, run);
-    }
+    if (llm) return llm.executeAgent(node, step, run);
+
     const agentId = (node.config?.agentId as string) ?? 'unknown';
     return {
       status: 'failed',
-      error: `StepExecutor: no PrismaClient provided — cannot execute agent '${agentId}'. ` +
-             'Pass { db } to StepExecutor or use LlmStepExecutor directly.',
+      error:
+        `StepExecutor: no PrismaClient provided — cannot execute agent '${agentId}'. ` +
+        'Pass { db } to StepExecutor or use LlmStepExecutor directly.',
     };
   }
 
@@ -96,48 +112,84 @@ export class StepExecutor {
    * executeTool: delega a LlmStepExecutor.executeTool() (SkillInvoker) si hay db.
    * Sin db retorna error descriptivo.
    */
-  protected async executeTool(node: FlowNode, step: RunStep, run: RunSpec): Promise<StepExecutionResult> {
+  protected async executeTool(
+    node: FlowNode,
+    step: RunStep,
+    run: RunSpec,
+  ): Promise<StepExecutionResult> {
     const llm = this.getLlmExecutor();
-    if (llm) {
-      return llm.executeTool(node, step, run);
-    }
-    const skillName = (node.config?.skillName as string) ?? (node.config?.skillId as string) ?? 'unknown';
+    if (llm) return llm.executeTool(node, step, run);
+
+    const skillName =
+      (node.config?.skillName as string) ??
+      (node.config?.skillId   as string) ??
+      'unknown';
     return {
       status: 'failed',
-      error: `StepExecutor: no PrismaClient provided — cannot invoke skill '${skillName}'. ` +
-             'Pass { db } to StepExecutor or use LlmStepExecutor directly.',
+      error:
+        `StepExecutor: no PrismaClient provided — cannot invoke skill '${skillName}'. ` +
+        'Pass { db } to StepExecutor or use LlmStepExecutor directly.',
     };
   }
 
   /**
-   * executeCondition: evalúa la expresión de la condición.
-   * Soporta expresiones simples de comparación sobre el contexto del run.
+   * executeCondition — fallback mínimo (sin db / entorno de test).
+   *
+   * ⚠️  BUG CORREGIDO: la versión anterior usaba `with(ctx) { return Boolean(...) }`
+   *     dentro de `"use strict"`, lo cual lanza SyntaxError en runtime que quedaba
+   *     silenciado por el catch, haciendo que SIEMPRE se tomara la primera rama
+   *     (evaluated = true) independientemente de la expresión.
+   *
+   * Esta versión usa named arguments explícitos en Function constructor,
+   *  compatible con strict mode. El contexto expone:
+   *   - payload  → run.trigger.payload
+   *   - metadata → run.metadata
+   *   - status   → run.status
+   *
+   * En producción (con db disponible), el método delega a
+   * LlmStepExecutor.executeCondition() que expone también `outputs`
+   * (resultados de pasos anteriores del flow).
    */
-  protected async executeCondition(node: FlowNode, _step: RunStep, run: RunSpec): Promise<StepExecutionResult> {
+  protected async executeCondition(
+    node: FlowNode,
+    step: RunStep,
+    run: RunSpec,
+  ): Promise<StepExecutionResult> {
+    // Delegar a LlmStepExecutor cuando hay db — contexto más rico
+    const llm = this.getLlmExecutor();
+    if (llm) return llm.executeCondition(node, step, run);
+
+    // Fallback sin db — contexto mínimo, sin outputs de pasos anteriores
     const expression = (node.config?.expression as string) ?? 'true';
     const branches   = (node.config?.branches   as string[]) ?? ['true', 'false'];
 
-    // Evaluación segura de expresiones simples:
-    // soporta comparaciones sobre run.trigger.payload y run.metadata
+    const payload  = run.trigger?.payload  ?? {};
+    const metadata = (run.metadata as Record<string, unknown>) ?? {};
+    const status   = run.status ?? 'running';
+
     let evaluated = false;
     try {
-      // Contexto disponible para la expresión
-      const ctx = {
-        payload:  run.trigger?.payload  ?? {},
-        metadata: run.metadata          ?? {},
-        status:   run.status,
-      };
-      // Usamos Function constructor en lugar de eval para scope controlado
+      // Named-arg Function constructor — compatible con "use strict"
+      // No usamos `with()` ni `eval()` directo.
       // eslint-disable-next-line @typescript-eslint/no-implied-eval
-      const fn = new Function('ctx', `"use strict"; with(ctx) { return Boolean(${expression}); }`);
-      evaluated = fn(ctx) as boolean;
-    } catch {
-      // Expresión inválida → fallback a primera rama
-      evaluated = true;
+      const fn = new Function(
+        'payload',
+        'metadata',
+        'status',
+        `"use strict"; return Boolean(${expression});`,
+      );
+      evaluated = fn(payload, metadata, status) as boolean;
+    } catch (err) {
+      // Expresión sintácticamente inválida → rama 'false' (fallo explícito)
+      return {
+        status: 'failed',
+        error: `Condition expression error: ${String(err)}`,
+        output: { expression, evaluated: false, branch: branches[1] ?? 'false' },
+        branch: branches[1] ?? 'false',
+      };
     }
 
     const branch = evaluated ? (branches[0] ?? 'true') : (branches[1] ?? 'false');
-
     return {
       status: 'completed',
       output: { expression, evaluated, branch },
@@ -145,14 +197,22 @@ export class StepExecutor {
     };
   }
 
-  protected async executeEnd(_node: FlowNode, _step: RunStep, _run: RunSpec): Promise<StepExecutionResult> {
+  protected async executeEnd(
+    _node: FlowNode,
+    _step: RunStep,
+    _run:  RunSpec,
+  ): Promise<StepExecutionResult> {
     return {
       status: 'completed',
       output: { outcome: 'flow_completed' },
     };
   }
 
-  protected async executeGeneric(node: FlowNode, _step: RunStep, _run: RunSpec): Promise<StepExecutionResult> {
+  protected async executeGeneric(
+    node: FlowNode,
+    _step: RunStep,
+    _run:  RunSpec,
+  ): Promise<StepExecutionResult> {
     return {
       status: 'completed',
       output: { nodeType: node.type, message: `Node type '${node.type}' completed` },
