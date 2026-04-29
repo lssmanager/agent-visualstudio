@@ -1,102 +1,67 @@
-import {
-  AgentSpec,
-  FlowSpec,
-  SkillSpec,
-  PolicySpec,
-  WorkspaceSpec,
-  HookSpec,
-} from '../../core-types/src';
-import { WorkspaceStore } from './workspace-store';
-import { parseOpenclawDir } from '../../openclaw-fs/src/parser';
-import {
-  writeWorkspaceConfig,
-  writeAllAgents,
-  writeAllFlows,
-  writeAllSkills,
-  writeAllPolicies,
-  writeHooks,
-} from '../../openclaw-fs/src/writer';
-
 /**
- * YAML-based workspace store — reads/writes `.openclaw/` directory.
+ * @deprecated F0-08
  *
- * The `.openclaw/config.yaml` acts as the workspace spec, but since the
- * backend still works with WorkspaceSpec, we convert between formats.
+ * YamlWorkspaceStore reads / writes workspace state as a YAML file.
+ * Replaced by Prisma repositories. Retain only for offline export/import CLI tools.
+ *
+ * @see packages/workspace-store/DEPRECATED.md
  */
+
+import * as fs   from 'fs';
+import * as path from 'path';
+import * as yaml from 'js-yaml';
+import { WorkspaceStore } from './workspace-store';
+import {
+  AgentSpec, FlowSpec, SkillSpec, PolicySpec, WorkspaceSpec, HookSpec,
+} from '../../core-types/src';
+
+type StoreData = {
+  workspace?: WorkspaceSpec;
+  agents?:    AgentSpec[];
+  flows?:     FlowSpec[];
+  skills?:    SkillSpec[];
+  policies?:  PolicySpec[];
+  hooks?:     HookSpec[];
+};
+
+/** @deprecated Use Prisma repositories. */
 export class YamlWorkspaceStore extends WorkspaceStore {
-  constructor(private readonly rootDir: string) {
+  private data: StoreData = {};
+
+  constructor(private readonly filePath: string) {
     super();
+    this._load();
   }
 
-  private parseDir() {
-    return parseOpenclawDir(this.rootDir);
+  private _load() {
+    try {
+      const raw = fs.readFileSync(this.filePath, 'utf8');
+      this.data = (yaml.load(raw) as StoreData) ?? {};
+    } catch {
+      this.data = {};
+    }
   }
 
-  // ── Workspace ──────────────────────────────────────────────
-  readWorkspace(): WorkspaceSpec | null {
-    const parsed = this.parseDir();
-    if (!parsed) return null;
-    // Convert WorkspaceConfig → WorkspaceSpec (best-effort mapping)
-    const c = parsed.config;
-    return {
-      id: c.slug,
-      slug: c.slug,
-      name: c.name,
-      description: c.description,
-      owner: c.owner,
-      defaultModel: c.defaultModel,
-      agentIds: parsed.agents.map((a) => a.id),
-      skillIds: parsed.skills.map((s) => s.id),
-      flowIds: parsed.flows.map((f) => f.id),
-      profileIds: [],
-      policyRefs: parsed.policies.map((p) => ({ id: p.id, scope: 'workspace' as const })),
-      routingRules: [],
-      routines: [],
-      tags: c.tags ?? [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+  private _save() {
+    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
+    fs.writeFileSync(this.filePath, yaml.dump(this.data), 'utf8');
   }
 
-  writeWorkspace(workspace: WorkspaceSpec): WorkspaceSpec {
-    writeWorkspaceConfig(this.rootDir, {
-      version: '1',
-      name: workspace.name,
-      slug: workspace.slug,
-      description: workspace.description,
-      owner: workspace.owner,
-      defaultModel: workspace.defaultModel ?? 'openai/gpt-5.4-mini',
-      agents: (this.listAgents()).map((a) => `agents/${a.id}.yaml`),
-      flows: (this.listFlows()).map((f) => `flows/${f.id}.yaml`),
-      skills: workspace.skillIds ?? [],
-      policies: (this.listPolicies()).map((p) => `policies/${p.id}.yaml`),
-      tags: workspace.tags ?? [],
-    });
-    return workspace;
-  }
-
-  // ── Agents ─────────────────────────────────────────────────
-  listAgents(): AgentSpec[] { return this.parseDir()?.agents ?? []; }
-  getAgent(id: string): AgentSpec | null { return this.listAgents().find((a) => a.id === id) ?? null; }
-  saveAgents(agents: AgentSpec[]): AgentSpec[] { writeAllAgents(this.rootDir, agents); return agents; }
-
-  // ── Flows ──────────────────────────────────────────────────
-  listFlows(): FlowSpec[] { return this.parseDir()?.flows ?? []; }
-  getFlow(id: string): FlowSpec | null { return this.listFlows().find((f) => f.id === id) ?? null; }
-  saveFlows(flows: FlowSpec[]): FlowSpec[] { writeAllFlows(this.rootDir, flows); return flows; }
-
-  // ── Skills ─────────────────────────────────────────────────
-  listSkills(): SkillSpec[] { return this.parseDir()?.skills ?? []; }
-  getSkill(id: string): SkillSpec | null { return this.listSkills().find((s) => s.id === id) ?? null; }
-  saveSkills(skills: SkillSpec[]): SkillSpec[] { writeAllSkills(this.rootDir, skills); return skills; }
-
-  // ── Policies ───────────────────────────────────────────────
-  listPolicies(): PolicySpec[] { return this.parseDir()?.policies ?? []; }
-  getPolicy(id: string): PolicySpec | null { return this.listPolicies().find((p) => p.id === id) ?? null; }
-  savePolicies(policies: PolicySpec[]): PolicySpec[] { writeAllPolicies(this.rootDir, policies); return policies; }
-
-  // ── Hooks ──────────────────────────────────────────────────
-  listHooks(): HookSpec[] { return this.parseDir()?.hooks ?? []; }
-  getHook(id: string): HookSpec | null { return this.listHooks().find((h) => h.id === id) ?? null; }
-  saveHooks(hooks: HookSpec[]): HookSpec[] { writeHooks(this.rootDir, hooks); return hooks; }
+  readWorkspace()                          { return this.data.workspace ?? null; }
+  writeWorkspace(w: WorkspaceSpec)         { this.data.workspace = w; this._save(); return w; }
+  listAgents()                             { return this.data.agents   ?? []; }
+  getAgent(id: string)                     { return this.data.agents?.find(a => a.id === id) ?? null; }
+  saveAgents(agents: AgentSpec[])          { this.data.agents   = agents;   this._save(); return agents; }
+  listFlows()                              { return this.data.flows    ?? []; }
+  getFlow(id: string)                      { return this.data.flows?.find(f => f.id === id) ?? null; }
+  saveFlows(flows: FlowSpec[])             { this.data.flows    = flows;    this._save(); return flows; }
+  listSkills()                             { return this.data.skills   ?? []; }
+  getSkill(id: string)                     { return this.data.skills?.find(s => s.id === id) ?? null; }
+  saveSkills(skills: SkillSpec[])          { this.data.skills   = skills;   this._save(); return skills; }
+  listPolicies()                           { return this.data.policies ?? []; }
+  getPolicy(id: string)                    { return this.data.policies?.find(p => p.id === id) ?? null; }
+  savePolicies(policies: PolicySpec[])     { this.data.policies = policies; this._save(); return policies; }
+  listHooks()                              { return this.data.hooks    ?? []; }
+  getHook(id: string)                      { return this.data.hooks?.find(h => h.id === id) ?? null; }
+  saveHooks(hooks: HookSpec[])             { this.data.hooks    = hooks;    this._save(); return hooks; }
 }
