@@ -1,7 +1,7 @@
 /**
  * n8n.service.ts
  *
- * Orchestrates two separate concerns:
+ * Orchestrates three concerns:
  *
  * 1. triggerWorkflow() — Canvas orchestrator path
  *    Uses the n8n REST API (POST /api/v1/workflows/:id/execute).
@@ -12,6 +12,11 @@
  *    Reads N8nConnection from Prisma, decrypts the API key (AES-256-GCM),
  *    fetches the workflow list from n8n, and upserts N8nWorkflow + Skill rows.
  *    Credentials come from the DB per connectionId — not from constructor config.
+ *
+ * 3. getWorkflowsAsSkills() / getAllWorkflowsAsSkills() — Adapter path (F1b-07)
+ *    Reads N8nWorkflow rows already synced in DB and maps them to BridgedSkillSpec[]
+ *    so that skillsToMcpTools() can mount them as LLM tools.
+ *    No n8n API call — pure DB read + type mapping.
  *
  * ── Architectural distinction from skill-invoker.invokeN8nWebhook() ──
  *
@@ -27,11 +32,17 @@
  *   AES-256-GCM stored as hex:
  *   [12 bytes IV][16 bytes auth tag][N bytes ciphertext]
  *   Key: process.env.N8N_SECRET ?? process.env.CHANNEL_SECRET (64 hex chars = 32 bytes)
+ *
+ * ── Tool name pattern (skill-bridge.ts line 38) ──
+ *
+ *   skill__{skill.id}__{fn.name}
+ *   → skill__n8n_{n8nWorkflowId}__invoke
  */
 
 import { createDecipheriv }                    from 'crypto';
 import { N8nClient, type N8nClientConfig, type N8nExecutionResult } from './n8n-client';
 import type {
+  BridgedSkillSpec,
   N8nApiListResponse,
   N8nPrismaClient,
   N8nWorkflowDto,
@@ -52,7 +63,7 @@ const TERMINAL_STATUSES = new Set<N8nExecutionResult['status']>([
 
 // ── Public types ───────────────────────────────────────────────────────────
 
-export type { SyncResult, N8nPrismaClient } from './n8n.types';
+export type { SyncResult, N8nPrismaClient, BridgedSkillSpec } from './n8n.types';
 
 export interface TriggerWorkflowOptions {
   /** Internal n8n workflow ID */
@@ -94,7 +105,7 @@ export interface N8nServiceConfig extends N8nClientConfig {
   /** Retries on network errors when triggering. Default: 2 */
   maxRetries?:     number;
   /**
-   * Prisma client instance — required for syncWorkflows().
+   * Prisma client instance — required for syncWorkflows() and getWorkflowsAsSkills().
    * Optional here to preserve backward compatibility with F1b-05 tests.
    * The generated PrismaClient satisfies N8nPrismaClient automatically.
    */
@@ -368,6 +379,99 @@ export class N8nService {
 
     // ── Step 5: return ────────────────────────────────────────────────
     return result;
+  }
+
+  // ── getWorkflowsAsSkills() ────────────────────────────────────────────
+
+  /**
+   * Returns active N8nWorkflow rows for a connection mapped as BridgedSkillSpec[].
+   *
+   * This is a pure DB read + type mapping — no n8n API call is made.
+   * The resulting specs can be passed directly to skillsToMcpTools() from
+   * packages/mcp-server/src/skill-bridge.ts.
+   *
+   * Tool name generated downstream by skill-bridge:
+   *   skill__n8n_{n8nWorkflowId}__invoke
+   *
+   * @param connectionId  ID of the N8nConnection to read workflows from.
+   * @returns             Empty array if no active workflows with a webhookUrl exist.
+   * @throws              Error if prisma client was not provided at construction.
+   */
+  async getWorkflowsAsSkills(connectionId: string): Promise<BridgedSkillSpec[]> {
+    if (!this.prisma) {
+      throw new Error('N8nService: prisma client is required for getWorkflowsAsSkills()');
+    }
+
+    // ── Step 1: query active workflows with a non-null webhookUrl ────
+    const workflows = await this.prisma.n8nWorkflow.findMany({
+      where: {
+        connectionId,
+        isActive:   true,
+        webhookUrl: { not: null },
+      },
+    });
+
+    if (workflows.length === 0) {
+      return [];
+    }
+
+    // ── Step 2: map each row to BridgedSkillSpec ─────────────────────
+    return workflows.map((wf) => {
+      // inputSchema null → omit the field (undefined) so skill-bridge
+      // falls back to z.object({}).passthrough() instead of receiving null.
+      const inputSchema =
+        wf.inputSchema != null
+          ? (wf.inputSchema as Record<string, unknown>)
+          : undefined;
+
+      return {
+        id:          `n8n_${wf.n8nWorkflowId}`,
+        name:        wf.name,
+        description: wf.description ?? wf.name,
+        category:    'n8n',
+        endpoint:    wf.webhookUrl!,   // non-null guaranteed by WHERE { not: null }
+        functions: [
+          {
+            name:        'invoke',
+            description: `Invoke n8n workflow: ${wf.name}`,
+            ...(inputSchema !== undefined ? { inputSchema } : {}),
+          },
+        ],
+      } satisfies BridgedSkillSpec;
+    });
+  }
+
+  // ── getAllWorkflowsAsSkills() ──────────────────────────────────────────
+
+  /**
+   * Aggregates BridgedSkillSpec[] across ALL active N8nConnections.
+   *
+   * Useful for AgentExecutor when building the full tool context for an agent
+   * that may have n8n_webhook skills from multiple connections.
+   *
+   * @returns  Flat array of BridgedSkillSpec from every active connection.
+   *           Returns [] when no active connections or workflows exist.
+   * @throws   Error if prisma client was not provided at construction.
+   */
+  async getAllWorkflowsAsSkills(): Promise<BridgedSkillSpec[]> {
+    if (!this.prisma) {
+      throw new Error('N8nService: prisma client is required for getAllWorkflowsAsSkills()');
+    }
+
+    const connections = await this.prisma.n8nConnection.findMany({
+      where:  { isActive: true },
+      select: { id: true },
+    });
+
+    if (connections.length === 0) {
+      return [];
+    }
+
+    const perConnection = await Promise.all(
+      connections.map((c) => this.getWorkflowsAsSkills(c.id)),
+    );
+
+    return perConnection.flat();
   }
 
   // ── Private helpers ───────────────────────────────────────────────────
