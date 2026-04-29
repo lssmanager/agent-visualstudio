@@ -19,8 +19,10 @@
  *     'orchestrated' delegates to HierarchyOrchestrator.
  *  6. ProfilePropagatorService — resolveForAgent() provides the compiled
  *     system prompt when AgentProfile exists.
- *  7. executeCondition — override completo, Named-arg Function constructor,
- *     compatible con "use strict", expone outputs de pasos anteriores.
+ *
+ * NOTE: executeCondition() is intentionally NOT overridden here.
+ *   The base class StepExecutor provides the full vm-sandbox implementation
+ *   with buildOutputsMap() — see step-executor.ts.
  */
 
 import type { PrismaClient } from '@prisma/client';
@@ -38,13 +40,13 @@ import {
   type ToolCallRequest,
 } from './llm-client';
 
-// ─── Re-export for backward compat ──────────────────────────────────────────────
+// ─── Re-export for backward compat ───────────────────────────────────────────────────────
 
 export interface GatewayRpcClient {
   call(method: string, params?: Record<string, unknown>): Promise<unknown>;
 }
 
-// ─── Options ─────────────────────────────────────────────────────────────────────────
+// ─── Options ────────────────────────────────────────────────────────────────────────
 
 export interface LlmStepExecutorOptions {
   /** Prisma client — required for PolicyResolver + SkillInvoker */
@@ -58,7 +60,7 @@ export interface LlmStepExecutorOptions {
   gateway?: GatewayRpcClient;
 }
 
-// ─── Errors ─────────────────────────────────────────────────────────────────────────
+// ─── Errors ────────────────────────────────────────────────────────────────────────
 
 export class BudgetExceededError extends Error {
   constructor(
@@ -73,16 +75,7 @@ export class BudgetExceededError extends Error {
   }
 }
 
-// ─── Condition context ─────────────────────────────────────────────────────────────────
-
-interface ConditionContext {
-  payload:  Record<string, unknown>;
-  metadata: Record<string, unknown>;
-  status:   string;
-  outputs:  Record<string, unknown>;
-}
-
-// ─── LlmStepExecutor ─────────────────────────────────────────────────────────────────────────
+// ─── LlmStepExecutor ──────────────────────────────────────────────────────────────────────────
 
 export class LlmStepExecutor extends StepExecutor {
   private readonly db: PrismaClient;
@@ -100,65 +93,7 @@ export class LlmStepExecutor extends StepExecutor {
     this.skillInvoker          = new SkillInvoker(this.db);
   }
 
-  // ─── Condition node execution ─────────────────────────────────────────────────
-
-  protected override async executeCondition(
-    node:  FlowNode,
-    _step: RunStep,
-    run:   RunSpec,
-  ): Promise<StepExecutionResult> {
-    const expression = (node.config?.expression as string)?.trim();
-    const branches   = (node.config?.branches   as string[]) ?? ['true', 'false'];
-
-    if (!expression) {
-      console.warn(
-        `[LlmStepExecutor] Condition node '${node.id}' has no expression — defaulting to branch[0]`,
-      );
-      return {
-        status: 'completed',
-        output: { expression: '', evaluated: true, branch: branches[0] ?? 'true' },
-        branch: branches[0] ?? 'true',
-      };
-    }
-
-    const ctx: ConditionContext = {
-      payload:  (run.trigger?.payload  as Record<string, unknown>) ?? {},
-      metadata: (run.metadata          as Record<string, unknown>) ?? {},
-      status:   run.status ?? 'running',
-      outputs:  (run as unknown as { outputs?: Record<string, unknown> }).outputs ?? {},
-    };
-
-    let evaluated: boolean;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-implied-eval
-      const fn = new Function(
-        'payload', 'metadata', 'status', 'outputs',
-        '"use strict"; return Boolean(' + expression + ');',
-      ) as (p: unknown, m: unknown, s: unknown, o: unknown) => boolean;
-      evaluated = fn(ctx.payload, ctx.metadata, ctx.status, ctx.outputs);
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      console.error(
-        `[LlmStepExecutor] Condition node '${node.id}' expression error: ${errMsg}`,
-        { expression, context: ctx },
-      );
-      return {
-        status: 'failed',
-        error:  `Condition expression error in node '${node.id}': ${errMsg}`,
-        output: { expression, evaluated: false, branch: branches[1] ?? 'false', context: ctx },
-        branch: branches[1] ?? 'false',
-      };
-    }
-
-    const branch = evaluated ? (branches[0] ?? 'true') : (branches[1] ?? 'false');
-    return {
-      status: 'completed',
-      output: { expression, evaluated, branch, context: ctx },
-      branch,
-    };
-  }
-
-  // ─── Agent node execution ─────────────────────────────────────────────────────
+  // ─── Agent node execution ────────────────────────────────────────────────
 
   protected override async executeAgent(
     node: FlowNode,
@@ -195,7 +130,7 @@ export class LlmStepExecutor extends StepExecutor {
     return this.executeDirect(node, step, run, agent);
   }
 
-  // ─── Orchestrated path ────────────────────────────────────────────────────────────
+  // ─── Orchestrated path ───────────────────────────────────────────────────────────
 
   private async executeOrchestrated(
     node:  FlowNode,
@@ -316,7 +251,7 @@ export class LlmStepExecutor extends StepExecutor {
     };
   }
 
-  // ─── Direct path (default) ───────────────────────────────────────────────────────────
+  // ─── Direct path (default) ─────────────────────────────────────────────────────────────
 
   private async executeDirect(
     node:  FlowNode,
@@ -339,7 +274,7 @@ export class LlmStepExecutor extends StepExecutor {
       agent = loaded;
     }
 
-    // ── Policy resolution ──────────────────────────────────────────────────
+    // ── Policy resolution ────────────────────────────────────────────────
     const policyCtx: PolicyResolverContext = {
       agentId:      agent.id,
       workspaceId:  agent.workspaceId,
@@ -351,7 +286,7 @@ export class LlmStepExecutor extends StepExecutor {
     const budgetPolicy    = effectivePolicy.budget;
     const modelPolicy     = effectivePolicy.model;
 
-    // ── Budget guard ───────────────────────────────────────────────────
+    // ── Budget guard ──────────────────────────────────────────────────
     if (budgetPolicy) {
       const windowStart = new Date(
         Date.now() - budgetPolicy.periodDays * 24 * 60 * 60 * 1000,
@@ -376,7 +311,7 @@ export class LlmStepExecutor extends StepExecutor {
       }
     }
 
-    // ── Model selection ──────────────────────────────────────────────────
+    // ── Model selection ────────────────────────────────────────────────
     const modelId     = (node.config?.model as string) ?? modelPolicy?.primaryModel ?? (agent.model as string) ?? 'openai/gpt-4o-mini';
     const temperature = modelPolicy?.temperature ?? 0.7;
     const maxTokens   = modelPolicy?.maxTokens   ?? 4096;
@@ -400,7 +335,7 @@ export class LlmStepExecutor extends StepExecutor {
       }
     }
 
-    // ── Tools from skill links ───────────────────────────────────────────────
+    // ── Tools from skill links ────────────────────────────────────────────
     const skillLinks = agent.skillLinks ?? [];
     const tools: ToolDefinition[] = skillLinks.map(({ skill }) => ({
       type: 'function' as const,
@@ -420,7 +355,7 @@ export class LlmStepExecutor extends StepExecutor {
       { role: 'user',   content: userContent  },
     ];
 
-    // ── Agentic tool-call loop ───────────────────────────────────────────────
+    // ── Agentic tool-call loop ────────────────────────────────────────────
     let adapter      = buildLLMClient(modelId);
     let activeModel  = modelId;
     let totalInput   = 0;
@@ -502,7 +437,7 @@ export class LlmStepExecutor extends StepExecutor {
     };
   }
 
-  // ─── Tool node execution ──────────────────────────────────────────────────────────
+  // ─── Tool node execution ───────────────────────────────────────────────────────────
 
   protected override async executeTool(
     node:  FlowNode,
