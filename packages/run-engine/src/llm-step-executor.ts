@@ -21,11 +21,6 @@
  *     system prompt when AgentProfile exists.
  *  7. executeCondition — override completo, Named-arg Function constructor,
  *     compatible con "use strict", expone outputs de pasos anteriores.
- *
- * Provider routing is delegated to buildLLMClient() in ./llm-client:
- *   'openai/*'    → OpenAI API  (OPENAI_API_KEY)
- *   'anthropic/*' → Anthropic   (ANTHROPIC_API_KEY)
- *   anything else → OpenRouter-compat (OPENROUTER_API_KEY)
  */
 
 import type { PrismaClient } from '@prisma/client';
@@ -43,13 +38,13 @@ import {
   type ToolCallRequest,
 } from './llm-client';
 
-// ─── Re-export for backward compat ──────────────────────────────────────────
+// ─── Re-export for backward compat ──────────────────────────────────────────────
 
 export interface GatewayRpcClient {
   call(method: string, params?: Record<string, unknown>): Promise<unknown>;
 }
 
-// ─── Options ────────────────────────────────────────────────────────────
+// ─── Options ─────────────────────────────────────────────────────────────────────────
 
 export interface LlmStepExecutorOptions {
   /** Prisma client — required for PolicyResolver + SkillInvoker */
@@ -63,7 +58,7 @@ export interface LlmStepExecutorOptions {
   gateway?: GatewayRpcClient;
 }
 
-// ─── Errors ───────────────────────────────────────────────────────────
+// ─── Errors ─────────────────────────────────────────────────────────────────────────
 
 export class BudgetExceededError extends Error {
   constructor(
@@ -78,7 +73,7 @@ export class BudgetExceededError extends Error {
   }
 }
 
-// ─── Condition context ────────────────────────────────────────────────────
+// ─── Condition context ─────────────────────────────────────────────────────────────────
 
 interface ConditionContext {
   payload:  Record<string, unknown>;
@@ -87,7 +82,7 @@ interface ConditionContext {
   outputs:  Record<string, unknown>;
 }
 
-// ─── LlmStepExecutor ─────────────────────────────────────────────────────
+// ─── LlmStepExecutor ─────────────────────────────────────────────────────────────────────────
 
 export class LlmStepExecutor extends StepExecutor {
   private readonly db: PrismaClient;
@@ -105,7 +100,7 @@ export class LlmStepExecutor extends StepExecutor {
     this.skillInvoker          = new SkillInvoker(this.db);
   }
 
-  // ─── Condition node execution ───────────────────────────────────────
+  // ─── Condition node execution ─────────────────────────────────────────────────
 
   protected override async executeCondition(
     node:  FlowNode,
@@ -163,7 +158,7 @@ export class LlmStepExecutor extends StepExecutor {
     };
   }
 
-  // ─── Agent node execution ───────────────────────────────────────────
+  // ─── Agent node execution ─────────────────────────────────────────────────────
 
   protected override async executeAgent(
     node: FlowNode,
@@ -200,7 +195,7 @@ export class LlmStepExecutor extends StepExecutor {
     return this.executeDirect(node, step, run, agent);
   }
 
-  // ─── Orchestrated path ─────────────────────────────────────────────
+  // ─── Orchestrated path ────────────────────────────────────────────────────────────
 
   private async executeOrchestrated(
     node:  FlowNode,
@@ -221,6 +216,17 @@ export class LlmStepExecutor extends StepExecutor {
 
     const hierarchy = buildHierarchyNode(agent);
 
+    /**
+     * executorFn — called by HierarchyOrchestrator.executeWithRetry() for each leaf agent.
+     *
+     * IMPORTANT: HierarchyOrchestrator already created the real RunStep in Prisma
+     * via repo.createStep() before calling this function.
+     * We must NOT create another RunStep here — that would duplicate steps in Prisma.
+     *
+     * We build a transient in-memory RunStep solely to satisfy executeDirect()'s
+     * type contract (node + step + run + agent). The id is intentionally empty
+     * because persistence is owned by HierarchyOrchestrator.
+     */
     const executorFn: import('../../hierarchy/src').AgentExecutorFn = async (
       leafAgentId: string,
       systemPrompt: string,
@@ -233,11 +239,14 @@ export class LlmStepExecutor extends StepExecutor {
           agentId:       leafAgentId,
           executionMode: 'direct',
           systemPrompt,
-          prompt: task,
+          prompt:        task,
         },
       };
+
+      // Transient in-memory step — NOT persisted to Prisma.
+      // HierarchyOrchestrator manages the real RunStep lifecycle.
       const leafStep: RunStep = {
-        id:         `${_step.id}-leaf-${leafAgentId}`,
+        id:         '',            // empty: not a real Prisma ID
         runId:      run.id,
         nodeId:     leafNode.id,
         nodeType:   'agent',
@@ -246,9 +255,26 @@ export class LlmStepExecutor extends StepExecutor {
         retryCount: 0,
         startedAt:  new Date().toISOString(),
       };
+
       const result = await this.executeDirect(leafNode, leafStep, run, null);
-      if (result.status === 'failed') throw new Error(result.error ?? 'Leaf agent failed');
-      return String((result.output as Record<string, unknown>)?.response ?? '');
+
+      if (result.status === 'failed') {
+        throw new Error(result.error ?? 'Leaf agent failed');
+      }
+
+      // Return AgentExecutionResult with full LLM consumption metadata
+      const out = result.output as Record<string, unknown> | undefined;
+      return {
+        response:          String(out?.['response'] ?? out?.['content'] ?? ''),
+        model:             out?.['model']    as string | undefined,
+        provider:          out?.['provider'] as string | undefined,
+        promptTokens:      result.tokenUsage?.input,
+        completionTokens:  result.tokenUsage?.output,
+        totalTokens:       result.tokenUsage
+                             ? result.tokenUsage.input + result.tokenUsage.output
+                             : undefined,
+        costUsd:           result.costUsd,
+      };
     };
 
     const modelId  = (agent.model as string) ?? 'openai/gpt-4o-mini';
@@ -290,7 +316,7 @@ export class LlmStepExecutor extends StepExecutor {
     };
   }
 
-  // ─── Direct path (default) ───────────────────────────────────────────
+  // ─── Direct path (default) ───────────────────────────────────────────────────────────
 
   private async executeDirect(
     node:  FlowNode,
@@ -313,7 +339,7 @@ export class LlmStepExecutor extends StepExecutor {
       agent = loaded;
     }
 
-    // ── Policy resolution ─────────────────────────────────────────────
+    // ── Policy resolution ──────────────────────────────────────────────────
     const policyCtx: PolicyResolverContext = {
       agentId:      agent.id,
       workspaceId:  agent.workspaceId,
@@ -325,7 +351,7 @@ export class LlmStepExecutor extends StepExecutor {
     const budgetPolicy    = effectivePolicy.budget;
     const modelPolicy     = effectivePolicy.model;
 
-    // ── Budget guard ──────────────────────────────────────────────
+    // ── Budget guard ───────────────────────────────────────────────────
     if (budgetPolicy) {
       const windowStart = new Date(
         Date.now() - budgetPolicy.periodDays * 24 * 60 * 60 * 1000,
@@ -350,18 +376,13 @@ export class LlmStepExecutor extends StepExecutor {
       }
     }
 
-    // ── Model selection ─────────────────────────────────────────────
-    const modelId    = (node.config?.model as string) ?? modelPolicy?.primaryModel ?? (agent.model as string) ?? 'openai/gpt-4o-mini';
+    // ── Model selection ──────────────────────────────────────────────────
+    const modelId     = (node.config?.model as string) ?? modelPolicy?.primaryModel ?? (agent.model as string) ?? 'openai/gpt-4o-mini';
     const temperature = modelPolicy?.temperature ?? 0.7;
     const maxTokens   = modelPolicy?.maxTokens   ?? 4096;
-    //
-    // fallbackChain: ordered list of fallback model ids (v6 schema).
-    // Index 0 = first model to try when primary fails.
-    // Bug-fix: was `modelPolicy?.fallbackModel` (singular, non-existent field).
-    //
     const fallbackChain: string[] = modelPolicy?.fallbackChain ?? [];
 
-    // ── System prompt (ProfilePropagatorService or agent.instructions) ────
+    // ── System prompt (ProfilePropagatorService or agent.instructions) ──────
     let systemPrompt = (node.config?.systemPrompt as string) ?? '';
     if (!systemPrompt) {
       try {
@@ -379,7 +400,7 @@ export class LlmStepExecutor extends StepExecutor {
       }
     }
 
-    // ── Tools from skill links ────────────────────────────────────────
+    // ── Tools from skill links ───────────────────────────────────────────────
     const skillLinks = agent.skillLinks ?? [];
     const tools: ToolDefinition[] = skillLinks.map(({ skill }) => ({
       type: 'function' as const,
@@ -399,7 +420,7 @@ export class LlmStepExecutor extends StepExecutor {
       { role: 'user',   content: userContent  },
     ];
 
-    // ── Agentic tool-call loop ──────────────────────────────────────
+    // ── Agentic tool-call loop ───────────────────────────────────────────────
     let adapter      = buildLLMClient(modelId);
     let activeModel  = modelId;
     let totalInput   = 0;
@@ -460,7 +481,9 @@ export class LlmStepExecutor extends StepExecutor {
       }
     }
 
-    const costUsd = calculateTokenCost(activeModel, totalInput, totalOutput);
+    const costUsd    = calculateTokenCost(activeModel, totalInput, totalOutput);
+    // Derive provider from model ID: 'openai/gpt-4o-mini' → 'openai'
+    const provider   = activeModel.includes('/') ? activeModel.split('/')[0] : activeModel;
 
     return {
       status: 'completed',
@@ -468,6 +491,7 @@ export class LlmStepExecutor extends StepExecutor {
         agentId:        agent.id,
         response:       lastContent,
         model:          activeModel,
+        provider,
         executionMode:  'direct',
         toolRoundsUsed: Math.ceil(
           messages.filter(m => m.role === 'tool').length / Math.max(tools.length, 1),
@@ -478,7 +502,7 @@ export class LlmStepExecutor extends StepExecutor {
     };
   }
 
-  // ─── Tool node execution ─────────────────────────────────────────────
+  // ─── Tool node execution ──────────────────────────────────────────────────────────
 
   protected override async executeTool(
     node:  FlowNode,
@@ -506,7 +530,7 @@ export class LlmStepExecutor extends StepExecutor {
   }
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────────────────────
 
 function parseToolArgs(argsJson: string): Record<string, unknown> {
   try {

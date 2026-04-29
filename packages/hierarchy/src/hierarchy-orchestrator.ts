@@ -20,7 +20,7 @@
 import type { PrismaClient } from '@prisma/client'
 import { RunRepository } from '../../run-engine/src/run-repository.js'
 
-// ── Tipos públicos ─────────────────────────────────────────────────────────────
+// ── Tipos públicos ───────────────────────────────────────────────────────────────────────────────
 
 export type HierarchyLevel = 'agency' | 'department' | 'workspace' | 'agent' | 'subagent'
 
@@ -69,11 +69,34 @@ export interface OrchestrationResult {
 }
 
 /**
+ * Resultado rico devuelto por AgentExecutorFn al orchestrator.
+ * Permite que completeStep() en Prisma reciba todos los metadatos de consumo LLM.
+ */
+export interface AgentExecutionResult {
+  /** Texto de respuesta final del agente (para consolidación) */
+  response:          string
+  /** Modelo exacto usado (e.g. 'openai/gpt-4o-mini') */
+  model?:            string
+  /** Proveedor (e.g. 'openai', 'anthropic', 'openrouter') */
+  provider?:         string
+  promptTokens?:     number
+  completionTokens?: number
+  totalTokens?:      number
+  costUsd?:          number
+}
+
+/**
  * Función de ejecución de agente inyectada desde LLMStepExecutor.
- * Devuelve el texto de respuesta del LLM.
+ * Devuelve AgentExecutionResult con la respuesta y todos los metadatos
+ * de consumo LLM (modelo, tokens, costo) para persistencia en Prisma.
  */
 export interface AgentExecutorFn {
-  (agentId: string, systemPrompt: string, task: string, skills?: string[]): Promise<string>
+  (
+    agentId:      string,
+    systemPrompt: string,
+    task:         string,
+    skills?:      string[],
+  ): Promise<AgentExecutionResult>
 }
 
 /**
@@ -84,7 +107,7 @@ export interface SupervisorFn {
   (prompt: string): Promise<string>
 }
 
-// ── Opciones de configuración ──────────────────────────────────────────────────
+// ── Opciones de configuración ────────────────────────────────────────────────────────────────
 
 export interface OrchestratorOptions {
   /** Cuántas veces reintentar un subtask fallido antes de marcarlo como failed */
@@ -107,7 +130,7 @@ const DEFAULT_OPTIONS: Required<OrchestratorOptions> = {
   parallel:          true,
 }
 
-// ── HierarchyOrchestrator ────────────────────────────────────────────────────
+// ── HierarchyOrchestrator ─────────────────────────────────────────────────────────────────
 
 export class HierarchyOrchestrator {
   private readonly repo:       RunRepository
@@ -130,7 +153,7 @@ export class HierarchyOrchestrator {
     this.opts         = { ...DEFAULT_OPTIONS, ...opts }
   }
 
-  // ── API pública ────────────────────────────────────────────────────────────
+  // ── API pública ──────────────────────────────────────────────────────────────────
 
   /**
    * Punto de entrada principal.
@@ -152,7 +175,7 @@ export class HierarchyOrchestrator {
   ): Promise<OrchestrationResult> {
     const startTime = Date.now()
 
-    // ── 1. Crear Run ────────────────────────────────────────────────────────
+    // ── 1. Crear Run ────────────────────────────────────────────────────────────
     const run = await this.repo.createRun({
       workspaceId,
       agentId:   this.hierarchy.level === 'agent' ? this.hierarchy.id : undefined,
@@ -165,15 +188,15 @@ export class HierarchyOrchestrator {
       // ── 2. Descomponer task ──────────────────────────────────────────────
       const subtasks = await this.decomposeTasks(rootTask, input)
 
-      // ── 3. Ejecutar subtareas ───────────────────────────────────────────
+      // ── 3. Ejecutar subtareas ─────────────────────────────────────────────
       const subtaskResults = this.opts.parallel
         ? await this.executeParallel(subtasks, run.id, workspaceId)
         : await this.executeSequential(subtasks, run.id, workspaceId)
 
-      // ── 4. Consolidar ──────────────────────────────────────────────────
+      // ── 4. Consolidar ────────────────────────────────────────────────────
       const consolidatedOutput = await this.consolidateResults(rootTask, subtaskResults)
 
-      // ── 5. Estado final del Run ─────────────────────────────────────────
+      // ── 5. Estado final del Run ──────────────────────────────────────────────
       const failed  = subtaskResults.filter((r) => r.status === 'failed' || r.status === 'rejected')
       const success = subtaskResults.filter((r) => r.status === 'completed')
       const runStatus: OrchestrationResult['status'] =
@@ -202,7 +225,7 @@ export class HierarchyOrchestrator {
     }
   }
 
-  // ── Descomposición de tareas ───────────────────────────────────────────────
+  // ── Descomposición de tareas ─────────────────────────────────────────────────────────
 
   /**
    * Descompone el task en subtareas asignadas a agentes hoja.
@@ -304,7 +327,7 @@ export class HierarchyOrchestrator {
       })
   }
 
-  // ── Ejecución ───────────────────────────────────────────────────────────────────
+  // ── Ejecución ──────────────────────────────────────────────────────────────────────────────
 
   private async executeParallel(
     subtasks:    HierarchyTask[],
@@ -368,7 +391,7 @@ export class HierarchyOrchestrator {
     const start = Date.now()
     const node  = this.findNode(task.assignedNodeId)
 
-    // ── Checkpoint: crear RunStep ─────────────────────────────────────────
+    // ── Checkpoint: crear RunStep ────────────────────────────────────────
     const step = await this.repo.createStep({
       runId,
       nodeId:   task.assignedNodeId,
@@ -377,7 +400,7 @@ export class HierarchyOrchestrator {
       input:    { task: task.description, ...task.input },
     })
 
-    // ── HITL: pausar si requiresApproval ───────────────────────────────
+    // ── HITL: pausar si requiresApproval ──────────────────────────────
     if (node?.agentConfig?.requiresApproval) {
       await this.repo.pauseRun(runId)
 
@@ -410,7 +433,7 @@ export class HierarchyOrchestrator {
       }
     }
 
-    // ── Ejecución con retry ────────────────────────────────────────────
+    // ── Ejecución con retry ───────────────────────────────────────────────
     const systemPrompt = node?.agentConfig?.systemPrompt
       ?? `You are ${node?.name ?? task.assignedNodeId}. Complete your assigned task.`
     const skills = node?.agentConfig?.skills
@@ -424,21 +447,30 @@ export class HierarchyOrchestrator {
       }
 
       try {
-        const output = await this.withTimeout(
+        const execResult = await this.withTimeout(
           this.executorFn(task.assignedNodeId, systemPrompt, task.description, skills),
           this.opts.subtaskTimeoutMs,
           `Subtask ${task.id} timed out after ${this.opts.subtaskTimeoutMs}ms`,
         )
 
-        // ── Checkpoint: step completado ──────────────────────────────
-        await this.repo.completeStep({ stepId: step.id, output })
+        // ── Checkpoint: step completado con todos los metadatos LLM ─────
+        await this.repo.completeStep({
+          stepId:           step.id,
+          output:           execResult.response,
+          model:            execResult.model,
+          provider:         execResult.provider,
+          promptTokens:     execResult.promptTokens,
+          completionTokens: execResult.completionTokens,
+          totalTokens:      execResult.totalTokens,
+          costUsd:          execResult.costUsd,
+        })
 
         return {
           taskId:     task.id,
           nodeId:     task.assignedNodeId,
           stepId:     step.id,
           status:     'completed',
-          output,
+          output:     execResult.response,   // string, no el objeto completo
           durationMs: Date.now() - start,
           retries:    attempt,
         }
@@ -462,7 +494,7 @@ export class HierarchyOrchestrator {
     }
   }
 
-  // ── Consolidación ────────────────────────────────────────────────────────────
+  // ── Consolidación ────────────────────────────────────────────────────────────────────
 
   /**
    * Consolida los resultados de subtareas en una respuesta final.
@@ -518,7 +550,7 @@ export class HierarchyOrchestrator {
     return this.supervisorFn!(prompt)
   }
 
-  // ── Utilidades privadas ────────────────────────────────────────────────────────
+  // ── Utilidades privadas ──────────────────────────────────────────────────────────────────
 
   /** Envuelve una promesa con un timeout. */
   private withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
