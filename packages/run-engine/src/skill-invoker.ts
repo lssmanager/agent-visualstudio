@@ -6,12 +6,25 @@
  *
  * Skill types handled:
  *   'builtin'     — imported directly from @agent-vs/skills (not yet implemented, throws)
- *   'n8n_webhook' — HTTP POST to the webhook URL configured in Skill.config
+ *   'n8n_webhook' — HTTP POST/GET to the webhook URL configured in Skill.config
  *   'openapi'     — HTTP request to operationId endpoint in the OpenAPI spec
  *   'mcp'         — spawns the MCP server process and calls the tool via stdio
  *   'function'    — eval-safe handler (disabled in production; use n8n_webhook instead)
  *
  * All invocations are time-bounded by SKILL_TIMEOUT_MS (default: 30 000).
+ *
+ * F1b-01 improvements over the original:
+ *   ✅ AbortController per-fetch guarantees socket closure on timeout
+ *   ✅ Auth: none | headerAuth | basicAuth
+ *   ✅ GET / DELETE serialize args as query-string (not body)
+ *   ✅ Retry up to 2× on 5xx (except 501) with exponential backoff
+ *   ✅ n8n envelope parse: [{ json: {...} }] → {...}
+ *   ✅ invokeWebhookDirect() for inline tool nodes (no DB lookup)
+ *
+ * Security notes:
+ *   - authValue / authPassword are NEVER logged. They travel opaquely from
+ *     Skill.config (encrypted at rest by AES-256 in F3b, not here).
+ *   - invokeN8nWebhook() stays private; external callers use invokeWebhookDirect().
  */
 
 import type { PrismaClient } from '@prisma/client';
@@ -19,7 +32,7 @@ import type { PrismaClient } from '@prisma/client';
 const SKILL_TIMEOUT_MS = Number(process.env.SKILL_TIMEOUT_MS ?? 30_000);
 
 export interface SkillInvokeResult {
-  ok:    boolean;
+  ok: boolean;
   result: unknown;
   error?: string;
   /** Wall-clock milliseconds the invocation took */
@@ -29,12 +42,19 @@ export interface SkillInvokeResult {
 export class SkillInvoker {
   constructor(private readonly db: PrismaClient) {}
 
+  // ─── Public API ───────────────────────────────────────────────────────────
+
   /**
    * Invoke a skill by name (as registered in the Skill table).
-   * @param skillName  The skill/tool name returned in a tool_call (matches Skill.name)
+   * Signature must NOT change — called from the agentic tool_calls loop.
+   *
+   * @param skillName  The skill/tool name from a tool_call (matches Skill.name)
    * @param args       Parsed JSON arguments from the tool_call
    */
-  async invoke(skillName: string, args: Record<string, unknown>): Promise<SkillInvokeResult> {
+  async invoke(
+    skillName: string,
+    args: Record<string, unknown>,
+  ): Promise<SkillInvokeResult> {
     const t0 = Date.now();
 
     const skill = await this.db.skill.findUnique({ where: { name: skillName } });
@@ -64,7 +84,37 @@ export class SkillInvoker {
     }
   }
 
-  // ─── Dispatchers ───────────────────────────────────────────────────────────
+  /**
+   * Invokes an n8n webhook with ad-hoc config — no DB lookup required.
+   * Used by LlmStepExecutor.executeInlineWebhook() for "tool inline" nodes
+   * where webhookUrl is specified directly in node.config.
+   *
+   * @param config  Webhook config (same shape as Skill.config for n8n_webhook)
+   * @param args    Tool call arguments passed as body (POST) or query (GET)
+   */
+  async invokeWebhookDirect(
+    config: Record<string, unknown>,
+    args: Record<string, unknown>,
+  ): Promise<SkillInvokeResult> {
+    const t0 = Date.now();
+    try {
+      const result = await withTimeout(
+        this.invokeN8nWebhook(config, args),
+        SKILL_TIMEOUT_MS,
+        `Inline webhook timed out after ${SKILL_TIMEOUT_MS}ms`,
+      );
+      return { ok: true, result, durationMs: Date.now() - t0 };
+    } catch (err) {
+      return {
+        ok: false,
+        result: null,
+        error: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - t0,
+      };
+    }
+  }
+
+  // ─── Dispatcher ───────────────────────────────────────────────────────────
 
   private async dispatch(
     type: string,
@@ -75,37 +125,136 @@ export class SkillInvoker {
       case 'n8n_webhook': return this.invokeN8nWebhook(config, args);
       case 'openapi':     return this.invokeOpenApi(config, args);
       case 'mcp':         return this.invokeMcp(config, args);
-      case 'builtin':     throw new Error(`Builtin skill dispatch not yet implemented. Use n8n_webhook.`);
+      case 'builtin':     throw new Error('Builtin skill dispatch not yet implemented. Use n8n_webhook.');
       default:            throw new Error(`Unknown skill type: '${type}'`);
     }
   }
 
-  // ─── n8n webhook ─────────────────────────────────────────────────────
+  // ─── n8n webhook (F1b-01 production-ready) ───────────────────────────────
 
   private async invokeN8nWebhook(
     config: Record<string, unknown>,
     args: Record<string, unknown>,
   ): Promise<unknown> {
-    const url = config.webhookUrl as string;
-    if (!url) throw new Error('n8n_webhook skill missing webhookUrl in config');
+    const rawUrl = config.webhookUrl as string;
+    if (!rawUrl) throw new Error('n8n_webhook skill missing webhookUrl in config');
 
-    const method = ((config.method as string) ?? 'POST').toUpperCase();
-    const res = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: method !== 'GET' ? JSON.stringify(args) : undefined,
-    });
+    const method    = ((config.method as string) ?? 'POST').toUpperCase();
+    const authType  = (config.authType as string | undefined) ?? 'none';
+    const maxRetries = 2;
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`n8n webhook returned ${res.status}: ${text.slice(0, 200)}`);
+    // ── Build URL + body ──────────────────────────────────────────────────
+    let url = rawUrl;
+    let bodyPayload: string | undefined;
+
+    if (method === 'GET' || method === 'DELETE') {
+      const qs = Object.entries(args)
+        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+        .join('&');
+      if (qs) url = `${rawUrl}${rawUrl.includes('?') ? '&' : '?'}${qs}`;
+    } else {
+      bodyPayload = JSON.stringify(args);
     }
 
-    const ct = res.headers.get('content-type') ?? '';
-    return ct.includes('application/json') ? res.json() : res.text();
+    // ── Build auth headers ────────────────────────────────────────────────
+    const authHeaders: Record<string, string> = {};
+    if (authType === 'headerAuth') {
+      const headerName  = (config.authHeader  as string) ?? 'Authorization';
+      const headerValue =  config.authValue   as string;
+      if (!headerValue) {
+        throw new Error('n8n_webhook headerAuth requires authValue in config');
+      }
+      authHeaders[headerName] = headerValue;
+    } else if (authType === 'basicAuth') {
+      const user = config.authUser     as string;
+      const pass = config.authPassword as string;
+      if (!user || !pass) {
+        throw new Error('n8n_webhook basicAuth requires authUser and authPassword in config');
+      }
+      // authPassword never logged — only sent in header
+      authHeaders['Authorization'] =
+        'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
+    }
+    // authType === 'none' → no additional headers
+
+    // ── Retry loop with AbortController per attempt ───────────────────────
+    let lastError: Error | undefined;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      // One controller per attempt — abort() closes the socket cleanly
+      const controller  = new AbortController();
+      const fetchTimeout = setTimeout(() => controller.abort(), SKILL_TIMEOUT_MS);
+
+      try {
+        const res = await fetch(url, {
+          method,
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            ...authHeaders,
+          },
+          body: bodyPayload,
+        });
+
+        clearTimeout(fetchTimeout);
+
+        // Retry on transient server errors (5xx ≠ 501)
+        if (res.status >= 500 && res.status !== 501 && attempt < maxRetries) {
+          lastError = new Error(
+            `n8n webhook ${res.status} (attempt ${attempt + 1}/${maxRetries + 1})`,
+          );
+          await delay(attempt * 500); // 0 ms / 500 ms / 1 000 ms
+          continue;
+        }
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          throw new Error(`n8n webhook returned ${res.status}: ${text.slice(0, 300)}`);
+        }
+
+        // ── Parse response ───────────────────────────────────────────────
+        const ct = res.headers.get('content-type') ?? '';
+        if (!ct.includes('application/json')) return res.text();
+
+        const json = (await res.json()) as unknown;
+
+        // n8n can return an array of items: [{ json: {...} }, ...]
+        // Unwrap to the first item's .json payload when present.
+        if (
+          Array.isArray(json) &&
+          json.length > 0 &&
+          typeof json[0] === 'object' &&
+          json[0] !== null &&
+          'json' in (json[0] as object)
+        ) {
+          return (json[0] as Record<string, unknown>)['json'];
+        }
+
+        return json;
+      } catch (err) {
+        clearTimeout(fetchTimeout);
+
+        if (err instanceof Error && err.name === 'AbortError') {
+          lastError = new Error(
+            `n8n webhook fetch aborted (timeout ${SKILL_TIMEOUT_MS}ms)`,
+          );
+          if (attempt < maxRetries) {
+            await delay(attempt * 500);
+            continue;
+          }
+          throw lastError;
+        }
+
+        if (attempt >= maxRetries) throw err;
+        lastError = err instanceof Error ? err : new Error(String(err));
+        await delay(attempt * 500);
+      }
+    }
+
+    throw lastError ?? new Error('n8n_webhook: all retry attempts failed');
   }
 
-  // ─── OpenAPI ────────────────────────────────────────────────────────────
+  // ─── OpenAPI ──────────────────────────────────────────────────────────────
   // Minimal implementation: fetches the spec, finds the operation by ID,
   // builds the request, executes it. Full parameter serialization TBD.
 
@@ -124,15 +273,12 @@ export class SkillInvoker {
 
     const specRes = await fetch(specUrl);
     if (!specRes.ok) throw new Error(`Failed to fetch OpenAPI spec from ${specUrl}`);
-    const spec = await specRes.json() as Record<string, unknown>;
+    const spec = (await specRes.json()) as Record<string, unknown>;
 
-    // Find the operation
     const { method, path: opPath, operation } = findOperation(spec, operationId);
     const serverBase = baseUrl ?? extractFirstServer(spec);
-
     if (!serverBase) throw new Error(`Cannot determine base URL for OpenAPI spec at ${specUrl}`);
 
-    // Build URL: substitute path params, append query params
     let url = serverBase.replace(/\/$/, '') + opPath;
     const queryParams: string[] = [];
     const bodyParams: Record<string, unknown> = {};
@@ -168,7 +314,7 @@ export class SkillInvoker {
     return ct.includes('application/json') ? res.json() : res.text();
   }
 
-  // ─── MCP (stdio) ────────────────────────────────────────────────────────
+  // ─── MCP (stdio) ──────────────────────────────────────────────────────────
   // Spawns the MCP server, sends a single tools/call request via
   // JSON-RPC over stdio, and kills the process after receiving the response.
 
@@ -176,13 +322,11 @@ export class SkillInvoker {
     config: Record<string, unknown>,
     args: Record<string, unknown>,
   ): Promise<unknown> {
-    // Dynamic import of child_process so this module remains isomorphic
-    // in test environments that mock this method.
     const { spawn } = await import('child_process');
 
     const command = config.command as string;
     const cmdArgs = (config.args as string[]) ?? [];
-    const env     = (config.env as Record<string, string>) ?? {};
+    const env     = (config.env  as Record<string, string>) ?? {};
 
     if (!command) throw new Error('mcp skill requires command in config');
 
@@ -197,7 +341,6 @@ export class SkillInvoker {
       proc.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
       proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
 
-      // Send JSON-RPC tools/call request
       const request = JSON.stringify({
         jsonrpc: '2.0',
         id: 1,
@@ -212,8 +355,6 @@ export class SkillInvoker {
           return reject(new Error(`MCP process exited ${code}: ${stderr.slice(0, 200)}`));
         }
         try {
-          // The MCP server may emit multiple JSON lines; take the first
-          // line that is a valid JSON-RPC response.
           for (const line of stdout.split('\n')) {
             const trimmed = line.trim();
             if (!trimmed) continue;
@@ -234,15 +375,18 @@ export class SkillInvoker {
   }
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/** Safety-net timeout wrapper (AbortController is the primary protection). */
 function withTimeout<T>(promise: Promise<T>, ms: number, msg: string): Promise<T> {
   return Promise.race([
     promise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(msg)), ms),
-    ),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(msg)), ms)),
   ]);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 function findOperation(
