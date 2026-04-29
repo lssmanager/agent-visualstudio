@@ -12,3 +12,10 @@ export type {
   N8nExecutionResult,
   N8nWorkflowExecuteResponse,
 } from './n8n-client';
+
+export type {
+  SyncResult,
+  N8nPrismaClient,
+  N8nWorkflowDto,
+  N8nApiListResponse,
+} from './n8n.types';
