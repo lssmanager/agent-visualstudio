@@ -2,6 +2,7 @@ import { Express, Router } from 'express';
 
 import { studioConfig } from './config';
 import { registerAgentsRoutes } from './modules/agents/agents.controller';
+import { registerChannelsRoutes } from './modules/channels/channels.controller';
 import { registerDeployRoutes } from './modules/deploy/deploy.controller';
 import { registerFlowsRoutes } from './modules/flows/flows.controller';
 import { registerGatewayRoutes } from './modules/gateway/gateway.controller';
@@ -47,6 +48,7 @@ export function registerRoutes(app: Express) {
   registerRoutingRoutes(router);
   registerDeployRoutes(router);
   registerGatewayRoutes(router);
+  registerChannelsRoutes(router);
   registerConfigRoutes(router);
   registerCommandsRoutes(router);
   registerExportRoutes(router);
