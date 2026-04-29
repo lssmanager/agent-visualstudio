@@ -1,241 +1,554 @@
 /**
- * HierarchyOrchestrator — Agency → Department → Workspace → Agent → Subagent
+ * HierarchyOrchestrator — implementación completa con checkpointing Prisma
  *
- * Design sources:
- *  - CrewAI: Crew.kickoff() with parallel task decomposition and consolidation
- *  - AutoGen: GroupChatManager delegate-to-specialist pattern
- *  - LangGraph: supervisor node routing to subgraphs
- *  - Semantic Kernel: planner decomposing goals into steps
+ * Arquitectura:
+ *   - Cada orchestrate() crea un Run en Prisma y persiste cada subtarea como RunStep.
+ *   - La descomposición usa un supervisor LLM real (JSON structured output) con
+ *     fallback a round-robin si el LLM falla o no hay hijos.
+ *   - Retry configurable por subtarea con backoff exponencial.
+ *   - HITL (Human-in-the-Loop): nodos marcados requiresApproval=true pausan el Run
+ *     y esperan un Approval en DB antes de continuar.
+ *   - Consolidación final vía supervisor LLM.
+ *
+ * Patrones de referencia:
+ *   - CrewAI: Crew.kickoff() + parallel task execution + consolidation
+ *   - AutoGen: GroupChatManager → specialist routing
+ *   - LangGraph: supervisor node + subgraph + checkpoint by step
+ *   - Semantic Kernel: planner decompose goals into steps
  */
 
-// ── Hierarchy node types ──────────────────────────────────────────────────
-export type HierarchyLevel = 'agency' | 'department' | 'workspace' | 'agent' | 'subagent';
+import type { PrismaClient } from '@prisma/client'
+import { RunRepository } from '../../run-engine/src/run-repository.js'
+
+// ── Tipos públicos ─────────────────────────────────────────────────────────────
+
+export type HierarchyLevel = 'agency' | 'department' | 'workspace' | 'agent' | 'subagent'
 
 export interface HierarchyNode {
-  id: string;
-  name: string;
-  level: HierarchyLevel;
-  parentId?: string;
-  children?: HierarchyNode[];
-  /** Agent model/systemPrompt config if level is agent/subagent */
+  id:       string
+  name:     string
+  level:    HierarchyLevel
+  parentId?: string
+  children?: HierarchyNode[]
+  /** Configuración del agente si level es agent/subagent */
   agentConfig?: {
-    model: string;
-    systemPrompt: string;
-    skills?: string[];
-  };
+    model:        string
+    systemPrompt: string
+    skills?:      string[]
+    /** Si true: el orchestrator pausa el Run y espera un Approval antes de ejecutar */
+    requiresApproval?: boolean
+  }
 }
 
-// ── Task / subtask types ──────────────────────────────────────────────────
 export interface HierarchyTask {
-  id: string;
-  description: string;
-  assignedNodeId: string;
-  level: HierarchyLevel;
-  input?: Record<string, unknown>;
+  id:            string
+  description:   string
+  assignedNodeId: string
+  level:         HierarchyLevel
+  input?:        Record<string, unknown>
 }
 
 export interface SubtaskResult {
-  taskId: string;
-  nodeId: string;
-  status: 'completed' | 'failed';
-  output: unknown;
-  error?: string;
-  durationMs: number;
+  taskId:    string
+  nodeId:    string
+  stepId:    string          // ID del RunStep en Prisma
+  status:    'completed' | 'failed' | 'skipped' | 'rejected'
+  output:    unknown
+  error?:    string
+  durationMs: number
+  retries:   number
 }
 
 export interface OrchestrationResult {
-  rootTaskId: string;
-  status: 'completed' | 'partial' | 'failed';
-  consolidatedOutput: string;
-  subtaskResults: SubtaskResult[];
-  totalDurationMs: number;
+  runId:             string  // ID del Run en Prisma
+  rootTaskId:        string
+  status:            'completed' | 'partial' | 'failed'
+  consolidatedOutput: string
+  subtaskResults:    SubtaskResult[]
+  totalDurationMs:   number
 }
 
-// ── Executor interface: implemented by LLMStepExecutor or any adapter ──────
+/**
+ * Función de ejecución de agente inyectada desde LLMStepExecutor.
+ * Devuelve el texto de respuesta del LLM.
+ */
 export interface AgentExecutorFn {
-  (agentId: string, systemPrompt: string, task: string, skills?: string[]): Promise<string>;
+  (agentId: string, systemPrompt: string, task: string, skills?: string[]): Promise<string>
 }
 
-// ── Main orchestrator class ───────────────────────────────────────────────
+/**
+ * Función de supervisor LLM inyectada para descomposición y consolidación.
+ * Recibe el prompt y devuelve la respuesta en texto.
+ */
+export interface SupervisorFn {
+  (prompt: string): Promise<string>
+}
+
+// ── Opciones de configuración ──────────────────────────────────────────────────
+
+export interface OrchestratorOptions {
+  /** Cuántas veces reintentar un subtask fallido antes de marcarlo como failed */
+  maxRetries?: number
+  /** Backoff base en ms entre reintentos (exponencial: baseMs * 2^attempt) */
+  retryBaseMs?: number
+  /** Timeout por subtask en ms (0 = sin timeout) */
+  subtaskTimeoutMs?: number
+  /** Timeout de espera de aprobación HITL en ms */
+  approvalTimeoutMs?: number
+  /** Ejecutar subtareas en paralelo (true) o secuencial (false) */
+  parallel?: boolean
+}
+
+const DEFAULT_OPTIONS: Required<OrchestratorOptions> = {
+  maxRetries:        2,
+  retryBaseMs:       500,
+  subtaskTimeoutMs:  120_000,  // 2 min
+  approvalTimeoutMs: 900_000,  // 15 min
+  parallel:          true,
+}
+
+// ── HierarchyOrchestrator ────────────────────────────────────────────────────
+
 export class HierarchyOrchestrator {
-  private readonly hierarchy: HierarchyNode;
-  private readonly executorFn: AgentExecutorFn;
+  private readonly repo:       RunRepository
+  private readonly hierarchy:  HierarchyNode
+  private readonly executorFn: AgentExecutorFn
+  private readonly supervisorFn?: SupervisorFn
+  private readonly opts:       Required<OrchestratorOptions>
 
-  constructor(hierarchy: HierarchyNode, executorFn: AgentExecutorFn) {
-    this.hierarchy = hierarchy;
-    this.executorFn = executorFn;
+  constructor(
+    hierarchy:   HierarchyNode,
+    executorFn:  AgentExecutorFn,
+    prisma:      PrismaClient,
+    supervisorFn?: SupervisorFn,
+    opts?:       OrchestratorOptions,
+  ) {
+    this.hierarchy    = hierarchy
+    this.executorFn   = executorFn
+    this.supervisorFn = supervisorFn
+    this.repo         = new RunRepository(prisma)
+    this.opts         = { ...DEFAULT_OPTIONS, ...opts }
   }
 
+  // ── API pública ────────────────────────────────────────────────────────────
+
   /**
-   * Orchestrate a top-level task through the hierarchy.
-   * Decomposes the task into subtasks, assigns them to agents/subagents,
-   * executes in parallel, and consolidates responses.
+   * Punto de entrada principal.
    *
-   * Pattern: CrewAI Crew.kickoff() + AutoGen GroupChatManager
+   * 1. Crea un Run en Prisma
+   * 2. Descompone el task vía supervisor LLM (o round-robin fallback)
+   * 3. Ejecuta subtareas (paralelo o secuencial) con checkpointing por RunStep
+   * 4. Consolida el resultado vía supervisor LLM
+   * 5. Marca el Run como completed/partial/failed
+   *
+   * @param workspaceId ID del workspace (requerido para Run + Approval)
+   * @param rootTask    Descripción del task principal
+   * @param input       Payload de entrada (opcional)
    */
-  async orchestrate(rootTask: string, input?: Record<string, unknown>): Promise<OrchestrationResult> {
-    const startTime = Date.now();
-    const rootTaskId = `task-${Date.now()}`;
+  async orchestrate(
+    workspaceId: string,
+    rootTask: string,
+    input?: Record<string, unknown>,
+  ): Promise<OrchestrationResult> {
+    const startTime = Date.now()
 
-    // Decompose task across agents in this hierarchy
-    const subtasks = await this.decomposeTasks(rootTask, input);
+    // ── 1. Crear Run ────────────────────────────────────────────────────────
+    const run = await this.repo.createRun({
+      workspaceId,
+      agentId:   this.hierarchy.level === 'agent' ? this.hierarchy.id : undefined,
+      inputData: { task: rootTask, ...input },
+      metadata:  { hierarchyRoot: this.hierarchy.id, hierarchyLevel: this.hierarchy.level },
+    })
+    await this.repo.startRun(run.id)
 
-    // Execute subtasks in parallel (CrewAI parallel crew / AutoGen async chat)
-    const subtaskResults = await this.executeParallel(subtasks);
+    try {
+      // ── 2. Descomponer task ──────────────────────────────────────────────
+      const subtasks = await this.decomposeTasks(rootTask, input)
 
-    // Consolidate results into a final answer (LangGraph supervisor aggregation)
-    const consolidatedOutput = await this.consolidateResults(rootTask, subtaskResults);
+      // ── 3. Ejecutar subtareas ───────────────────────────────────────────
+      const subtaskResults = this.opts.parallel
+        ? await this.executeParallel(subtasks, run.id, workspaceId)
+        : await this.executeSequential(subtasks, run.id, workspaceId)
 
-    const failed = subtaskResults.filter((r) => r.status === 'failed');
-    const status = failed.length === 0 ? 'completed' : failed.length === subtaskResults.length ? 'failed' : 'partial';
+      // ── 4. Consolidar ──────────────────────────────────────────────────
+      const consolidatedOutput = await this.consolidateResults(rootTask, subtaskResults)
 
-    return {
-      rootTaskId,
-      status,
-      consolidatedOutput,
-      subtaskResults,
-      totalDurationMs: Date.now() - startTime,
-    };
+      // ── 5. Estado final del Run ─────────────────────────────────────────
+      const failed  = subtaskResults.filter((r) => r.status === 'failed' || r.status === 'rejected')
+      const success = subtaskResults.filter((r) => r.status === 'completed')
+      const runStatus: OrchestrationResult['status'] =
+        failed.length === 0                         ? 'completed'
+        : success.length === 0                      ? 'failed'
+        : 'partial'
+
+      if (runStatus === 'failed') {
+        await this.repo.failRun(run.id, `${failed.length} subtask(s) failed`)
+      } else {
+        await this.repo.completeRun(run.id, { consolidatedOutput, subtaskResults })
+      }
+
+      return {
+        runId: run.id,
+        rootTaskId: run.id,
+        status: runStatus,
+        consolidatedOutput,
+        subtaskResults,
+        totalDurationMs: Date.now() - startTime,
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      await this.repo.failRun(run.id, message)
+      throw err
+    }
   }
 
+  // ── Descomposición de tareas ───────────────────────────────────────────────
+
   /**
-   * Decompose a top-level task into subtasks assigned to leaf agents.
-   * Traverses the hierarchy depth-first and assigns work to agent/subagent nodes.
+   * Descompone el task en subtareas asignadas a agentes hoja.
+   *
+   * Estrategia:
+   *   1. Si hay supervisorFn: llama al LLM con un prompt estructurado y parsea JSON.
+   *   2. Si el LLM falla o no hay supervisorFn: fallback a round-robin.
    */
   private async decomposeTasks(
     rootTask: string,
     input?: Record<string, unknown>,
   ): Promise<HierarchyTask[]> {
-    const agents = this.collectAgentNodes(this.hierarchy);
+    const agents = this.collectAgentNodes(this.hierarchy)
 
+    // Modo single-agent
     if (agents.length === 0) {
-      // Single-agent mode: assign entire task to root node
       return [{
-        id: `subtask-${this.hierarchy.id}`,
-        description: rootTask,
+        id:             `subtask-${this.hierarchy.id}`,
+        description:    rootTask,
         assignedNodeId: this.hierarchy.id,
-        level: this.hierarchy.level,
+        level:          this.hierarchy.level,
         input,
-      }];
+      }]
     }
 
-    // Multi-agent: distribute task by agent specialization
-    // In a real implementation this calls a supervisor LLM to decompose;
-    // here we apply a round-robin assignment as a functional baseline.
-    return agents.map((agent, idx) => ({
-      id: `subtask-${agent.id}-${idx}`,
-      description: `[Subtask for ${agent.name}]: ${rootTask}`,
-      assignedNodeId: agent.id,
-      level: agent.level,
-      input,
-    }));
-  }
-
-  /**
-   * Execute all subtasks in parallel using Promise.allSettled.
-   * Pattern: CrewAI async task execution + AutoGen parallel agents.
-   */
-  private async executeParallel(subtasks: HierarchyTask[]): Promise<SubtaskResult[]> {
-    const settled = await Promise.allSettled(
-      subtasks.map((task) => this.executeSingleTask(task)),
-    );
-
-    return settled.map((result, idx) => {
-      if (result.status === 'fulfilled') {
-        return result.value;
+    // Intentar descomposición vía supervisor LLM
+    if (this.supervisorFn) {
+      try {
+        return await this.decomposeWithSupervisor(rootTask, agents, input)
+      } catch {
+        // fallback silencioso a round-robin
       }
-      return {
-        taskId: subtasks[idx].id,
-        nodeId: subtasks[idx].assignedNodeId,
-        status: 'failed' as const,
-        output: null,
-        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        durationMs: 0,
-      };
-    });
-  }
-
-  /** Execute a single subtask via the injected executor function. */
-  private async executeSingleTask(task: HierarchyTask): Promise<SubtaskResult> {
-    const start = Date.now();
-    const node = this.findNode(task.assignedNodeId);
-    const systemPrompt = node?.agentConfig?.systemPrompt ??
-      `You are ${node?.name ?? task.assignedNodeId}. Complete your assigned task.`;
-    const skills = node?.agentConfig?.skills;
-
-    try {
-      const output = await this.executorFn(
-        task.assignedNodeId,
-        systemPrompt,
-        task.description,
-        skills,
-      );
-      return {
-        taskId: task.id,
-        nodeId: task.assignedNodeId,
-        status: 'completed',
-        output,
-        durationMs: Date.now() - start,
-      };
-    } catch (err) {
-      return {
-        taskId: task.id,
-        nodeId: task.assignedNodeId,
-        status: 'failed',
-        output: null,
-        error: err instanceof Error ? err.message : String(err),
-        durationMs: Date.now() - start,
-      };
     }
+
+    // Fallback: asignar el mismo task a todos los agentes (round-robin)
+    return agents.map((agent, idx) => ({
+      id:             `subtask-${agent.id}-${idx}`,
+      description:    `[${agent.name}]: ${rootTask}`,
+      assignedNodeId: agent.id,
+      level:          agent.level,
+      input,
+    }))
   }
 
   /**
-   * Consolidate subtask results into a final answer.
-   * Pattern: LangGraph supervisor aggregation / CrewAI crew output.
-   * Returns plain concatenation as a functional baseline;
-   * a real implementation calls the root-level LLM to synthesize.
+   * Descomposición vía supervisor LLM.
+   *
+   * El prompt pide al supervisor que devuelva un JSON array con objetos:
+   *   { agentId: string, task: string }
+   *
+   * Parseo robusto: extrae el primer bloque JSON del texto aunque haya prose.
+   */
+  private async decomposeWithSupervisor(
+    rootTask: string,
+    agents:   HierarchyNode[],
+    input?:   Record<string, unknown>,
+  ): Promise<HierarchyTask[]> {
+    const agentList = agents
+      .map((a) => `- id: ${a.id}, name: ${a.name}, level: ${a.level}`)
+      .join('\n')
+
+    const prompt = [
+      'You are a supervisor orchestrator. Decompose the following task into subtasks.',
+      'Assign each subtask to exactly one agent from the list below.',
+      'Respond ONLY with a valid JSON array. No prose, no markdown fences.',
+      'Format: [{ "agentId": "<id>", "task": "<description>" }, ...]',
+      '',
+      `Task: ${rootTask}`,
+      input ? `Context: ${JSON.stringify(input)}` : '',
+      '',
+      'Available agents:',
+      agentList,
+    ].join('\n')
+
+    const raw = await this.supervisorFn!(prompt)
+
+    // Extraer el primer bloque JSON del texto
+    const jsonMatch = raw.match(/\[\s*\{[\s\S]*?\}\s*\]/)
+    if (!jsonMatch) throw new Error('Supervisor did not return a valid JSON array')
+
+    const parsed = JSON.parse(jsonMatch[0]) as Array<{ agentId: string; task: string }>
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      throw new Error('Supervisor returned empty task list')
+    }
+
+    // Filtrar asignaciones a agentes válidos
+    const agentIds = new Set(agents.map((a) => a.id))
+    return parsed
+      .filter((p) => agentIds.has(p.agentId))
+      .map((p, idx) => {
+        const agent = agents.find((a) => a.id === p.agentId)!
+        return {
+          id:             `subtask-${p.agentId}-${idx}`,
+          description:    p.task,
+          assignedNodeId: p.agentId,
+          level:          agent.level,
+          input,
+        }
+      })
+  }
+
+  // ── Ejecución ───────────────────────────────────────────────────────────────────
+
+  private async executeParallel(
+    subtasks:    HierarchyTask[],
+    runId:       string,
+    workspaceId: string,
+  ): Promise<SubtaskResult[]> {
+    const settled = await Promise.allSettled(
+      subtasks.map((task, idx) => this.executeWithRetry(task, idx, runId, workspaceId)),
+    )
+    return settled.map((result, idx) => {
+      if (result.status === 'fulfilled') return result.value
+      return {
+        taskId:     subtasks[idx].id,
+        nodeId:     subtasks[idx].assignedNodeId,
+        stepId:     '',
+        status:     'failed' as const,
+        output:     null,
+        error:      result.reason instanceof Error ? result.reason.message : String(result.reason),
+        durationMs: 0,
+        retries:    this.opts.maxRetries,
+      }
+    })
+  }
+
+  private async executeSequential(
+    subtasks:    HierarchyTask[],
+    runId:       string,
+    workspaceId: string,
+  ): Promise<SubtaskResult[]> {
+    const results: SubtaskResult[] = []
+    for (let idx = 0; idx < subtasks.length; idx++) {
+      const result = await this.executeWithRetry(subtasks[idx], idx, runId, workspaceId)
+        .catch((err) => ({
+          taskId:     subtasks[idx].id,
+          nodeId:     subtasks[idx].assignedNodeId,
+          stepId:     '',
+          status:     'failed' as const,
+          output:     null,
+          error:      err instanceof Error ? err.message : String(err),
+          durationMs: 0,
+          retries:    this.opts.maxRetries,
+        }))
+      results.push(result)
+    }
+    return results
+  }
+
+  /**
+   * Ejecuta un subtask con:
+   *   - Checkpoint RunStep al inicio y fin
+   *   - HITL: pausa si requiresApproval y espera Approval en DB
+   *   - Retry con backoff exponencial
+   *   - Timeout por subtask
+   */
+  private async executeWithRetry(
+    task:        HierarchyTask,
+    index:       number,
+    runId:       string,
+    workspaceId: string,
+  ): Promise<SubtaskResult> {
+    const start = Date.now()
+    const node  = this.findNode(task.assignedNodeId)
+
+    // ── Checkpoint: crear RunStep ─────────────────────────────────────────
+    const step = await this.repo.createStep({
+      runId,
+      nodeId:   task.assignedNodeId,
+      nodeType: node?.level ?? 'agent',
+      index,
+      input:    { task: task.description, ...task.input },
+    })
+
+    // ── HITL: pausar si requiresApproval ───────────────────────────────
+    if (node?.agentConfig?.requiresApproval) {
+      await this.repo.pauseRun(runId)
+
+      const approval = await this.repo.createApproval({
+        workspaceId,
+        agentId:     task.assignedNodeId,
+        runId,
+        stepId:      step.id,
+        title:       `Approval required: ${node.name}`,
+        description: `Agent "${node.name}" needs approval before executing: ${task.description}`,
+        payload:     { task: task.description, nodeId: task.assignedNodeId, input: task.input ?? {} },
+        expiresAt:   new Date(Date.now() + this.opts.approvalTimeoutMs),
+      })
+
+      const decision = await this.repo.waitForApproval(approval.id, this.opts.approvalTimeoutMs)
+      await this.repo.startRun(runId)  // retomar estado running
+
+      if (decision !== 'approved') {
+        await this.repo.skipStep(step.id)
+        return {
+          taskId:     task.id,
+          nodeId:     task.assignedNodeId,
+          stepId:     step.id,
+          status:     'rejected',
+          output:     null,
+          error:      `Approval ${decision}`,
+          durationMs: Date.now() - start,
+          retries:    0,
+        }
+      }
+    }
+
+    // ── Ejecución con retry ────────────────────────────────────────────
+    const systemPrompt = node?.agentConfig?.systemPrompt
+      ?? `You are ${node?.name ?? task.assignedNodeId}. Complete your assigned task.`
+    const skills = node?.agentConfig?.skills
+
+    let lastError = ''
+    for (let attempt = 0; attempt <= this.opts.maxRetries; attempt++) {
+      if (attempt > 0) {
+        // Backoff exponencial
+        const waitMs = this.opts.retryBaseMs * Math.pow(2, attempt - 1)
+        await new Promise((r) => setTimeout(r, waitMs))
+      }
+
+      try {
+        const output = await this.withTimeout(
+          this.executorFn(task.assignedNodeId, systemPrompt, task.description, skills),
+          this.opts.subtaskTimeoutMs,
+          `Subtask ${task.id} timed out after ${this.opts.subtaskTimeoutMs}ms`,
+        )
+
+        // ── Checkpoint: step completado ──────────────────────────────
+        await this.repo.completeStep({ stepId: step.id, output })
+
+        return {
+          taskId:     task.id,
+          nodeId:     task.assignedNodeId,
+          stepId:     step.id,
+          status:     'completed',
+          output,
+          durationMs: Date.now() - start,
+          retries:    attempt,
+        }
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err)
+        // Continuar el loop para retry
+      }
+    }
+
+    // Todos los reintentos fallaron
+    await this.repo.failStep({ stepId: step.id, error: lastError })
+    return {
+      taskId:     task.id,
+      nodeId:     task.assignedNodeId,
+      stepId:     step.id,
+      status:     'failed',
+      output:     null,
+      error:      lastError,
+      durationMs: Date.now() - start,
+      retries:    this.opts.maxRetries,
+    }
+  }
+
+  // ── Consolidación ────────────────────────────────────────────────────────────
+
+  /**
+   * Consolida los resultados de subtareas en una respuesta final.
+   * Si hay supervisorFn, usa el LLM. Si no, concatenación estructurada.
    */
   private async consolidateResults(
     rootTask: string,
-    results: SubtaskResult[],
+    results:  SubtaskResult[],
   ): Promise<string> {
-    const completed = results.filter((r) => r.status === 'completed');
+    const completed = results.filter((r) => r.status === 'completed')
     if (completed.length === 0) {
-      return `Task failed: no subtasks completed successfully.`;
+      return 'All subtasks failed. No output available.'
     }
 
-    const outputs = completed
-      .map((r, i) => `[Agent ${r.nodeId} result ${i + 1}]:\n${String(r.output)}`)
-      .join('\n\n');
+    if (this.supervisorFn) {
+      try {
+        return await this.consolidateWithSupervisor(rootTask, completed)
+      } catch {
+        // fallback a concatenación
+      }
+    }
 
+    // Fallback: concatenación estructurada
     return [
       `Consolidated output for: "${rootTask}"`,
       `(${completed.length}/${results.length} subtasks succeeded)`,
       '',
-      outputs,
-    ].join('\n');
+      ...completed.map((r, i) =>
+        `[${i + 1}] Agent ${r.nodeId}:\n${String(r.output)}`
+      ),
+    ].join('\n\n')
   }
 
-  /** Depth-first collect all agent/subagent leaf nodes. */
+  private async consolidateWithSupervisor(
+    rootTask:  string,
+    completed: SubtaskResult[],
+  ): Promise<string> {
+    const resultsSummary = completed
+      .map((r, i) => `Result ${i + 1} (agent ${r.nodeId}):\n${String(r.output)}`)
+      .join('\n\n')
+
+    const prompt = [
+      `You are a supervisor synthesizing results from multiple agents.`,
+      `Original task: ${rootTask}`,
+      ``,
+      `Agent results:`,
+      resultsSummary,
+      ``,
+      `Provide a single, coherent, complete answer that synthesizes all results above.`,
+      `Do not mention agents or results — just provide the final answer directly.`,
+    ].join('\n')
+
+    return this.supervisorFn!(prompt)
+  }
+
+  // ── Utilidades privadas ────────────────────────────────────────────────────────
+
+  /** Envuelve una promesa con un timeout. */
+  private withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+    if (ms <= 0) return promise
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(message)), ms)
+      promise.then(
+        (v) => { clearTimeout(timer); resolve(v) },
+        (e) => { clearTimeout(timer); reject(e) },
+      )
+    })
+  }
+
+  /** Recorre el árbol en profundidad y recoge todos los nodos agent/subagent hoja. */
   private collectAgentNodes(node: HierarchyNode): HierarchyNode[] {
     if (!node.children || node.children.length === 0) {
-      if (node.level === 'agent' || node.level === 'subagent') return [node];
-      return [];
+      if (node.level === 'agent' || node.level === 'subagent') return [node]
+      return []
     }
-    return node.children.flatMap((child) => this.collectAgentNodes(child));
+    return node.children.flatMap((child) => this.collectAgentNodes(child))
   }
 
-  /** Find a node by ID anywhere in the hierarchy tree. */
+  /** Búsqueda BFS de un nodo por ID. */
   private findNode(id: string): HierarchyNode | undefined {
-    const search = (node: HierarchyNode): HierarchyNode | undefined => {
-      if (node.id === id) return node;
-      if (!node.children) return undefined;
-      for (const child of node.children) {
-        const found = search(child);
-        if (found) return found;
-      }
-      return undefined;
-    };
-    return search(this.hierarchy);
+    const queue: HierarchyNode[] = [this.hierarchy]
+    while (queue.length > 0) {
+      const node = queue.shift()!
+      if (node.id === id) return node
+      if (node.children) queue.push(...node.children)
+    }
+    return undefined
   }
 }
