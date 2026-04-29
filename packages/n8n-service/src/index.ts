@@ -1,0 +1,14 @@
+export { N8nService }  from './n8n.service';
+export { N8nClient }   from './n8n-client';
+
+export type {
+  N8nServiceConfig,
+  TriggerWorkflowOptions,
+  TriggerWorkflowResult,
+} from './n8n.service';
+
+export type {
+  N8nClientConfig,
+  N8nExecutionResult,
+  N8nWorkflowExecuteResponse,
+} from './n8n-client';
