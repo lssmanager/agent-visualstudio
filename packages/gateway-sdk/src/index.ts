@@ -1,10 +1,19 @@
-export * from './auth';
-export * from './client';
-export * from './events';
-export * from './methods';
-export * from './protocol';
-export * from './types';
-export * from './channel-adapter';
-export * from './session-manager';
-export { TelegramAdapter } from './adapters/telegram';
-export { WebChatAdapter }  from './adapters/webchat';
+export type {
+  MessageRole,
+  MessageAttachment,
+  IncomingMessage,
+  OutboundMessage,
+  IChannelAdapter,
+} from './channel-adapter.js'
+
+export {
+  ChannelAdapterRegistry,
+  registry,
+} from './channel-adapter.js'
+
+export type {
+  SessionHistoryEntry,
+  ActiveSession,
+} from './session-manager.js'
+
+export { SessionManager } from './session-manager.js'

@@ -1,6 +1,4 @@
-export * from './routines';
-
-// Markdown loaders - primary source for dynamic profile/routine loading
+// Markdown loaders — fuente primaria para loading dinámico desde disco
 export {
   loadProfileFromMarkdown,
   loadProfilesCatalog,
@@ -9,4 +7,16 @@ export {
   loadRoutinesCatalog,
   invalidateRoutinesCatalog,
   type RoutineInfo,
-} from './loaders';
+} from './loaders/index.js'
+
+export * from './routines.js'
+
+// ProfilePropagatorService — persistencia en Prisma (AgentProfile)
+export type {
+  AgentPersona,
+  KnowledgeBaseEntry,
+  PropagateProfileInput,
+  ResolvedProfile,
+} from './profile-propagator.service.js'
+
+export { ProfilePropagatorService } from './profile-propagator.service.js'
