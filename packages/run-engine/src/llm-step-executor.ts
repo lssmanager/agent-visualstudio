@@ -437,13 +437,24 @@ export class LlmStepExecutor extends StepExecutor {
     };
   }
 
-  // ─── Tool node execution ───────────────────────────────────────────────────────────
+  // ─── Tool node execution (F1b-01) ─────────────────────────────────────────────
 
   protected override async executeTool(
     node:  FlowNode,
     _step: RunStep,
     _run:  RunSpec,
   ): Promise<StepExecutionResult> {
+    const t0 = Date.now();
+
+    // ── Path 1: inline webhookUrl in node.config (no DB required) ──────────
+    // Use case: tool node configured with { type: 'tool', config: { webhookUrl, method, ... } }
+    // without a corresponding Skill row in the database.
+    const inlineUrl = node.config?.webhookUrl as string | undefined;
+    if (inlineUrl) {
+      return this.executeInlineWebhook(node, t0);
+    }
+
+    // ── Path 2: registered skill in DB (original behavior) ─────────────────
     const skillName = (node.config?.skillName as string)
                    ?? (node.config?.skillId   as string)
                    ?? 'unknown';
@@ -461,6 +472,65 @@ export class LlmStepExecutor extends StepExecutor {
     return {
       status: 'completed',
       output: { skillName, result: res.result, durationMs: res.durationMs },
+    };
+  }
+
+  /**
+   * Executes an n8n webhook configured directly in node.config.
+   * Does NOT require a Skill row in the database.
+   *
+   * Delegates entirely to SkillInvoker.invokeWebhookDirect() which provides:
+   *   - AbortController timeout (socket closure guaranteed)
+   *   - headerAuth / basicAuth support
+   *   - GET/DELETE query-string serialization
+   *   - Retry 2× on 5xx with exponential backoff
+   *   - n8n [{ json: {...} }] envelope unwrap
+   *
+   * node.config shape expected:
+   *   webhookUrl   — required
+   *   method       — optional, default 'POST'
+   *   authType     — 'none' | 'headerAuth' | 'basicAuth', default 'none'
+   *   authHeader   — header name (headerAuth only)
+   *   authValue    — header value (headerAuth only) — never logged
+   *   authUser     — user (basicAuth only)
+   *   authPassword — password (basicAuth only) — never logged
+   *   params       — args passed as body (POST) or query (GET)
+   */
+  private async executeInlineWebhook(
+    node: FlowNode,
+    t0:   number,
+  ): Promise<StepExecutionResult> {
+    const webhookConfig: Record<string, unknown> = {
+      webhookUrl:   node.config?.webhookUrl,
+      method:       node.config?.method       ?? 'POST',
+      authType:     node.config?.authType     ?? 'none',
+      authHeader:   node.config?.authHeader,
+      authValue:    node.config?.authValue,
+      authUser:     node.config?.authUser,
+      authPassword: node.config?.authPassword,
+    };
+    const args = (node.config?.params as Record<string, unknown>) ?? {};
+
+    const res = await this.skillInvoker.invokeWebhookDirect(webhookConfig, args);
+
+    if (!res.ok) {
+      return {
+        status: 'failed',
+        error:  res.error ?? 'Inline webhook failed',
+        output: {
+          webhookUrl: node.config?.webhookUrl,
+          durationMs: Date.now() - t0,
+        },
+      };
+    }
+
+    return {
+      status: 'completed',
+      output: {
+        webhookUrl:  node.config?.webhookUrl,
+        result:      res.result,
+        durationMs:  Date.now() - t0,
+      },
     };
   }
 }
