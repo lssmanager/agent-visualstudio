@@ -1,13 +1,9 @@
 /**
  * Barrel — packages/run-engine/src/repositories/
  *
- * Re-exports todas las clases e interfaces de los repositorios.
- *
- * Jerarquía (F0-04):
- *   Agency → Department → Workspace → Agent
- *
- * Ejecución (F0-05):
- *   Run → RunStep
+ * Jerarquía (F0-04):  Agency → Department → Workspace → Agent
+ * Ejecución (F0-05):  Run → RunStep
+ * Gateway (F0-06):    ConversationMessage (append-only)
  */
 
 // ── Jerarquía ──────────────────────────────────────────────────────────────────
@@ -56,3 +52,12 @@ export type {
   FailStepInput,
   FindStepsOptions,
 } from './run-step.repository'
+
+// ── Gateway / Conversaciones ─────────────────────────────────────────────
+
+export { ConversationMessageRepository } from './conversation-message.repository'
+export type {
+  AppendMessageInput,
+  FindMessagesOptions,
+  MessageRole,
+} from './conversation-message.repository'

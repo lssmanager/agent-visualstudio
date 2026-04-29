@@ -8,14 +8,14 @@ export {
 } from './llm-step-executor';
 /**
  * @deprecated Usar RunRepository + RunStepRepository de './repositories'.
- * Este export se mantiene por compatibilidad con FlowExecutor / HierarchyOrchestrator.
+ * Mantenido por compatibilidad con FlowExecutor / HierarchyOrchestrator.
  */
 export { RunRepository as RunRepositoryLegacy } from './run-repository';
 export { ApprovalQueue, type PendingApproval } from './approval-queue';
 export { PolicyResolver, type PolicyResolverContext } from './policy-resolver';
 export { SkillInvoker, type SkillInvokeResult } from './skill-invoker';
 
-// ── F0-04 / F0-05: Repositories ─────────────────────────────────────────────
+// ── F0-04 / F0-05 / F0-06: Repositories ───────────────────────────────────
 export {
   // Jerarquía
   AgencyRepository,
@@ -44,4 +44,9 @@ export {
   type CompleteStepInput,
   type FailStepInput,
   type FindStepsOptions,
+  // Gateway / Conversaciones
+  ConversationMessageRepository,
+  type AppendMessageInput,
+  type FindMessagesOptions,
+  type MessageRole,
 } from './repositories';
