@@ -1,61 +1,9 @@
-export { FlowExecutor, type FlowExecutorOptions, type IRunRepository } from './flow-executor';
-export { StepExecutor, type StepExecutionResult } from './step-executor';
-export {
-  LlmStepExecutor,
-  type GatewayRpcClient,
-  type LlmStepExecutorOptions,
-  BudgetExceededError,
-} from './llm-step-executor';
 /**
- * @deprecated Usar RunRepository + RunStepRepository de './repositories'.
- * Mantenido por compatibilidad con FlowExecutor / HierarchyOrchestrator.
+ * run-engine public API
  */
-export { RunRepository as RunRepositoryLegacy } from './run-repository';
-export { ApprovalQueue, type PendingApproval } from './approval-queue';
-export { PolicyResolver, type PolicyResolverContext } from './policy-resolver';
-export { SkillInvoker, type SkillInvokeResult } from './skill-invoker';
-
-// ── F1a-05: AgentExecutor bridge ──────────────────────────────────────────
-export {
-  AgentExecutor,
-  type AgentExecutorOptions,
-  type ExecuteFlowInput,
-  type ExecuteFlowResult,
-} from './agent-executor';
-export { InMemoryRunRepository } from './in-memory-run-repository';
-
-// ── F0-04 / F0-05 / F0-06: Repositories ───────────────────────────────────
-export {
-  // Jerarquía
-  AgencyRepository,
-  type CreateAgencyInput,
-  type UpdateAgencyInput,
-  type FindAgenciesOptions,
-  DepartmentRepository,
-  type CreateDepartmentInput,
-  type UpdateDepartmentInput,
-  type FindDepartmentsOptions,
-  WorkspaceRepository,
-  type CreateWorkspaceInput,
-  type UpdateWorkspaceInput,
-  type FindWorkspacesOptions,
-  AgentRepository,
-  type CreateAgentInput,
-  type UpdateAgentInput,
-  type FindAgentsOptions,
-  // Ejecución
-  RunRepository,
-  type CreateRunInput,
-  type FindRunsOptions,
-  type CreateApprovalInput,
-  RunStepRepository,
-  type CreateStepInput,
-  type CompleteStepInput,
-  type FailStepInput,
-  type FindStepsOptions,
-  // Gateway / Conversaciones
-  ConversationMessageRepository,
-  type AppendMessageInput,
-  type FindMessagesOptions,
-  type MessageRole,
-} from './repositories';
+export { LLMStepExecutor } from './llm-step-executor';
+export { AgentExecutor } from './agent-executor.service';
+export type { AgentExecutorFn } from './agent-executor.service';
+export { FlowExecutor } from './flow-executor';
+export type { FlowSpec, FlowNode } from './flow-executor';
+export { executeCondition, ConditionSyntaxError, ConditionRuntimeError } from './execute-condition';
