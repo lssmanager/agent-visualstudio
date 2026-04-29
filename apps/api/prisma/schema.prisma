@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Prisma schema — agent-visualstudio
 // Modelos base:  Workspace, Agent, Flow, Skill, Policy, Hook
-//                Channel, LlmProvider, ProviderCatalog
+//                Channel, LlmProvider, ProviderCatalog, OAuthToken
 // Modelos plan:  Run, RunStep, ConversationMessage
 //                BudgetPolicy, BudgetIncident, CostEvent
 //                ModelPolicy, AgentProfile
@@ -194,37 +194,14 @@ model ProviderCatalog {
 
   // ── Capabilities ──────────────────────────────────────────────────────────
   // JSON con flags booleanos del set de capacidades del provider.
-  // Shape recomendado:
-  // {
-  //   "chat": true,
-  //   "streaming": true,
-  //   "functionCalling": true,
-  //   "vision": true,
-  //   "imageGeneration": false,
-  //   "videoGeneration": false,
-  //   "audioTts": false,
-  //   "audioStt": false,
-  //   "realtimeVoice": false,
-  //   "embeddings": false,
-  //   "batchApi": false,
-  //   "codeExecution": false,
-  //   "webSearch": false
-  // }
+  // Shape: { chat, streaming, functionCalling, vision, imageGeneration,
+  //          videoGeneration, audioTts, audioStt, realtimeVoice, embeddings,
+  //          batchApi, codeExecution, webSearch }
   capabilities Json            @default("{}")
 
   // ── Default models ────────────────────────────────────────────────────────
   // JSON con los modelos recomendados por rol.
-  // Shape recomendado:
-  // {
-  //   "primary": "gpt-4o-mini",
-  //   "fast": "gpt-4o-mini",
-  //   "smart": "gpt-4o",
-  //   "embedding": "text-embedding-3-small",
-  //   "image": "gpt-image-2",
-  //   "video": "sora-2",
-  //   "tts": "gpt-4o-mini-tts",
-  //   "stt": "gpt-4o-transcribe"
-  // }
+  // Shape: { primary, fast, smart, embedding, image, video, tts, stt }
   defaultModels Json           @default("{}")
 
   // ── Base URL por defecto ──────────────────────────────────────────────────
@@ -232,9 +209,9 @@ model ProviderCatalog {
   defaultBaseUrl String?
 
   // ── Flags de clasificación ────────────────────────────────────────────────
-  isLocalOnly  Boolean         @default(false)  // Ollama, LM Studio, vLLM, SGLang
+  isLocalOnly    Boolean       @default(false)  // Ollama, LM Studio, vLLM, SGLang
   isOpenAiCompat Boolean       @default(false)  // acepta OpenAI SDK sin adaptador
-  isEnabled    Boolean         @default(true)   // para ocultar providers beta/deprecated
+  isEnabled      Boolean       @default(true)   // para ocultar providers beta/deprecated
 
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
@@ -262,16 +239,60 @@ model LlmProvider {
   baseUrl     String?
 
   // API key / token cifrado (AES-256-GCM: iv:authTag:ciphertext)
-  // null cuando authType = none (Ollama local sin auth) o oauth con token externo
+  // null cuando authType = none (Ollama local sin auth) o authType = oauth
   apiKeyEnc   String?
 
   isDefault   Boolean   @default(false)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
+  // OAuth token — solo presente cuando catalog.authType = oauth
+  oauthToken  OAuthToken?
+
   @@unique([workspaceId, provider])
   @@index([workspaceId])
   @@index([provider])
+}
+
+// ── OAuthToken ────────────────────────────────────────────────────────────────
+// Almacena credenciales OAuth 2.0 (PKCE) por LlmProvider.
+// Ciclo de vida manejado por OAuthService:
+//   - Se crea tras el exchange code → token
+//   - Se refresca automáticamente cuando expiresAt < now() + BUFFER
+//   - accessTokenEnc y refreshTokenEnc cifrados con AES-256-GCM
+//
+// Diseño de token sink (doc OpenClaw):
+//   Un solo registro por LlmProvider garantiza que el refresh token
+//   es canónico en la DB — evita invalidaciones por multi-login.
+
+model OAuthToken {
+  id              String      @id @default(cuid())
+
+  // 1-to-1 con LlmProvider
+  llmProviderId   String      @unique
+  llmProvider     LlmProvider @relation(fields: [llmProviderId], references: [id], onDelete: Cascade)
+
+  // Tokens cifrados (AES-256-GCM: iv:authTag:ciphertext)
+  accessTokenEnc  String      @db.Text
+  refreshTokenEnc String?     @db.Text  // null si el provider no emite refresh token
+
+  // Expiración del access token (Unix ms en UTC)
+  expiresAt       DateTime
+
+  // accountId extraído del JWT del access token (sub claim)
+  // Útil para detectar cambio de cuenta sin descifrar el token
+  accountId       String?
+
+  // Scopes concedidos (lista separada por espacios, como en RFC 6749)
+  scopes          String?
+
+  // Metadatos del proveedor OAuth (client_id usado, etc.)
+  meta            Json        @default("{}")
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([expiresAt])  // para queries de tokens próximos a vencer
 }
 
 // ── Run ───────────────────────────────────────────────────────────────────────
