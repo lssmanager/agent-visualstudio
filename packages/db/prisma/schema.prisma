@@ -9,6 +9,11 @@
 //     (alineación con Plan Maestro OV-06 Audit Trail)
 //   + llm-step-executor: HierarchyOrchestrator wired (ver packages/run-engine)
 //   + ProfilePropagatorService: llamado desde agent.hooks.ts
+// v6 — ModelPolicy:
+//   ~ fallbackModel String? → fallbackChain String[]
+//     Lista ordenada de fallbacks; índice 0 = primer fallback.
+//     Migración: UPDATE model_policies SET fallback_chain = ARRAY[fallback_model]
+//                WHERE fallback_model IS NOT NULL;
 // ============================================================
 
 generator client {
@@ -165,7 +170,7 @@ model AgentProfile {
 }
 
 // ────────────────────────────────────────────────────────────
-// MODEL POLICY — tabla propia (v4)
+// MODEL POLICY — tabla propia (v6)
 // ────────────────────────────────────────────────────────────
 
 model ModelPolicy {
@@ -174,7 +179,11 @@ model ModelPolicy {
   scopeId       String
 
   primaryModel  String
-  fallbackModel String?
+  /// Lista ordenada de modelos fallback.
+  /// Índice 0 = primer intento tras fallo del primary.
+  /// Ejemplo: ["anthropic/claude-3-haiku", "qwen/qwen-plus", "openai/gpt-4o-mini"]
+  /// Migración desde fallbackModel: ver comentario v6 en cabecera del archivo.
+  fallbackChain String[] @default([])
   temperature   Float    @default(0.7)
   maxTokens     Int      @default(4096)
   isOverride    Boolean  @default(false)
