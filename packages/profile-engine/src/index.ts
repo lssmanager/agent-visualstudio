@@ -20,3 +20,12 @@ export type {
 } from './profile-propagator.service.js'
 
 export { ProfilePropagatorService } from './profile-propagator.service.js'
+
+// AgentBuilder — creación/eliminación de agentes con propagación de orchestrator prompts
+export type {
+  CreateAgentInput,
+  UpdateAgentInput,
+  BuiltAgent,
+} from './agent-builder.js'
+
+export { AgentBuilder, OrchestratorPromptPropagator } from './agent-builder.js'
