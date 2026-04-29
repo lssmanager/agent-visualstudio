@@ -4,70 +4,465 @@
  * Unified LLM client factory for run-engine.
  *
  * Provides:
- *   - PROVIDER_MAP     — canonical map of model-prefix → LLMProvider enum
- *   - resolveProvider  — extract the LLMProvider from a "provider/model" id
- *   - buildLLMClient   — factory that returns the correct ProviderAdapter
+ *   - LLMProvider            — enum of all 51 provider families
+ *   - ProviderConfig         — metadata record: adapter, apiKeyEnv, baseURL
+ *   - PROVIDER_CONFIG_MAP    — canonical map of model-prefix → ProviderConfig
+ *   - resolveProviderConfig  — extract ProviderConfig from a "provider/model" id
+ *   - resolveProvider        — backward-compat alias (returns LLMProvider)
+ *   - buildLLMClient         — factory that returns the correct ProviderAdapter
  *
  * Model ID format:  "<provider>/<model>"
- *   openai/gpt-4o
- *   anthropic/claude-3-7-sonnet-20250219
- *   qwen/qwen-plus
- *   deepseek/deepseek-chat
- *   mistral/mistral-large-latest
- *   groq/llama-3-70b-8192
- *   openrouter/<anything>        → OpenRouter gateway
- *   <unknown>/<model>            → falls through to OpenRouter-compat
+ *   openai/gpt-4.1
+ *   anthropic/claude-sonnet-4
+ *   google/gemini-2.5-pro
+ *   kimi/kimi-code                 → AnthropicAdapter (Anthropic-compat)
+ *   ollama/llama3.3                → OpenAIAdapter (local, no key)
+ *   <unknown>/<model>              → falls through to COMPAT / OpenRouter
  *
- * Environment variables consumed:
- *   OPENAI_API_KEY            — required for openai/* models
- *   ANTHROPIC_API_KEY         — required for anthropic/* models
- *   OPENROUTER_API_KEY        — preferred for all other providers
- *   OPENAI_COMPAT_API_KEY     — fallback for non-OpenRouter compat endpoints
- *   OPENAI_COMPAT_BASE_URL    — override base URL (default: OpenRouter)
- *   OPENROUTER_SITE_URL       — optional HTTP-Referer header for OpenRouter
- *   OPENROUTER_SITE_NAME      — optional X-Title header for OpenRouter
+ * API key resolution order (per provider):
+ *   1. apiKeyEnv (primary)
+ *   2. apiKeyEnvAlt[] (alternatives, in order)
+ *   3. OPENROUTER_API_KEY (universal fallback)
+ *   4. OPENAI_COMPAT_API_KEY (legacy fallback)
+ *   Local providers (adapter='local') never throw on missing key.
  */
 
-// ─── Provider enum ─────────────────────────────────────────────────────────
+// ─── Provider enum ────────────────────────────────────────────────────────────
 
 export enum LLMProvider {
-  OPENAI      = 'openai',
-  ANTHROPIC   = 'anthropic',
-  OPENROUTER  = 'openrouter',
-  QWEN        = 'qwen',
-  DEEPSEEK    = 'deepseek',
-  MISTRAL     = 'mistral',
-  GROQ        = 'groq',
+  OPENAI          = 'openai',
+  ANTHROPIC       = 'anthropic',
+  OPENROUTER      = 'openrouter',
+
+  // OpenAI-compat with dedicated API key + own baseURL
+  GOOGLE          = 'google',
+  XAI             = 'xai',
+  DEEPSEEK        = 'deepseek',
+  QWEN            = 'qwen',
+  MISTRAL         = 'mistral',
+  GROQ            = 'groq',
+  TOGETHER        = 'together',
+  CEREBRAS        = 'cerebras',
+  NVIDIA          = 'nvidia',
+  MOONSHOT        = 'moonshot',
+  STEPFUN         = 'stepfun',
+  STEPFUN_PLAN    = 'stepfun-plan',
+  QIANFAN         = 'qianfan',
+  MINIMAX         = 'minimax',
+  MINIMAX_PORTAL  = 'minimax-portal',
+  VOLCENGINE      = 'volcengine',
+  VOLCENGINE_PLAN = 'volcengine-plan',
+  BYTEPLUS        = 'byteplus',
+  BYTEPLUS_PLAN   = 'byteplus-plan',
+  HUGGINGFACE     = 'huggingface',
+  DEEPINFRA       = 'deepinfra',
+  ZAI             = 'zai',
+  XIAOMI          = 'xiaomi',
+  VENICE          = 'venice',
+  FIREWORKS       = 'fireworks',
+  PERPLEXITY      = 'perplexity',
+  ARCEE           = 'arcee',
+  GRADIUM         = 'gradium',
+  CHUTES          = 'chutes',
+  INFERRS         = 'inferrs',
+  VYDRA           = 'vydra',
+  TENCENT         = 'tencent',
+
+  // Gateways (proxy OpenAI-compat)
+  KILOCODE              = 'kilocode',
+  VERCEL_AI_GATEWAY     = 'vercel-ai-gateway',
+  CLOUDFLARE_AI_GATEWAY = 'cloudflare-ai-gateway',
+  LITELLM               = 'litellm',
+  OPENCODE              = 'opencode',
+  OPENCODE_GO           = 'opencode-go',
+  GITHUB_COPILOT        = 'github-copilot',
+
+  // Anthropic-compatible (NOT openai-compat)
+  KIMI      = 'kimi',
+  SYNTHETIC = 'synthetic',
+
+  // OpenAI-Codex OAuth (subscription — no per-token billing)
+  OPENAI_CODEX = 'openai-codex',
+
+  // Local (no API key required, hardcoded local baseURL)
+  OLLAMA   = 'ollama',
+  LMSTUDIO = 'lmstudio',
+  VLLM     = 'vllm',
+  SGLANG   = 'sglang',
+
   /** Any OpenAI-compatible endpoint not listed above */
-  COMPAT      = 'compat',
+  COMPAT = 'compat',
 }
 
+// ─── ProviderConfig ──────────────────────────────────────────────────────────
+
+export interface ProviderConfig {
+  provider: LLMProvider;
+  /** Primary env var for the API key */
+  apiKeyEnv?: string;
+  /** Alternative env vars (tried in order after apiKeyEnv) */
+  apiKeyEnvAlt?: string[];
+  /** Fixed baseURL for this provider (absent = use OpenAI default) */
+  baseURL?: string;
+  /** Transport adapter to use */
+  adapter: 'openai' | 'anthropic' | 'local';
+}
+
+// ─── PROVIDER_CONFIG_MAP ─────────────────────────────────────────────────────
+
 /**
- * Canonical mapping from model-id prefix to LLMProvider.
+ * Canonical mapping from model-id prefix → ProviderConfig.
  *
  * Keys are the first segment of the model id before the first "/".
- * Prefixes NOT in this map fall through to COMPAT (OpenRouter-compat).
+ * Unknown prefixes fall through to COMPAT (OpenRouter-compat gateway).
  */
-export const PROVIDER_MAP: Readonly<Record<string, LLMProvider>> = {
-  openai:     LLMProvider.OPENAI,
-  anthropic:  LLMProvider.ANTHROPIC,
-  openrouter: LLMProvider.OPENROUTER,
-  qwen:       LLMProvider.QWEN,
-  deepseek:   LLMProvider.DEEPSEEK,
-  mistral:    LLMProvider.MISTRAL,
-  groq:       LLMProvider.GROQ,
+export const PROVIDER_CONFIG_MAP: Readonly<Record<string, ProviderConfig>> = {
+
+  // ── Native adapters ─────────────────────────────────────────────────────
+  'openai': {
+    provider: LLMProvider.OPENAI,
+    apiKeyEnv: 'OPENAI_API_KEY',
+    adapter: 'openai',
+  },
+  'openai-codex': {
+    provider: LLMProvider.OPENAI_CODEX,
+    apiKeyEnv: 'OPENAI_API_KEY',
+    adapter: 'openai',
+  },
+  'anthropic': {
+    provider: LLMProvider.ANTHROPIC,
+    apiKeyEnv: 'ANTHROPIC_API_KEY',
+    adapter: 'anthropic',
+  },
+
+  // ── OpenAI-compat with own baseURL ──────────────────────────────────────
+  'google': {
+    provider: LLMProvider.GOOGLE,
+    apiKeyEnv: 'GEMINI_API_KEY',
+    apiKeyEnvAlt: ['GOOGLE_API_KEY'],
+    baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    adapter: 'openai',
+  },
+  'xai': {
+    provider: LLMProvider.XAI,
+    apiKeyEnv: 'XAI_API_KEY',
+    baseURL: 'https://api.x.ai/v1',
+    adapter: 'openai',
+  },
+  'deepseek': {
+    provider: LLMProvider.DEEPSEEK,
+    apiKeyEnv: 'DEEPSEEK_API_KEY',
+    baseURL: 'https://api.deepseek.com/v1',
+    adapter: 'openai',
+  },
+  'qwen': {
+    provider: LLMProvider.QWEN,
+    apiKeyEnv: 'QWEN_API_KEY',
+    apiKeyEnvAlt: ['MODELSTUDIO_API_KEY', 'DASHSCOPE_API_KEY'],
+    baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+    adapter: 'openai',
+  },
+  'mistral': {
+    provider: LLMProvider.MISTRAL,
+    apiKeyEnv: 'MISTRAL_API_KEY',
+    baseURL: 'https://api.mistral.ai/v1',
+    adapter: 'openai',
+  },
+  'groq': {
+    provider: LLMProvider.GROQ,
+    apiKeyEnv: 'GROQ_API_KEY',
+    baseURL: 'https://api.groq.com/openai/v1',
+    adapter: 'openai',
+  },
+  'together': {
+    provider: LLMProvider.TOGETHER,
+    apiKeyEnv: 'TOGETHER_API_KEY',
+    baseURL: 'https://api.together.xyz/v1',
+    adapter: 'openai',
+  },
+  'cerebras': {
+    provider: LLMProvider.CEREBRAS,
+    apiKeyEnv: 'CEREBRAS_API_KEY',
+    baseURL: 'https://api.cerebras.ai/v1',
+    adapter: 'openai',
+  },
+  'nvidia': {
+    provider: LLMProvider.NVIDIA,
+    apiKeyEnv: 'NVIDIA_API_KEY',
+    baseURL: 'https://integrate.api.nvidia.com/v1',
+    adapter: 'openai',
+  },
+  'moonshot': {
+    provider: LLMProvider.MOONSHOT,
+    apiKeyEnv: 'MOONSHOT_API_KEY',
+    baseURL: 'https://api.moonshot.ai/v1',
+    adapter: 'openai',
+  },
+  'stepfun': {
+    provider: LLMProvider.STEPFUN,
+    apiKeyEnv: 'STEPFUN_API_KEY',
+    baseURL: 'https://api.stepfun.com/v1',
+    adapter: 'openai',
+  },
+  'stepfun-plan': {
+    provider: LLMProvider.STEPFUN_PLAN,
+    apiKeyEnv: 'STEPFUN_API_KEY',
+    baseURL: 'https://api.stepfun.com/v1',
+    adapter: 'openai',
+  },
+  'qianfan': {
+    provider: LLMProvider.QIANFAN,
+    apiKeyEnv: 'QIANFAN_API_KEY',
+    baseURL: 'https://qianfan.baidubce.com/v2',
+    adapter: 'openai',
+  },
+  'minimax': {
+    provider: LLMProvider.MINIMAX,
+    apiKeyEnv: 'MINIMAX_API_KEY',
+    baseURL: 'https://api.minimax.chat/v1',
+    adapter: 'openai',
+  },
+  'minimax-portal': {
+    provider: LLMProvider.MINIMAX_PORTAL,
+    apiKeyEnv: 'MINIMAX_OAUTH_TOKEN',
+    apiKeyEnvAlt: ['MINIMAX_API_KEY'],
+    baseURL: 'https://api.minimax.chat/v1',
+    adapter: 'openai',
+  },
+  'volcengine': {
+    provider: LLMProvider.VOLCENGINE,
+    apiKeyEnv: 'VOLCANO_ENGINE_API_KEY',
+    baseURL: 'https://ark.cn-beijing.volces.com/api/v3',
+    adapter: 'openai',
+  },
+  'volcengine-plan': {
+    provider: LLMProvider.VOLCENGINE_PLAN,
+    apiKeyEnv: 'VOLCANO_ENGINE_API_KEY',
+    baseURL: 'https://ark.cn-beijing.volces.com/api/v3',
+    adapter: 'openai',
+  },
+  'byteplus': {
+    provider: LLMProvider.BYTEPLUS,
+    apiKeyEnv: 'BYTEPLUS_API_KEY',
+    baseURL: 'https://ark.ap-southeast.bytepluses.com/api/v3',
+    adapter: 'openai',
+  },
+  'byteplus-plan': {
+    provider: LLMProvider.BYTEPLUS_PLAN,
+    apiKeyEnv: 'BYTEPLUS_API_KEY',
+    baseURL: 'https://ark.ap-southeast.bytepluses.com/api/v3',
+    adapter: 'openai',
+  },
+  'huggingface': {
+    provider: LLMProvider.HUGGINGFACE,
+    apiKeyEnv: 'HUGGINGFACE_HUB_TOKEN',
+    apiKeyEnvAlt: ['HF_TOKEN'],
+    baseURL: 'https://router.huggingface.co/v1',
+    adapter: 'openai',
+  },
+  'deepinfra': {
+    provider: LLMProvider.DEEPINFRA,
+    apiKeyEnv: 'DEEPINFRA_API_KEY',
+    baseURL: 'https://api.deepinfra.com/v1/openai',
+    adapter: 'openai',
+  },
+  'zai': {
+    provider: LLMProvider.ZAI,
+    apiKeyEnv: 'ZAI_API_KEY',
+    baseURL: 'https://api.z.ai/api/paas/v4',
+    adapter: 'openai',
+  },
+  // aliases for zai
+  'z.ai': {
+    provider: LLMProvider.ZAI,
+    apiKeyEnv: 'ZAI_API_KEY',
+    baseURL: 'https://api.z.ai/api/paas/v4',
+    adapter: 'openai',
+  },
+  'z-ai': {
+    provider: LLMProvider.ZAI,
+    apiKeyEnv: 'ZAI_API_KEY',
+    baseURL: 'https://api.z.ai/api/paas/v4',
+    adapter: 'openai',
+  },
+  'xiaomi': {
+    provider: LLMProvider.XIAOMI,
+    apiKeyEnv: 'XIAOMI_API_KEY',
+    baseURL: 'https://api.micloud.xiaomi.net/v1',
+    adapter: 'openai',
+  },
+  'venice': {
+    provider: LLMProvider.VENICE,
+    apiKeyEnv: 'VENICE_API_KEY',
+    baseURL: 'https://api.venice.ai/api/v1',
+    adapter: 'openai',
+  },
+  'fireworks': {
+    provider: LLMProvider.FIREWORKS,
+    apiKeyEnv: 'FIREWORKS_API_KEY',
+    baseURL: 'https://api.fireworks.ai/inference/v1',
+    adapter: 'openai',
+  },
+  'perplexity': {
+    provider: LLMProvider.PERPLEXITY,
+    apiKeyEnv: 'PERPLEXITY_API_KEY',
+    baseURL: 'https://api.perplexity.ai',
+    adapter: 'openai',
+  },
+  'arcee': {
+    provider: LLMProvider.ARCEE,
+    apiKeyEnv: 'ARCEE_API_KEY',
+    baseURL: 'https://conductor.arcee.ai/v1',
+    adapter: 'openai',
+  },
+  'gradium': {
+    provider: LLMProvider.GRADIUM,
+    apiKeyEnv: 'GRADIUM_API_KEY',
+    baseURL: 'https://api.gradium.ai/v1',
+    adapter: 'openai',
+  },
+  'chutes': {
+    provider: LLMProvider.CHUTES,
+    apiKeyEnv: 'CHUTES_API_KEY',
+    baseURL: 'https://llm.chutes.ai/v1',
+    adapter: 'openai',
+  },
+  'inferrs': {
+    provider: LLMProvider.INFERRS,
+    apiKeyEnv: 'INFERRS_API_KEY',
+    baseURL: 'https://api.inferrs.com/v1',
+    adapter: 'openai',
+  },
+  'vydra': {
+    provider: LLMProvider.VYDRA,
+    apiKeyEnv: 'VYDRA_API_KEY',
+    baseURL: 'https://api.vydra.io/v1',
+    adapter: 'openai',
+  },
+  'tencent': {
+    provider: LLMProvider.TENCENT,
+    apiKeyEnv: 'TENCENT_API_KEY',
+    baseURL: 'https://api.hunyuan.cloud.tencent.com/v1',
+    adapter: 'openai',
+  },
+
+  // ── Gateways (proxy OpenAI-compat) ──────────────────────────────────────
+  'openrouter': {
+    provider: LLMProvider.OPENROUTER,
+    apiKeyEnv: 'OPENROUTER_API_KEY',
+    baseURL: 'https://openrouter.ai/api/v1',
+    adapter: 'openai',
+  },
+  'kilocode': {
+    provider: LLMProvider.KILOCODE,
+    apiKeyEnv: 'KILOCODE_API_KEY',
+    baseURL: 'https://api.kilo.ai/api/gateway',
+    adapter: 'openai',
+  },
+  'vercel-ai-gateway': {
+    provider: LLMProvider.VERCEL_AI_GATEWAY,
+    apiKeyEnv: 'AI_GATEWAY_API_KEY',
+    baseURL: 'https://ai-gateway.vercel.sh',
+    adapter: 'openai',
+  },
+  'cloudflare-ai-gateway': {
+    provider: LLMProvider.CLOUDFLARE_AI_GATEWAY,
+    apiKeyEnv: 'CLOUDFLARE_AI_GATEWAY_API_KEY',
+    baseURL: 'https://gateway.ai.cloudflare.com/v1',
+    adapter: 'openai',
+  },
+  'litellm': {
+    provider: LLMProvider.LITELLM,
+    apiKeyEnv: 'LITELLM_API_KEY',
+    baseURL: process.env['LITELLM_BASE_URL'] ?? 'http://localhost:4000',
+    adapter: 'openai',
+  },
+  'opencode': {
+    provider: LLMProvider.OPENCODE,
+    apiKeyEnv: 'OPENCODE_API_KEY',
+    baseURL: 'https://api.opencode.ai/v1',
+    adapter: 'openai',
+  },
+  'opencode-go': {
+    provider: LLMProvider.OPENCODE_GO,
+    apiKeyEnv: 'OPENCODE_ZEN_API_KEY',
+    apiKeyEnvAlt: ['OPENCODE_API_KEY'],
+    baseURL: 'https://api.opencode.ai/v1',
+    adapter: 'openai',
+  },
+  'github-copilot': {
+    provider: LLMProvider.GITHUB_COPILOT,
+    apiKeyEnv: 'COPILOT_GITHUB_TOKEN',
+    apiKeyEnvAlt: ['GH_TOKEN', 'GITHUB_TOKEN'],
+    baseURL: 'https://api.githubcopilot.com',
+    adapter: 'openai',
+  },
+
+  // ── Anthropic-compat (use AnthropicAdapter with custom baseURL) ──────────
+  'kimi': {
+    provider: LLMProvider.KIMI,
+    apiKeyEnv: 'KIMI_API_KEY',
+    apiKeyEnvAlt: ['KIMICODE_API_KEY'],
+    baseURL: 'https://api.moonshot.ai/anthropic',
+    adapter: 'anthropic',
+  },
+  'synthetic': {
+    provider: LLMProvider.SYNTHETIC,
+    apiKeyEnv: 'SYNTHETIC_API_KEY',
+    baseURL: 'https://api.synthetic.new/anthropic',
+    adapter: 'anthropic',
+  },
+
+  // ── Local (no API key required, local baseURL) ───────────────────────────
+  'ollama': {
+    provider: LLMProvider.OLLAMA,
+    adapter: 'local',
+    baseURL: process.env['OLLAMA_BASE_URL'] ?? 'http://127.0.0.1:11434/v1',
+  },
+  'lmstudio': {
+    provider: LLMProvider.LMSTUDIO,
+    apiKeyEnv: 'LM_API_TOKEN',
+    adapter: 'local',
+    baseURL: process.env['LM_STUDIO_BASE_URL'] ?? 'http://localhost:1234/v1',
+  },
+  'vllm': {
+    provider: LLMProvider.VLLM,
+    apiKeyEnv: 'VLLM_API_KEY',
+    adapter: 'local',
+    baseURL: process.env['VLLM_BASE_URL'] ?? 'http://127.0.0.1:8000/v1',
+  },
+  'sglang': {
+    provider: LLMProvider.SGLANG,
+    apiKeyEnv: 'SGLANG_API_KEY',
+    adapter: 'local',
+    baseURL: process.env['SGLANG_BASE_URL'] ?? 'http://127.0.0.1:30000/v1',
+  },
 } as const;
 
 /**
- * Resolve the LLMProvider for a given model identifier.
+ * Resolve the ProviderConfig for a given model identifier.
  *
- * @param modelId  e.g. "openai/gpt-4o", "qwen/qwen-plus", "gpt-4o"
- * @returns        The resolved LLMProvider (COMPAT for unknown prefixes)
+ * @param modelId  e.g. "google/gemini-2.5-pro", "ollama/llama3.3", "z.ai/glm-5.1"
+ * @returns        Resolved ProviderConfig, or COMPAT fallback for unknown prefixes
+ */
+export function resolveProviderConfig(modelId: string): ProviderConfig {
+  const prefix = modelId.includes('/')
+    ? modelId.split('/')[0].toLowerCase()
+    : modelId.toLowerCase();
+  return (
+    PROVIDER_CONFIG_MAP[prefix] ?? {
+      provider: LLMProvider.COMPAT,
+      adapter: 'openai' as const,
+    }
+  );
+}
+
+/**
+ * Backward-compatible alias — returns only the LLMProvider enum value.
+ * Prefer resolveProviderConfig() for new code.
  */
 export function resolveProvider(modelId: string): LLMProvider {
-  if (!modelId.includes('/')) return LLMProvider.COMPAT;
-  const prefix = modelId.split('/')[0].toLowerCase();
-  return PROVIDER_MAP[prefix] ?? LLMProvider.COMPAT;
+  return resolveProviderConfig(modelId).provider;
 }
 
 // ─── Shared message / tool types ─────────────────────────────────────────────
@@ -120,7 +515,20 @@ export interface ProviderAdapter {
   ): Promise<LlmResponse>;
 }
 
-// ─── OpenAI adapter (covers openai/* and all compat endpoints) ─────────────
+// ─── Error types ─────────────────────────────────────────────────────────────
+
+export class MissingApiKeyError extends Error {
+  constructor(provider: LLMProvider, triedEnvVars: string[]) {
+    super(
+      `[llm-client] No API key found for provider '${provider}'. ` +
+      `Tried env vars: ${triedEnvVars.join(', ')}. ` +
+      `Set one of these env vars or OPENROUTER_API_KEY as a universal fallback.`,
+    );
+    this.name = 'MissingApiKeyError';
+  }
+}
+
+// ─── OpenAI adapter (covers openai/* and all compat endpoints) ───────────────
 
 interface OpenAIClientLike {
   chat: { completions: { create(params: Record<string, unknown>): Promise<unknown> } };
@@ -253,7 +661,11 @@ interface AnthropicApiResponse {
 }
 
 export class AnthropicAdapter implements ProviderAdapter {
-  constructor(private readonly apiKey: string) {}
+  constructor(
+    private readonly apiKey: string,
+    /** Override base URL for Anthropic-compat endpoints (e.g. kimi, synthetic) */
+    private readonly baseURL?: string,
+  ) {}
 
   async chat(
     messages: ChatMessage[],
@@ -300,7 +712,10 @@ export class AnthropicAdapter implements ProviderAdapter {
     if (systemMsg?.content)    body.system = systemMsg.content;
     if (anthropicTools.length) body.tools  = anthropicTools;
 
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const baseURL = this.baseURL ?? 'https://api.anthropic.com';
+    const url     = `${baseURL}/v1/messages`;
+
+    const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type':      'application/json',
@@ -339,87 +754,109 @@ export class AnthropicAdapter implements ProviderAdapter {
   }
 }
 
-// ─── buildLLMClient factory ────────────────────────────────────────────────
+// ─── Internal helpers ────────────────────────────────────────────────────────
+
+/** Strip the provider prefix from a model id: "openai/gpt-4o" → "gpt-4o" */
+function stripProviderPrefix(modelId: string): string {
+  const idx = modelId.indexOf('/');
+  return idx === -1 ? modelId : modelId.slice(idx + 1);
+}
+
+/**
+ * Resolve the API key from env vars in priority order.
+ * Local adapters never throw — they return '' if no key is set.
+ */
+function resolveApiKey(config: ProviderConfig): string {
+  // Local providers don't need a key
+  if (config.adapter === 'local') {
+    return config.apiKeyEnv
+      ? (process.env[config.apiKeyEnv] ?? '')
+      : '';
+  }
+
+  // Walk env vars in priority order
+  const envVars = [
+    config.apiKeyEnv,
+    ...(config.apiKeyEnvAlt ?? []),
+  ].filter((v): v is string => Boolean(v));
+
+  for (const envVar of envVars) {
+    const key = process.env[envVar];
+    if (key) return key;
+  }
+
+  // Universal fallback: OPENROUTER routes most providers
+  const fallback =
+    process.env['OPENROUTER_API_KEY'] ??
+    process.env['OPENAI_COMPAT_API_KEY'];
+  if (fallback) return fallback;
+
+  throw new MissingApiKeyError(config.provider, envVars);
+}
+
+// ─── buildLLMClient factory ───────────────────────────────────────────────────
 
 /**
  * Build the correct ProviderAdapter for a given model identifier.
  *
- * Routes by provider prefix (see PROVIDER_MAP). Unknown prefixes are
- * routed to the OpenAI-compat endpoint (OpenRouter by default).
+ * Routing logic:
+ *   1. Resolve config via resolveProviderConfig()
+ *   2. Resolve API key (env cascade → OpenRouter fallback)
+ *   3. Dispatch to correct adapter
  *
  * @param modelId  Full model id in "<provider>/<model>" format.
- * @throws         Error if the required API key env var is not set.
+ * @throws         MissingApiKeyError if no API key can be resolved.
  *
  * @example
- *   const client = buildLLMClient('openai/gpt-4o');
- *   const resp   = await client.chat(messages, tools, { model, temperature: 0.7, maxTokens: 4096 });
+ *   buildLLMClient('google/gemini-2.5-pro')
+ *   // → OpenAIAdapter(GEMINI_API_KEY, 'https://generativelanguage.googleapis.com/v1beta/openai')
+ *
+ *   buildLLMClient('kimi/kimi-code')
+ *   // → AnthropicAdapter(KIMI_API_KEY, 'https://api.moonshot.ai/anthropic')
+ *
+ *   buildLLMClient('ollama/llama3.3')
+ *   // → OpenAIAdapter('', 'http://127.0.0.1:11434/v1')
  */
 export function buildLLMClient(modelId: string): ProviderAdapter {
-  const provider = resolveProvider(modelId);
+  const config = resolveProviderConfig(modelId);
+  const apiKey = resolveApiKey(config);
 
-  // ── Anthropic ───────────────────────────────────────────────────────
-  if (provider === LLMProvider.ANTHROPIC) {
-    const key = process.env.ANTHROPIC_API_KEY;
-    if (!key) throw new MissingApiKeyError('ANTHROPIC_API_KEY', 'anthropic', modelId);
-    return new AnthropicAdapter(key);
+  // ── Anthropic native ──────────────────────────────────────────────────────
+  if (config.provider === LLMProvider.ANTHROPIC) {
+    // No baseURL override — always hits api.anthropic.com
+    return new AnthropicAdapter(apiKey);
   }
 
-  // ── OpenAI native ───────────────────────────────────────────────
-  if (provider === LLMProvider.OPENAI) {
-    const key = process.env.OPENAI_API_KEY;
-    if (!key) throw new MissingApiKeyError('OPENAI_API_KEY', 'openai', modelId);
-    return new OpenAIAdapter(key);
+  // ── Anthropic-compat (kimi, synthetic) ───────────────────────────────────
+  if (config.adapter === 'anthropic') {
+    return new AnthropicAdapter(apiKey, config.baseURL);
   }
 
-  // ── All other providers → OpenRouter / compat endpoint ────────────────
-  //
-  // Provider precedence:
-  //   1. OPENROUTER_API_KEY + openrouter.ai base URL (default)
-  //   2. OPENAI_COMPAT_API_KEY + OPENAI_COMPAT_BASE_URL (self-hosted)
-  //
-  // Optional OpenRouter headers:
-  //   OPENROUTER_SITE_URL  → HTTP-Referer   (rate-limit tier / attribution)
-  //   OPENROUTER_SITE_NAME → X-Title        (displayed in dashboard)
-  const key     = process.env.OPENROUTER_API_KEY ?? process.env.OPENAI_COMPAT_API_KEY;
-  const baseURL = process.env.OPENAI_COMPAT_BASE_URL ?? 'https://openrouter.ai/api/v1';
-  if (!key) {
-    throw new MissingApiKeyError(
-      'OPENROUTER_API_KEY',
-      resolveProvider(modelId),
-      modelId,
-      'Also accepts OPENAI_COMPAT_API_KEY for self-hosted endpoints.',
-    );
-  }
-
-  const extraHeaders: Record<string, string> = {};
-  if (process.env.OPENROUTER_SITE_URL)  extraHeaders['HTTP-Referer'] = process.env.OPENROUTER_SITE_URL;
-  if (process.env.OPENROUTER_SITE_NAME) extraHeaders['X-Title']      = process.env.OPENROUTER_SITE_NAME;
-
-  return new OpenAIAdapter(key, baseURL, Object.keys(extraHeaders).length ? extraHeaders : undefined);
-}
-
-// ─── MissingApiKeyError ────────────────────────────────────────────────
-
-export class MissingApiKeyError extends Error {
-  constructor(
-    public readonly envVar: string,
-    public readonly provider: LLMProvider | string,
-    public readonly modelId: string,
-    hint?: string,
+  // ── OpenAI native (no baseURL override) ──────────────────────────────────
+  if (
+    config.provider === LLMProvider.OPENAI ||
+    config.provider === LLMProvider.OPENAI_CODEX
   ) {
-    const base = `Missing API key: ${envVar} is required for provider '${provider}' (model: ${modelId})`;
-    super(hint ? `${base}. ${hint}` : base);
-    this.name = 'MissingApiKeyError';
+    return new OpenAIAdapter(apiKey);
   }
-}
 
-// ─── Internal helpers ──────────────────────────────────────────────────
+  // ── Local + all OpenAI-compat (use config.baseURL or OpenRouter fallback) ─
+  const baseURL =
+    config.baseURL ??
+    process.env['OPENAI_COMPAT_BASE_URL'] ??
+    'https://openrouter.ai/api/v1';
 
-/**
- * Strip the provider prefix from a model id.
- * "openai/gpt-4o" → "gpt-4o"
- * "gpt-4o"         → "gpt-4o"  (no-op)
- */
-export function stripProviderPrefix(modelId: string): string {
-  return modelId.includes('/') ? modelId.split('/').slice(1).join('/') : modelId;
+  const defaultHeaders: Record<string, string> = {};
+  if (config.provider === LLMProvider.OPENROUTER) {
+    const siteUrl  = process.env['OPENROUTER_SITE_URL'];
+    const siteName = process.env['OPENROUTER_SITE_NAME'];
+    if (siteUrl)  defaultHeaders['HTTP-Referer'] = siteUrl;
+    if (siteName) defaultHeaders['X-Title']      = siteName;
+  }
+
+  return new OpenAIAdapter(
+    apiKey,
+    baseURL,
+    Object.keys(defaultHeaders).length ? defaultHeaders : undefined,
+  );
 }
