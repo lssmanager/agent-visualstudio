@@ -1,0 +1,108 @@
+name: "📋 Tarea del plan"
+description: "Template para issues del plan maestro (F0–F6)"
+title: "[F?-??] Título de la tarea"
+labels: []
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Usa el ID del plan maestro como prefijo: `[F0-01]`, `[F1a-03]`, etc.
+        Ver: [plan-master.md](../docs/plan-master.md) | [plan-gantt.md](../docs/plan-gantt.md)
+
+  - type: input
+    id: task_id
+    attributes:
+      label: ID de tarea
+      description: Identificador del plan maestro
+      placeholder: "F0-01"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Fase
+      options:
+        - F0 — Cimientos de datos
+        - F1a — Ejecución LLM real
+        - F1b — Skills reales (MCP + N8N)
+        - F2a — Orquestación jerárquica real
+        - F2b — Propagación automática de perfiles
+        - F3a — Gateway WebChat + Telegram
+        - F3b — Security layer
+        - F4a — Integración N8N completa
+        - F4b — N8N Studio Helper
+        - F5 — Canales adicionales
+        - F6 — Frontend Canvas / Ops / Config
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Prioridad / tipo
+      options:
+        - "🔴 Bloqueante — bloquea el milestone"
+        - "🟠 Urgente — alta prioridad, no bloquea directamente"
+        - "🟡 Requerido cierre — requerido para cerrar el milestone"
+        - "⚪ Normal — puede diferirse dentro de la fase"
+        - "🔵 Opcional — mejora, puede diferirse a fase posterior"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Área
+      options:
+        - backend
+        - frontend
+        - infra
+        - testing
+        - security
+      multiple: true
+    validations:
+      required: true
+
+  - type: input
+    id: module
+    attributes:
+      label: Módulo / ruta
+      description: Ruta principal del archivo o carpeta afectada
+      placeholder: "packages/run-engine/src/repositories/"
+    validations:
+      required: true
+
+  - type: textarea
+    id: depends_on
+    attributes:
+      label: Depende de
+      description: IDs de tareas que deben completarse primero (separados por coma)
+      placeholder: "F0-01, F0-02"
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Descripción
+      description: ¿Qué se implementa y por qué?
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Criterio de aceptación
+      description: ¿Cómo sabremos que esta tarea está completada?
+      value: |
+        - [ ] El código compila sin errores (`npm run build`)
+        - [ ] Los tests pasan (`npm test`)
+        - [ ] El PR fue revisado y aprobado
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notas técnicas (opcional)
+      description: Decisiones de diseño, referencias, ADRs relevantes, etc.
