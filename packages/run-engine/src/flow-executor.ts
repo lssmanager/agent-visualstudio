@@ -5,12 +5,23 @@ import type { FlowSpec, FlowNode, FlowEdge } from '../../core-types/src';
 import type { RunSpec, RunStep, RunStatus, StepStatus, RunTrigger } from '../../core-types/src';
 
 import { StepExecutor, type StepExecutionResult } from './step-executor';
-import { RunRepository } from './run-repository';
 import { ApprovalQueue } from './approval-queue';
+
+/**
+ * Minimal synchronous repository interface consumed by FlowExecutor.
+ *
+ * Deliberately sync so FlowExecutor's graph-walk loop stays simple.
+ * Production wiring: AgentExecutor passes an InMemoryRunRepository here
+ * and syncs the results to Prisma after execution completes.
+ */
+export interface IRunRepository {
+  save(run: RunSpec): void;
+  findById(runId: string): RunSpec | null;
+}
 
 export interface FlowExecutorOptions {
   workspaceId: string;
-  repository: RunRepository;
+  repository: IRunRepository;
   approvalQueue: ApprovalQueue;
   /**
    * stepExecutor explícito — usar cuando se quiere control total sobre
@@ -38,7 +49,7 @@ export interface FlowExecutorOptions {
  */
 export class FlowExecutor {
   private readonly workspaceId: string;
-  private readonly repository: RunRepository;
+  private readonly repository: IRunRepository;
   private readonly stepExecutor: StepExecutor;
   private readonly approvalQueue: ApprovalQueue;
 
@@ -218,7 +229,11 @@ export class FlowExecutor {
     return roots[0] ?? flow.nodes[0];
   }
 
-  private resolveNextNode(flow: FlowSpec, currentNode: FlowNode, result: StepExecutionResult): string | null {
+  private resolveNextNode(
+    flow: FlowSpec,
+    currentNode: FlowNode,
+    result: StepExecutionResult,
+  ): string | null {
     const outEdges = flow.edges.filter((e) => e.from === currentNode.id);
     if (outEdges.length === 0) return null;
 

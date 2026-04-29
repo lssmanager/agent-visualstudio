@@ -1,4 +1,4 @@
-export { FlowExecutor, type FlowExecutorOptions } from './flow-executor';
+export { FlowExecutor, type FlowExecutorOptions, type IRunRepository } from './flow-executor';
 export { StepExecutor, type StepExecutionResult } from './step-executor';
 export {
   LlmStepExecutor,
@@ -14,6 +14,15 @@ export { RunRepository as RunRepositoryLegacy } from './run-repository';
 export { ApprovalQueue, type PendingApproval } from './approval-queue';
 export { PolicyResolver, type PolicyResolverContext } from './policy-resolver';
 export { SkillInvoker, type SkillInvokeResult } from './skill-invoker';
+
+// ── F1a-05: AgentExecutor bridge ──────────────────────────────────────────
+export {
+  AgentExecutor,
+  type AgentExecutorOptions,
+  type ExecuteFlowInput,
+  type ExecuteFlowResult,
+} from './agent-executor';
+export { InMemoryRunRepository } from './in-memory-run-repository';
 
 // ── F0-04 / F0-05 / F0-06: Repositories ───────────────────────────────────
 export {
