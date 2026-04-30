@@ -30,6 +30,7 @@ import { registerRunsStreamRoutes } from './modules/runtime/runs-stream.controll
 import { registerDashboardRoutes } from './modules/dashboard/dashboard.controller';
 import { registerLlmProvidersRoutes } from './modules/llm-providers/llm-providers.controller';
 import { registerCatalogRoutes } from './modules/catalog/catalog.controller';
+import { registerSettingsRoutes } from './modules/settings';
 
 export function registerRoutes(app: Express) {
   const router = Router();
@@ -70,6 +71,8 @@ export function registerRoutes(app: Express) {
   registerLlmProvidersRoutes(router);
   // Model Catalog (ModelCatalogEntry + ProviderCredential sync)
   registerCatalogRoutes(router);
+  // Settings UI — API keys, providers, n8n config (single-tenant)
+  registerSettingsRoutes(router);
 
   app.use(studioConfig.apiPrefix, router);
 }
