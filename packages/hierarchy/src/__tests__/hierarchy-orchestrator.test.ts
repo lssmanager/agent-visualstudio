@@ -275,13 +275,22 @@ describe('HierarchyOrchestrator — AgentExecutionResult contract', () => {
   });
 
   it('supervisor-guided decomposition routes tasks by agent id', async () => {
+    // F2a-05c: decomposeTask() now uses parseDelegateBlocks() — mock must emit
+    // ---DELEGATE--- blocks, not raw JSON. Detection covers both the legacy
+    // 'Decompose' keyword (used in the task string) and 'Available agents'
+    // (present in every decomposeTask() prompt after F2a-05b).
     const supervisorFn: SupervisorFn = vi.fn().mockImplementation(async (prompt: string) => {
-      // Called for decomposition and consolidation
-      if (prompt.includes('Decompose')) {
-        return JSON.stringify([
-          { agentId: 'agent-a', task: 'Handle part A' },
-          { agentId: 'agent-b', task: 'Handle part B' },
-        ]);
+      if (prompt.includes('Decompose') || prompt.includes('Available agents')) {
+        return [
+          '---DELEGATE---',
+          'TO: agent-a',
+          'TASK: Handle part A',
+          '---END---',
+          '---DELEGATE---',
+          'TO: agent-b',
+          'TASK: Handle part B',
+          '---END---',
+        ].join('\n');
       }
       return 'Consolidated result from supervisor';
     });
