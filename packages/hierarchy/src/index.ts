@@ -7,6 +7,8 @@ export type {
   AgentExecutorFn,
   SupervisorFn,
   OrchestratorOptions,
+  StepStatusResult,
+  RouteDecision,
 } from './hierarchy-orchestrator.js'
 
 export { HierarchyOrchestrator } from './hierarchy-orchestrator.js'

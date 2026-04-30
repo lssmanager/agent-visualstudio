@@ -136,6 +136,18 @@ export interface StepStatusResult {
   createdAt:        Date
 }
 
+/**
+ * Resultado de routeTask(): decide si una subtarea se ejecuta localmente
+ * (nodo hoja specialist) o se delega al nivel jerárquico inferior.
+ *
+ * [F2a-03] — Plan Maestro: Agency → Department → Workspace → Agent
+ * Ningún nivel puede saltarse. La delegación se materializa como
+ * RunStep { nodeType: 'delegation' } en BD.
+ */
+export type RouteDecision =
+  | { type: 'local';    node: HierarchyNode }
+  | { type: 'delegate'; node: HierarchyNode; children: HierarchyNode[] }
+
 // ── Opciones de configuración ────────────────────────────────────────────────────────────────
 
 export interface OrchestratorOptions {
@@ -398,7 +410,13 @@ export class HierarchyOrchestrator {
     workspaceId: string,
   ): Promise<SubtaskResult[]> {
     const settled = await Promise.allSettled(
-      subtasks.map((task, idx) => this.executeWithRetry(task, idx, runId, workspaceId)),
+      subtasks.map((task, idx) => {
+        const decision = this.routeTask(task)
+        if (decision.type === 'local') {
+          return this.executeWithRetry(task, idx, runId, workspaceId)
+        }
+        return this.delegateTask(task, decision, idx, runId, workspaceId)
+      }),
     )
     return settled.map((result, idx) => {
       if (result.status === 'fulfilled') return result.value
@@ -422,17 +440,22 @@ export class HierarchyOrchestrator {
   ): Promise<SubtaskResult[]> {
     const results: SubtaskResult[] = []
     for (let idx = 0; idx < subtasks.length; idx++) {
-      const result = await this.executeWithRetry(subtasks[idx], idx, runId, workspaceId)
-        .catch((err) => ({
-          taskId:     subtasks[idx].id,
-          nodeId:     subtasks[idx].assignedNodeId,
-          stepId:     '',
-          status:     'failed' as const,
-          output:     null,
-          error:      err instanceof Error ? err.message : String(err),
-          durationMs: 0,
-          retries:    this.opts.maxRetries,
-        }))
+      const task     = subtasks[idx]
+      const decision = this.routeTask(task)
+      const result   = await (
+        decision.type === 'local'
+          ? this.executeWithRetry(task, idx, runId, workspaceId)
+          : this.delegateTask(task, decision, idx, runId, workspaceId)
+      ).catch((err) => ({
+        taskId:     task.id,
+        nodeId:     task.assignedNodeId,
+        stepId:     '',
+        status:     'failed' as const,
+        output:     null,
+        error:      err instanceof Error ? err.message : String(err),
+        durationMs: 0,
+        retries:    this.opts.maxRetries,
+      }))
       results.push(result)
     }
     return results
@@ -533,13 +556,12 @@ export class HierarchyOrchestrator {
           nodeId:     task.assignedNodeId,
           stepId:     step.id,
           status:     'completed',
-          output:     execResult.response,   // string, no el objeto completo
+          output:     execResult.response,
           durationMs: Date.now() - start,
           retries:    attempt,
         }
       } catch (err) {
         lastError = err instanceof Error ? err.message : String(err)
-        // Continuar el loop para retry
       }
     }
 
@@ -559,10 +581,6 @@ export class HierarchyOrchestrator {
 
   // ── Consolidación ────────────────────────────────────────────────────────────────────
 
-  /**
-   * Consolida los resultados de subtareas en una respuesta final.
-   * Si hay supervisorFn, usa el LLM. Si no, concatenación estructurada.
-   */
   private async consolidateResults(
     rootTask: string,
     results:  SubtaskResult[],
@@ -580,7 +598,6 @@ export class HierarchyOrchestrator {
       }
     }
 
-    // Fallback: concatenación estructurada
     return [
       `Consolidated output for: "${rootTask}"`,
       `(${completed.length}/${results.length} subtasks succeeded)`,
@@ -615,7 +632,6 @@ export class HierarchyOrchestrator {
 
   // ── Utilidades privadas ──────────────────────────────────────────────────────────────────
 
-  /** Envuelve una promesa con un timeout. */
   private withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
     if (ms <= 0) return promise
     return new Promise<T>((resolve, reject) => {
@@ -627,7 +643,6 @@ export class HierarchyOrchestrator {
     })
   }
 
-  /** Recorre el árbol en profundidad y recoge todos los nodos agent/subagent hoja. */
   private collectAgentNodes(node: HierarchyNode): HierarchyNode[] {
     if (!node.children || node.children.length === 0) {
       if (node.level === 'agent' || node.level === 'subagent') return [node]
@@ -645,5 +660,141 @@ export class HierarchyOrchestrator {
       if (node.children) queue.push(...node.children)
     }
     return undefined
+  }
+
+  /**
+   * [F2a-03] Decide si una tarea se ejecuta localmente (specialist)
+   * o debe delegarse al nivel inferior.
+   *
+   * Reglas:
+   *   - Nodo hoja (sin children o children vacío) con agentConfig
+   *     → local: el agente ejecuta directamente
+   *   - Nodo hoja SIN agentConfig (configuración incompleta)
+   *     → local con nodo sintético — se ejecuta con systemPrompt genérico
+   *   - Nodo no encontrado
+   *     → local con nodo sintético derivado del task
+   *   - Nodo intermedio (tiene children)
+   *     → delegate: crear RunStep de delegación y sub-orquestar
+   *
+   * NUNCA retorna 'delegate' si los hijos también son intermedios sin agentes;
+   * la recursión ocurre porque delegateTask() llama subOrchestrator.orchestrate()
+   * que a su vez llama routeTask() de nuevo en el nivel inferior.
+   */
+  private routeTask(task: HierarchyTask): RouteDecision {
+    const node = this.findNode(task.assignedNodeId)
+
+    // Nodo no encontrado → nodo sintético, ejecutar local
+    if (!node) {
+      return {
+        type: 'local',
+        node: {
+          id:    task.assignedNodeId,
+          name:  task.assignedNodeId,
+          level: task.level,
+        },
+      }
+    }
+
+    const hasChildren = node.children !== undefined && node.children.length > 0
+
+    // Nodo hoja → specialist local
+    if (!hasChildren) {
+      return { type: 'local', node }
+    }
+
+    // Nodo intermedio → delegar al nivel inferior
+    // Los children son los nodos directos — no bajar más aquí;
+    // la recursión ocurre en el siguiente ciclo de orchestrate()
+    return {
+      type:     'delegate',
+      node,
+      children: node.children!,
+    }
+  }
+
+  /**
+   * [F2a-03] Materializa una delegación en BD como RunStep { nodeType: 'delegation' }
+   * y lanza sub-orquestación sobre los hijos del nodo delegado.
+   *
+   * Contrato del Plan Maestro:
+   *   "Delegar = crear RunStep con nodeType: 'delegation' en BD.
+   *    Nunca texto, nunca log."
+   *
+   * El RunStep de delegación actúa como envelope del sub-resultado.
+   * Su output se llena cuando la sub-orquestación termina.
+   */
+  private async delegateTask(
+    task:        HierarchyTask,
+    decision:    Extract<RouteDecision, { type: 'delegate' }>,
+    index:       number,
+    runId:       string,
+    workspaceId: string,
+  ): Promise<SubtaskResult> {
+    const start = Date.now()
+
+    // 1. Crear RunStep de delegación
+    const step = await this.repo.createStep({
+      runId,
+      nodeId:   decision.node.id,
+      nodeType: 'delegation',
+      index,
+      input:    { task: task.description, ...task.input },
+    })
+
+    try {
+      // 2. Construir sub-jerarquía con los hijos del nodo delegado
+      const subHierarchy: HierarchyNode = {
+        ...decision.node,
+        children: decision.children,
+      }
+
+      // 3. Crear sub-orquestador con la misma config pero jerarquía recortada
+      const subOrchestrator = new HierarchyOrchestrator(
+        subHierarchy,
+        this.executorFn,
+        this.repo.getPrisma(),
+        this.supervisorFn,
+        this.opts,
+      )
+
+      // 4. Orquestar en el sub-nivel
+      const subResult = await subOrchestrator.orchestrate(
+        workspaceId,
+        task.description,
+        task.input,
+      )
+
+      // 5. Completar el RunStep de delegación con el output consolidado
+      await this.repo.completeStep({
+        stepId: step.id,
+        output: subResult.consolidatedOutput,
+      })
+
+      return {
+        taskId:     task.id,
+        nodeId:     decision.node.id,
+        stepId:     step.id,
+        status:     subResult.status === 'failed' ? 'failed' : 'completed',
+        output:     subResult.consolidatedOutput,
+        error:      subResult.status === 'failed'
+                      ? `Sub-orchestration failed: ${subResult.status}`
+                      : undefined,
+        durationMs: Date.now() - start,
+        retries:    0,
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      await this.repo.failStep({ stepId: step.id, error: message })
+      return {
+        taskId:     task.id,
+        nodeId:     decision.node.id,
+        stepId:     step.id,
+        status:     'failed',
+        output:     null,
+        error:      message,
+        durationMs: Date.now() - start,
+        retries:    0,
+      }
+    }
   }
 }

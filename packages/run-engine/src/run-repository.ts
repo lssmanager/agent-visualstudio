@@ -249,6 +249,15 @@ export class RunRepository {
     return this.prisma.runStep.findUnique({ where: { id: stepId } })
   }
 
+  /**
+   * Exposes the PrismaClient for sub-orchestrators created by delegateTask().
+   * Required by F2a-03: HierarchyOrchestrator needs to pass the same client
+   * to child orchestrators without breaking the repository abstraction.
+   */
+  getPrisma(): PrismaClient {
+    return this.prisma
+  }
+
   // ── Approval helper ─────────────────────────────────────────────────────────────
 
   /**
