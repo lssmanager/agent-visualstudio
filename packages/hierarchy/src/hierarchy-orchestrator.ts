@@ -170,6 +170,34 @@ export interface SpecialistMatch {
   allScores:  CapabilityScore[]
 }
 
+/**
+ * Output enriquecido de consolidateResults().
+ * Expone el texto consolidado + métricas de ejecución.
+ */
+export interface ConsolidationResult {
+  /** Texto de respuesta final sintetizado */
+  summary:         string
+
+  /** Cómo se generó el summary */
+  method:          'supervisor_llm' | 'concatenation' | 'single_result'
+
+  stats: {
+    total:     number   // total de subtasks recibidos
+    completed: number   // status === 'completed'
+    failed:    number   // status === 'failed'
+    rejected:  number   // status === 'rejected'
+    skipped:   number   // status === 'skipped'
+  }
+
+  /** Suma de costUsd — placeholder 0 hasta F1a */
+  totalCostUsd:    number
+
+  /** Suma de tokens — placeholder 0 hasta F1a */
+  totalTokens:     number
+
+  /** Suma de durationMs de todos los SubtaskResult */
+  totalDurationMs: number
+}
 
 // ── Opciones de configuración ────────────────────────────────────────────────────────────────
 
@@ -296,7 +324,8 @@ export class HierarchyOrchestrator {
         : await this.executeSequential(subtasks, run.id, workspaceId)
 
       // ── 4. Consolidar ────────────────────────────────────────────────────
-      const consolidatedOutput = await this.consolidateResults(rootTask, subtaskResults)
+      const consolidation = await this.consolidateResults(rootTask, subtaskResults)
+      const consolidatedOutput = consolidation.summary
 
       // ── 5. Estado final del Run ──────────────────────────────────────────────
       const failed  = subtaskResults.filter((r) => r.status === 'failed' || r.status === 'rejected')
@@ -649,33 +678,69 @@ export class HierarchyOrchestrator {
   private async consolidateResults(
     rootTask: string,
     results:  SubtaskResult[],
-  ): Promise<string> {
-    const completed = results.filter((r) => r.status === 'completed')
-    if (completed.length === 0) {
-      return 'All subtasks failed. No output available.'
+  ): Promise<ConsolidationResult> {
+    // Calcular stats básicos (lógica real en F2a-06c)
+    const stats = {
+      total:     results.length,
+      completed: results.filter((r) => r.status === 'completed').length,
+      failed:    results.filter((r) => r.status === 'failed').length,
+      rejected:  results.filter((r) => r.status === 'rejected').length,
+      skipped:   results.filter((r) => r.status === 'skipped').length,
     }
 
-    if (this.supervisorFn) {
+    // Placeholder métricas hasta F1a
+    const totalCostUsd    = 0
+    const totalTokens     = 0
+    const totalDurationMs = results.reduce((acc, r) => acc + r.durationMs, 0)
+
+    // ── Lógica existente para generar el string (sin cambios) ─────────────
+    const completed = results.filter((r) => r.status === 'completed')
+    let summary: string
+
+    if (completed.length === 0) {
+      summary = 'All subtasks failed. No output available.'
+    } else if (this.supervisorFn) {
       try {
-        return await this.consolidateWithSupervisor(rootTask, completed)
+        summary = await this.consolidateWithSupervisor(rootTask, completed)
       } catch {
         // fallback a concatenación
+        summary = [
+          `Consolidated output for: "${rootTask}"`,
+          `(${completed.length}/${results.length} subtasks succeeded)`,
+          '',
+          ...completed.map((r, i) =>
+            `[${i + 1}] Agent ${r.nodeId}:\n${String(r.output)}`
+          ),
+        ].join('\n\n')
       }
+    } else {
+      summary = [
+        `Consolidated output for: "${rootTask}"`,
+        `(${completed.length}/${results.length} subtasks succeeded)`,
+        '',
+        ...completed.map((r, i) =>
+          `[${i + 1}] Agent ${r.nodeId}:\n${String(r.output)}`
+        ),
+      ].join('\n\n')
     }
 
-    return [
-      `Consolidated output for: "${rootTask}"`,
-      `(${completed.length}/${results.length} subtasks succeeded)`,
-      '',
-      ...completed.map((r, i) =>
-        `[${i + 1}] Agent ${r.nodeId}:\n${String(r.output)}`
-      ),
-    ].join('\n\n')
+    // ── RETORNO ADAPTADO ─────────────────────────────────────────────────
+    // La lógica de method/summary se reescribe en F2a-06c.
+    // Por ahora wrapeamos el string existente para que compile.
+    return {
+      summary,
+      method:          'concatenation',   // temporal hasta F2a-06c
+      stats,
+      totalCostUsd,
+      totalTokens,
+      totalDurationMs,
+    }
   }
 
   private async consolidateWithSupervisor(
     rootTask:  string,
     completed: SubtaskResult[],
+    stats?:    ConsolidationResult['stats'],   // opcional hasta F2a-06d
   ): Promise<string> {
     const resultsSummary = completed
       .map((r, i) => `Result ${i + 1} (agent ${r.nodeId}):\n${String(r.output)}`)

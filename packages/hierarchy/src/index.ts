@@ -11,6 +11,7 @@ export type {
   RouteDecision,
   CapabilityScore,
   SpecialistMatch,
+  ConsolidationResult,
 } from './hierarchy-orchestrator.js'
 
 export { HierarchyOrchestrator, tokenize, jaccardScore } from './hierarchy-orchestrator.js'
