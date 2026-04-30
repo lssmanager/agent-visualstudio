@@ -15,7 +15,7 @@
  */
 import type { RunSpec, RunTrigger, FlowSpec } from '../../../../../packages/core-types/src';
 import { FlowExecutor, RunRepository, StepExecutor, ApprovalQueue } from '../../../../../packages/run-engine/src';
-import { workspaceStore, studioConfig } from '../../config';
+import { workspaceStore, studioConfig } from '../../config'; // @deprecated(F0-08) — migrate to AgentRepository (Prisma)
 import type { RunJobData } from './run-queue.service';
 import { RunCheckpointRepository } from './run-checkpoint.repository';
 import type { SseEmitterService } from './sse-emitter.service';

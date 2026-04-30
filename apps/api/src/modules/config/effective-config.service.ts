@@ -1,5 +1,5 @@
 import { EffectiveConfig } from '../../../../../packages/core-types/src';
-import { workspaceStore } from '../../config';
+import { workspaceStore } from '../../config'; // @deprecated(F0-08) — migrate to Prisma repositories
 import { ProfilesService } from '../profiles/profiles.service';
 
 const profilesService = new ProfilesService();
