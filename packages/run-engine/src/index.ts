@@ -7,5 +7,5 @@ export type { AgentExecutorFn } from './agent-executor.service';
 export { FlowExecutor } from './flow-executor';
 export type { FlowSpec, FlowNode } from './flow-executor';
 export { executeCondition, ConditionSyntaxError, ConditionRuntimeError } from './execute-condition';
-export { HierarchyStatusService } from './hierarchy-status.service.js';
+export { HierarchyStatusService, isBlocked, deriveParentStatus } from './hierarchy-status.service.js';
 export type { RunStatusTree, StepNode } from './hierarchy-status.service.js';
