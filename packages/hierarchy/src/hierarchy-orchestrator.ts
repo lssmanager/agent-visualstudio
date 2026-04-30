@@ -170,6 +170,7 @@ export interface SpecialistMatch {
   allScores:  CapabilityScore[]
 }
 
+
 // ── Opciones de configuración ────────────────────────────────────────────────────────────────
 
 export interface OrchestratorOptions {

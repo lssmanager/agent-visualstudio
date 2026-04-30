@@ -9,6 +9,7 @@
 // Providers:    ProviderCredential → ModelCatalogEntry
 // Policies:     BudgetPolicy, ModelPolicy  (scope-inherited, exactly-one-FK)
 // Audit:        AuditEvent
+// Settings:     SystemConfig  (single-tenant admin keys — plaintext, same trust as .env)
 //
 // ── D-15 ─────────────────────────────────────────────────────────────────────
 // GatewaySession.messageHistory ELIMINADO.
@@ -266,7 +267,7 @@ model RunStep {
 
   /// D-10: índices de performance obligatorios
   @@index([runId, status])
-  @@index([agentId, createdAt])
+  @@index([agentId, startedAt])
 }
 
 // ─── Gateway / Channels ──────────────────────────────────────────────────────
@@ -390,28 +391,17 @@ model N8nWorkflow {
 }
 
 // ─── Provider Credentials ────────────────────────────────────────────────────
-//
-// Almacena proveedores LLM configurados por la agencia (tenant).
-// Reemplaza OPENAI_API_KEY / ANTHROPIC_API_KEY / OPENROUTER_API_KEY como
-// env vars hardcodeadas — la API key vive en DB cifrada con AES-256-GCM
-// usando la env var PROVIDER_SECRET como clave maestra.
 
 model ProviderCredential {
   id               String    @id @default(uuid())
   agencyId         String
   agency           Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  /// Human-readable name, ej: "OpenAI Production", "OpenRouter via LSS"
   name             String
-  /// 'openai' | 'anthropic' | 'openrouter' | 'openai_compat'
   type             String
-  /// Base URL — obligatorio para 'openai_compat', ignorado para 'openai' y 'anthropic'
   baseUrl          String?
-  /// AES-256-GCM encrypted API key. Clave maestra: env PROVIDER_SECRET
   apiKeyEncrypted  String    @db.Text
-  /// Headers adicionales en Json: { "HTTP-Referer": "...", "X-Title": "..." }
   extraHeaders     Json?
   isActive         Boolean   @default(true)
-  /// Timestamp del último sync exitoso de catálogo desde este proveedor
   syncedAt         DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
@@ -428,12 +418,9 @@ model ModelCatalogEntry {
   id           String             @id @default(uuid())
   providerId   String
   provider     ProviderCredential @relation(fields: [providerId], references: [id], onDelete: Cascade)
-  /// Canónico: 'provider/model-name' — mismo formato que ModelPolicy.primaryModel
   modelId      String
   displayName  String
-  /// Familias de capacidad: ['reasoning','fast','vision','coding','multilingual','long-context','instruction','mini']
   families     String[]
-  /// Contexto máximo en miles de tokens (0 = desconocido)
   contextK     Int                @default(0)
   isActive     Boolean            @default(true)
   raw          Json?
@@ -446,23 +433,15 @@ model ModelCatalogEntry {
 }
 
 // ─── Budget / Model Policies ─────────────────────────────────────────────────
-//
-// INVARIANT: exactly one FK is non-null per row.
-// Enforced by CHECK constraints in manual migration.
-// Resolution order at runtime: agent → workspace → department → agency
 
 model BudgetPolicy {
   id         String   @id @default(uuid())
-  /// Rolling window spend limit in USD
   limitUsd   Float
-  /// Window length in days (default: 30)
   periodDays Int      @default(30)
-  /// Alert threshold as fraction of limitUsd (default: 0.8 = 80%)
   alertAt    Float    @default(0.8)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  // ── Scope FKs — exactly one must be non-null (enforced by DB CHECK) ──────
   agencyId     String? @unique
   departmentId String? @unique
   workspaceId  String? @unique
@@ -476,16 +455,13 @@ model BudgetPolicy {
 
 model ModelPolicy {
   id            String   @id @default(uuid())
-  /// Modelo principal: 'provider/model-name' — debe existir en ModelCatalogEntry
   primaryModel  String
-  /// Cadena ordenada de fallbacks de libre elección.
   fallbackChain String[]
   temperature   Float?   @default(0.7)
   maxTokens     Int?     @default(4096)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  // ── Scope FKs — exactly one must be non-null (enforced by DB CHECK) ──────
   agencyId     String? @unique
   departmentId String? @unique
   workspaceId  String? @unique
@@ -501,12 +477,9 @@ model ModelPolicy {
 
 model AuditEvent {
   id        String   @id @default(uuid())
-  /// e.g. 'run.started' | 'run.completed' | 'agent.created' | 'channel.message' | 'budget.alert'
   eventType String
-  /// Entity kind: 'agency' | 'department' | 'workspace' | 'agent' | 'run' | 'channel'
   scopeType String?
   scopeId   String?
-  /// Logto user ID (if triggered by a user action via Studio)
   userId    String?
   payload   Json
   createdAt DateTime @default(now())
@@ -514,4 +487,19 @@ model AuditEvent {
   @@index([eventType, createdAt])
   @@index([scopeType, scopeId, createdAt])
   @@index([userId, createdAt])
+}
+
+// ─── System Config (single-tenant settings) ──────────────────────────────────
+//
+// Almacena API keys y URLs configuradas desde Settings UI.
+// Sin cifrado — mismo nivel de confianza que process.env / .env en disco.
+// El admin es el único usuario del sistema (single-tenant).
+// resolveApiKey() en llm-client.ts prioriza estos valores sobre process.env.
+
+model SystemConfig {
+  /// Nombre de la variable de entorno, ej: 'OPENAI_API_KEY', 'N8N_BASE_URL'
+  key       String   @id
+  /// Valor plaintext — misma confianza que .env
+  value     String
+  updatedAt DateTime @updatedAt
 }

@@ -4,6 +4,7 @@
  * Jerarquía (F0-04):  Agency → Department → Workspace → Agent
  * Ejecución (F0-05):  Run → RunStep
  * Gateway (F0-06):    ConversationMessage (append-only)
+ * Skills (F1b-08):    Skill + AgentSkill
  */
 
 // ── Jerarquía ──────────────────────────────────────────────────────────────────
@@ -61,3 +62,14 @@ export type {
   FindMessagesOptions,
   MessageRole,
 } from './conversation-message.repository'
+
+// ── Skills ───────────────────────────────────────────────────────────────────
+
+export { SkillRepository } from './skill.repository.js'
+export type {
+  CreateSkillInput,
+  UpdateSkillInput,
+  FindSkillsOptions,
+  AssignSkillInput,
+  UpdateAssignmentInput,
+} from './skill.repository.js'
