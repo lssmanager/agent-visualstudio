@@ -62,14 +62,19 @@ export interface ResolvedProfile {
   propagatedAt:   Date
 }
 
+type PrismaDelegate = {
+  findFirst?:  (args: unknown) => Promise<unknown>
+  findUnique?: (args: unknown) => Promise<unknown>
+}
+
 /**
  * [F2b-01] Resultado de propagateUp().
  * - updated: perfiles actualizados en orden workspace → department → agency
- * - skipped: IDs de niveles sin orchestratorId o que son el propio agentId (anti-loop)
+ * - skipped: IDs de niveles sin orquestador resoluble o que son el propio agentId (anti-loop)
  */
 export interface PropagateUpResult {
   updated: ResolvedProfile[]
-  skipped: string[]   // IDs de niveles sin orchestratorId o que son el propio agentId
+  skipped: string[]
 }
 
 // ── Service ────────────────────────────────────────────────────────────────
@@ -131,9 +136,9 @@ export class ProfilePropagatorService {
    *   Agent → Workspace orchestrator → Department orchestrator → Agency orchestrator
    *
    * Regla irrevocable (D-24f): solo se llama a this.propagate() con el
-   * orchestratorId de cada entidad padre — nunca con todos los agentes del scope.
-   * Si un nivel no tiene orchestratorId, se añade al array `skipped`.
-   * Si el orchestratorId es igual al agentId fuente, se añade a `skipped` (anti-loop).
+   * agente marcado como orquestador de cada nivel, nunca con todos los agentes del scope.
+   * Si un nivel no tiene orquestador resoluble, se añade al array `skipped`.
+   * Si el orquestador es igual al agentId fuente, se añade a `skipped` (anti-loop).
    *
    * @param agentId  ID del agente cuyo perfil se propaga hacia arriba
    * @param input    Datos del perfil a propagar (misma shape que propagate())
@@ -153,43 +158,49 @@ export class ProfilePropagatorService {
     if (!agent) throw new Error(`Agent "${agentId}" not found`)
 
     // 2. Leer el workspace (con departmentId para navegar hacia arriba)
+    const workspaceSelect: Record<string, boolean> = { id: true }
+    if (this.hasModelField('Workspace', 'departmentId')) workspaceSelect['departmentId'] = true
+
     const workspace = await this.prisma.workspace.findUnique({
-      where:   { id: agent.workspaceId },
-      select:  { id: true, orchestratorId: true, departmentId: true },
-    })
+      where:  { id: agent.workspaceId },
+      select: workspaceSelect,
+    }) as { id: string; departmentId?: string | null } | null
     if (!workspace) throw new Error(`Workspace not found for agent "${agentId}"`)
 
     // 3. Nivel Workspace — propagar al orchestrator si existe y no es el fuente
-    if (!workspace.orchestratorId || workspace.orchestratorId === agentId) {
+    const workspaceOrchestrator = await this.findWorkspaceOrchestratorAgent(workspace.id)
+    if (!workspaceOrchestrator || workspaceOrchestrator.id === agentId) {
       skipped.push(`workspace:${workspace.id}`)
     } else {
-      const profile = await this.propagate(workspace.orchestratorId, input)
+      const profile = await this.propagate(workspaceOrchestrator.id, input)
       updated.push(profile)
     }
 
     // 4. Nivel Department (si el workspace pertenece a uno)
-    if (workspace.departmentId) {
-      const department = await this.prisma.department.findUnique({
+    if (workspace.departmentId && this.hasDelegate('department')) {
+      const departmentSelect: Record<string, boolean> = { id: true }
+      if (this.hasModelField('Department', 'agencyId')) departmentSelect['agencyId'] = true
+
+      const department = await this.delegate('department').findUnique?.({
         where:  { id: workspace.departmentId },
-        select: { id: true, orchestratorId: true, agencyId: true },
-      })
-      if (!department?.orchestratorId || department.orchestratorId === agentId) {
+        select: departmentSelect,
+      }) as { id: string; agencyId?: string | null } | null
+
+      const departmentOrchestrator = await this.findDepartmentOrchestratorAgent(workspace.departmentId)
+      if (!departmentOrchestrator || departmentOrchestrator.id === agentId) {
         skipped.push(`department:${workspace.departmentId}`)
       } else {
-        const profile = await this.propagate(department.orchestratorId, input)
+        const profile = await this.propagate(departmentOrchestrator.id, input)
         updated.push(profile)
       }
 
       // 5. Nivel Agency (si el department pertenece a una)
       if (department?.agencyId) {
-        const agency = await this.prisma.agency.findUnique({
-          where:  { id: department.agencyId },
-          select: { id: true, orchestratorId: true },
-        })
-        if (!agency?.orchestratorId || agency.orchestratorId === agentId) {
+        const agencyOrchestrator = await this.findAgencyOrchestratorAgent(department.agencyId)
+        if (!agencyOrchestrator || agencyOrchestrator.id === agentId) {
           skipped.push(`agency:${department.agencyId}`)
         } else {
-          const profile = await this.propagate(agency.orchestratorId, input)
+          const profile = await this.propagate(agencyOrchestrator.id, input)
           updated.push(profile)
         }
       }
@@ -199,6 +210,80 @@ export class ProfilePropagatorService {
   }
 
   // ── Lectura ────────────────────────────────────────────────────────────────────
+
+  private delegate(name: string): PrismaDelegate {
+    return ((this.prisma as unknown as Record<string, PrismaDelegate>)[name] ?? {}) as PrismaDelegate
+  }
+
+  private hasDelegate(name: string): boolean {
+    const delegate = this.delegate(name)
+    return typeof delegate.findFirst === 'function' || typeof delegate.findUnique === 'function'
+  }
+
+  private hasModelField(modelName: string, fieldName: string): boolean {
+    const models = (this.prisma as unknown as {
+      _runtimeDataModel?: { models?: Record<string, { fields?: Array<{ name: string }> }> }
+    })._runtimeDataModel?.models
+    const fields = models?.[modelName]?.fields
+    if (!fields) return true
+    return fields.some((field) => field.name === fieldName)
+  }
+
+  private async findWorkspaceOrchestratorAgent(workspaceId: string): Promise<{ id: string } | null> {
+    const where: Record<string, unknown> = { workspaceId }
+    if (this.hasModelField('Agent', 'isLevelOrchestrator')) {
+      where['isLevelOrchestrator'] = true
+    } else if (this.hasModelField('Agent', 'role')) {
+      where['role'] = 'orchestrator'
+    } else {
+      return null
+    }
+
+    return this.delegate('agent').findFirst?.({
+      where,
+      select: { id: true },
+    }) as Promise<{ id: string } | null>
+  }
+
+  private async findDepartmentOrchestratorAgent(departmentId: string): Promise<{ id: string } | null> {
+    if (!this.hasDelegate('workspace') || !this.hasModelField('Workspace', 'departmentId')) {
+      return null
+    }
+
+    const where: Record<string, unknown> = { departmentId }
+    if (this.hasModelField('Workspace', 'isLevelOrchestrator')) {
+      where['isLevelOrchestrator'] = true
+    } else {
+      return null
+    }
+
+    const workspace = await this.delegate('workspace').findFirst?.({
+      where,
+      select: { id: true },
+    }) as { id: string } | null
+
+    return workspace ? this.findWorkspaceOrchestratorAgent(workspace.id) : null
+  }
+
+  private async findAgencyOrchestratorAgent(agencyId: string): Promise<{ id: string } | null> {
+    if (!this.hasDelegate('department') || !this.hasModelField('Department', 'agencyId')) {
+      return null
+    }
+
+    const where: Record<string, unknown> = { agencyId }
+    if (this.hasModelField('Department', 'isLevelOrchestrator')) {
+      where['isLevelOrchestrator'] = true
+    } else {
+      return null
+    }
+
+    const department = await this.delegate('department').findFirst?.({
+      where,
+      select: { id: true },
+    }) as { id: string } | null
+
+    return department ? this.findDepartmentOrchestratorAgent(department.id) : null
+  }
 
   /**
    * Lee el AgentProfile activo desde Prisma.
@@ -246,7 +331,7 @@ export class ProfilePropagatorService {
       include: { agent: { select: { id: true } } },
       orderBy: { propagatedAt: 'desc' },
     })
-    return profiles.map((p) => this.toResolved(p.agentId, p))
+    return profiles.map((p: any) => this.toResolved(p.agentId, p))
   }
 
   /**
