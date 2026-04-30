@@ -413,10 +413,22 @@ export class HierarchyOrchestrator {
   /**
    * Descomposición vía supervisor LLM.
    *
-   * El prompt pide al supervisor que devuelva un JSON array con objetos:
+   * Formato de salida objetivo (target): el supervisor debe emitir bloques
+   *   ---DELEGATE---
+   *   agentId: <id>
+   *   task: <descripción>
+   *   ---END---
+   * que serán parseados por parseDelegateBlocks() una vez integrada.
+   *
+   * Formato actual: el prompt pide al supervisor un JSON array con objetos:
    *   { agentId: string, task: string }
    *
    * Parseo robusto: extrae el primer bloque JSON del texto aunque haya prose.
+   * El parser JSON permanece en uso hasta que parseDelegateBlocks() esté integrado.
+   *
+   * TODO: Eliminar el parseo JSON y reemplazarlo con parseDelegateBlocks() una vez
+   *       que dicha función esté disponible. Ver el símbolo parseDelegateBlocks()
+   *       para localizar el punto exacto de migración en este archivo.
    */
   private async decomposeWithSupervisor(
     rootTask: string,
