@@ -347,8 +347,10 @@ export class HierarchyOrchestrator {
 
   /**
    * Descompone un task en subtareas usando el supervisor LLM.
-   * Formato de salida del LLM: bloques ---DELEGATE--- (ver F2a-05c).
-   * TODO F2a-05b: migrar prompt a formato DELEGATE.
+   * Formato de salida actual del LLM: JSON array con objetos
+   *   { agentId: string, task: string }
+   *
+   * TODO F2a-05b: migrar prompt a formato ---DELEGATE---.
    * TODO F2a-05c: reemplazar parser JSON por parseDelegateBlocks().
    *
    * El prompt pide al supervisor que devuelva un JSON array con objetos:
