@@ -107,6 +107,35 @@ export interface SupervisorFn {
   (prompt: string): Promise<string>
 }
 
+/**
+ * Snapshot de un RunStep consultado desde BD.
+ * READ-ONLY — devuelto por getStepStatus().
+ *
+ * Nota: finishedAt mapea a RunStep.completedAt en el schema.
+ * Los campos model/provider/index requieren la migración add-system-config-and-runstep-fields.
+ */
+export interface StepStatusResult {
+  stepId:           string
+  runId:            string
+  nodeId:           string
+  nodeType:         string
+  status:           'queued' | 'running' | 'completed' | 'failed' | 'skipped'
+  index:            number
+  input:            unknown
+  output:           unknown
+  error:            string | null
+  model:            string | null
+  provider:         string | null
+  promptTokens:     number | null
+  completionTokens: number | null
+  totalTokens:      number | null
+  costUsd:          number | null
+  startedAt:        Date | null
+  /** Mapea a RunStep.completedAt en schema.prisma */
+  finishedAt:       Date | null
+  createdAt:        Date
+}
+
 // ── Opciones de configuración ────────────────────────────────────────────────────────────────
 
 export interface OrchestratorOptions {
@@ -222,6 +251,40 @@ export class HierarchyOrchestrator {
       const message = err instanceof Error ? err.message : String(err)
       await this.repo.failRun(run.id, message)
       throw err
+    }
+  }
+
+  /**
+   * Consulta el estado actual de un RunStep desde BD.
+   * READ-ONLY — no modifica ningún registro.
+   *
+   * @param stepId  ID del RunStep (disponible en SubtaskResult.stepId)
+   * @returns       StepStatusResult con snapshot completo, o null si no existe
+   */
+  async getStepStatus(stepId: string): Promise<StepStatusResult | null> {
+    const step = await this.repo.findStep(stepId)
+    if (!step) return null
+
+    return {
+      stepId:           step.id,
+      runId:            step.runId,
+      nodeId:           step.nodeId,
+      nodeType:         step.nodeType,
+      status:           step.status as StepStatusResult['status'],
+      index:            step.index,
+      input:            step.input,
+      output:           step.output,
+      error:            step.error            ?? null,
+      model:            step.model            ?? null,
+      provider:         step.provider         ?? null,
+      promptTokens:     step.promptTokens     ?? null,
+      completionTokens: step.completionTokens ?? null,
+      totalTokens:      step.totalTokens      ?? null,
+      costUsd:          step.costUsd          ?? null,
+      startedAt:        step.startedAt        ?? null,
+      // completedAt en schema.prisma → finishedAt en StepStatusResult
+      finishedAt:       step.completedAt      ?? null,
+      createdAt:        step.createdAt,
     }
   }
 

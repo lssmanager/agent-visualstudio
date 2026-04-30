@@ -241,6 +241,14 @@ export class RunRepository {
     return this.prisma.runStep.findUnique({ where: { id: stepId } })
   }
 
+  /**
+   * Alias semántico de getStepById — usado por HierarchyOrchestrator.getStepStatus().
+   * READ-ONLY: no modifica el step.
+   */
+  async findStep(stepId: string) {
+    return this.prisma.runStep.findUnique({ where: { id: stepId } })
+  }
+
   // ── Approval helper ─────────────────────────────────────────────────────────────
 
   /**
