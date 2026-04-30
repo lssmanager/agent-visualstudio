@@ -436,9 +436,16 @@ export class HierarchyOrchestrator {
       return `- id: ${a.id} | name: ${a.name} | role: ${role}`
     }).join('\n')
 
-    const contextHint = input
-      ? `\nInput context: ${JSON.stringify(input)}`
-      : ''
+    let contextHint = ''
+    if (input) {
+      try {
+        contextHint = `\nInput context: ${JSON.stringify(input)}`
+      } catch {
+        // Mantener el contrato de "NUNCA lanza": si el input no es serializable,
+        // omitimos el contexto enriquecido y continuamos con el flujo normal.
+        contextHint = ''
+      }
+    }
 
     const prompt = [
       'You are a supervisor orchestrator.',
