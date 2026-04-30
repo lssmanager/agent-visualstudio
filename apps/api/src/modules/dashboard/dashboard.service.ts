@@ -11,6 +11,7 @@
  *             getBudgets, getPolicies, patchPolicy
  */
 
+import { Prisma } from '@prisma/client'
 import type { PrismaClient } from '@prisma/client'
 
 // ── constantes temporales ─────────────────────────────────────────────────────────
@@ -225,7 +226,7 @@ export class DashboardService {
     const s   = sinceMs(wMs)
 
     const steps = await this.prisma.runStep.findMany({
-      where:   { startedAt: { gte: s }, tokenUsage: { not: null } },
+      where:   { startedAt: { gte: s }, tokenUsage: { not: Prisma.DbNull } },
       select:  { startedAt: true, tokenUsage: true, costUsd: true },
       orderBy: { startedAt: 'asc' },
     })
@@ -237,9 +238,11 @@ export class DashboardService {
       const slot = Math.floor(step.startedAt.getTime() / bMs) * bMs
       const b    = map.get(slot) ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0 }
       const tu   = step.tokenUsage as Record<string, number> | null ?? {}
-      b.promptTokens     += tu.prompt_tokens     ?? 0
-      b.completionTokens += tu.completion_tokens ?? 0
-      b.totalTokens      += tu.total_tokens      ?? (tu.prompt_tokens ?? 0) + (tu.completion_tokens ?? 0)
+      b.promptTokens     += tu.input  ?? tu.prompt_tokens     ?? 0
+      b.completionTokens += tu.output ?? tu.completion_tokens ?? 0
+      b.totalTokens      += tu.total_tokens
+        ?? (tu.input  ?? tu.prompt_tokens     ?? 0)
+         + (tu.output ?? tu.completion_tokens ?? 0)
       b.costUsd          += step.costUsd
       map.set(slot, b)
     }

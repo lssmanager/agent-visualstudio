@@ -1,6 +1,7 @@
 import { Express, Router } from 'express';
 
 import { studioConfig } from './config';
+import { prisma } from './modules/core/db/prisma.service';
 import { registerAgentsRoutes } from './modules/agents/agents.controller';
 import { registerChannelsRoutes } from './modules/channels/channels.controller';
 import { registerDeployRoutes } from './modules/deploy/deploy.controller';
@@ -66,7 +67,7 @@ export function registerRoutes(app: Express) {
   registerBuilderAgentRoutes(router);
   registerRuntimeInspectionRoutes(router);
   registerRunsStreamRoutes(router);
-  registerDashboardRoutes(router);
+  registerDashboardRoutes(router, prisma);
   // LLM Providers + OAuth
   registerLlmProvidersRoutes(router);
   // Model Catalog (ModelCatalogEntry + ProviderCredential sync)
