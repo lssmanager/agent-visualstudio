@@ -15,7 +15,7 @@ import { Router } from 'express';
 import { sseEmitter } from './sse-emitter.service';
 import { RunQueueService, RunJobData } from './run-queue.service';
 import { RunCheckpointRepository } from './run-checkpoint.repository';
-import { workspaceStore, studioConfig } from '../../config';
+import { workspaceStore, studioConfig } from '../../config'; // @deprecated(F0-08) — migrate to RunRepository (Prisma)
 
 // Singletons — one queue and checkpoint repo per API process
 const queue = new RunQueueService(sseEmitter);

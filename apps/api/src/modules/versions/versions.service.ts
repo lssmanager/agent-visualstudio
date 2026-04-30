@@ -1,6 +1,6 @@
 import type { VersionSnapshot } from '../../../../../packages/core-types/src';
 import { SnapshotManager, diffSpecs, rollbackToSnapshot, type SnapshotSpecs } from '../../../../../packages/version-engine/src';
-import { workspaceStore, studioConfig } from '../../config';
+import { workspaceStore, studioConfig } from '../../config'; // @deprecated(F0-08) — migrate to Prisma repositories
 
 const snapshotManager = new SnapshotManager(studioConfig.workspaceRoot);
 

@@ -2,7 +2,7 @@ import type { RunSpec, RunTrigger, RunStep } from '../../../../../packages/core-
 import type { FlowSpec } from '../../../../../packages/core-types/src';
 import { FlowExecutor, RunRepository, StepExecutor, LlmStepExecutor, ApprovalQueue } from '../../../../../packages/run-engine/src';
 import { GatewayService } from '../gateway/gateway.service';
-import { workspaceStore, studioConfig } from '../../config';
+import { workspaceStore, studioConfig } from '../../config'; // @deprecated(F0-08) — migrate to RunRepository (Prisma)
 
 const runRepository = new RunRepository(studioConfig.workspaceRoot);
 const gatewayService = new GatewayService();

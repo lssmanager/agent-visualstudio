@@ -7,6 +7,7 @@
  * @see packages/workspace-store/DEPRECATED.md
  */
 
+import * as path from 'path';
 import { WorkspaceStore }    from './workspace-store';
 import { JsonWorkspaceStore } from './json-workspace-store';
 import { YamlWorkspaceStore } from './yaml-workspace-store';
@@ -15,16 +16,28 @@ import {
 } from '../../core-types/src';
 
 /**
+ * @deprecated — allowed values for WORKSPACE_STORE_FORMAT.
+ * Will be removed together with this package in F1.
+ */
+export type StoreFormat = 'json' | 'yaml';
+
+/**
  * @deprecated Bridges JSON and YAML stores. Use Prisma repositories instead.
  */
 export class DualFormatStore extends WorkspaceStore {
   private readonly json: JsonWorkspaceStore;
   private readonly yaml: YamlWorkspaceStore;
 
-  constructor(jsonPath: string, yamlPath: string) {
+  /**
+   * @deprecated
+   * @param rootPath  Workspace root directory (OPENCLAW_WORKSPACE_ROOT).
+   * @param _format   Kept for backward-compat; reads from JSON, writes to both.
+   */
+  constructor(rootPath: string, _format: StoreFormat = 'json') {
     super();
-    this.json = new JsonWorkspaceStore(jsonPath);
-    this.yaml = new YamlWorkspaceStore(yamlPath);
+    const storeDir = path.join(rootPath, '.openclaw');
+    this.json = new JsonWorkspaceStore(path.join(storeDir, 'workspace-state.json'));
+    this.yaml = new YamlWorkspaceStore(path.join(storeDir, 'workspace-state.yaml'));
   }
 
   // Reads from JSON (primary), writes to both.

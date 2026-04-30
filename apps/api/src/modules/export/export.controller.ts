@@ -1,6 +1,6 @@
 import { Router } from 'express';
 
-import { workspaceStore } from '../../config';
+import { workspaceStore } from '../../config'; // @deprecated(F0-08) — export-only bridge, keep DualFormatStore for file output
 
 /**
  * POST /export — returns a JSON bundle of the entire workspace

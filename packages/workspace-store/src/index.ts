@@ -20,6 +20,8 @@ export { JsonWorkspaceStore }   from './json-workspace-store';
 export { YamlWorkspaceStore }   from './yaml-workspace-store';
 /** @deprecated Use offline export/import tooling only. */
 export { DualFormatStore }      from './dual-format-store';
+/** @deprecated Will be removed together with this package in F1. */
+export type { StoreFormat }     from './dual-format-store';
 /**
  * @deprecated Superseded by individual Prisma repositories.
  * Do not instantiate.
