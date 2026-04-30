@@ -247,6 +247,39 @@ describe('HierarchyStatusService.getRunStatus()', () => {
     expect(delNode!.childRun!.depth).toBe(1)
   })
 
+  it('looks up child runs by parentRunId and parentStepId metadata', async () => {
+    const delegationStep = makeStep({
+      id: 'step-del', runId: 'run-parent', nodeType: 'delegation', nodeId: 'node-del',
+      status: 'running', startedAt: NOW, completedAt: null,
+    })
+    const parentRun = makeRun([delegationStep], { id: 'run-parent' })
+    const childRun  = makeRun([], {
+      id:       'run-child',
+      metadata: { hierarchyRoot: 'node-del', parentRunId: 'run-parent', parentStepId: 'step-del' },
+      status:   'completed',
+    })
+
+    const findUnique = jest.fn().mockResolvedValue(parentRun)
+    const findFirst  = jest.fn().mockResolvedValue(childRun)
+    const svc = new HierarchyStatusService(makePrisma({ findUnique, findFirst }))
+
+    await svc.getRunStatus('run-parent')
+
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          createdAt: { gte: parentRun.createdAt },
+          flow:      { agent: { workspaceId: 'ws-1' } },
+          AND: [
+            { metadata: { path: ['hierarchyRoot'], equals: 'node-del' } },
+            { metadata: { path: ['parentRunId'], equals: 'run-parent' } },
+            { metadata: { path: ['parentStepId'], equals: 'step-del' } },
+          ],
+        }),
+      }),
+    )
+  })
+
   it('does NOT throw when findAndExpandChildRun fails — returns partial tree', async () => {
     const delegationStep = makeStep({
       id: 'step-del', nodeType: 'delegation', nodeId: 'node-del',
@@ -386,6 +419,54 @@ describe('HierarchyStatusService.listWorkspaceRuns()', () => {
     expect(findFirst).not.toHaveBeenCalled()
     // findMany called exactly once for the list
     expect(findMany).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns flat run summaries, forwards pagination filters, and preserves flat aggregates', async () => {
+    const blockedCreatedAt = new Date(Date.now() - 31_000)
+    const steps = [
+      makeStep({
+        id: 'step-del', nodeType: 'delegation', nodeId: 'node-del',
+        status: 'queued', startedAt: null, createdAt: blockedCreatedAt,
+      }),
+      makeStep({
+        id: 'step-running', nodeType: 'agent', nodeId: 'node-running',
+        status: 'running', startedAt: NOW, completedAt: null,
+      }),
+      makeStep({
+        id: 'step-complete', nodeType: 'agent', nodeId: 'node-complete',
+        status: 'completed',
+      }),
+    ]
+    const run = makeRun(steps, { id: 'run-list-flat', status: 'running' })
+    const findMany  = jest.fn().mockResolvedValue([run])
+    const findFirst = jest.fn().mockResolvedValue(makeRun([], { id: 'unrelated-child' }))
+    const prisma = makePrisma({ findMany, findFirst })
+    const svc = new HierarchyStatusService(prisma as any)
+
+    const result = await svc.listWorkspaceRuns('ws-1', {
+      status: 'running',
+      limit:  10,
+      offset: 20,
+    })
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          flow:   { agent: { workspaceId: 'ws-1' } },
+          status: 'running',
+        }),
+        take: 10,
+        skip: 20,
+      }),
+    )
+    expect(findFirst).not.toHaveBeenCalled()
+    expect(result).toHaveLength(1)
+    expect(result[0].depth).toBe(0)
+    expect(result[0].steps[0].childRun).toBeNull()
+    expect(result[0].totalSteps).toBe(3)
+    expect(result[0].blockedSteps).toBe(1)
+    expect(result[0].runningSteps).toBe(1)
+    expect(result[0].completedSteps).toBe(1)
   })
 
   it('filters by workspaceId via flow.agent relation (not direct field)', async () => {

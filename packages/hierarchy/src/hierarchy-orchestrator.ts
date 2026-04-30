@@ -124,6 +124,11 @@ export interface SupervisorFn {
   (prompt: string): Promise<string>
 }
 
+type ParentRunLink = {
+  parentRunId:  string
+  parentStepId: string
+}
+
 /**
  * Snapshot de un RunStep consultado desde BD.
  * READ-ONLY — devuelto por getStepStatus().
@@ -295,6 +300,7 @@ export class HierarchyOrchestrator {
     opts?:       OrchestratorOptions,
     /** F2a-10: emitter de transiciones de RunStep — opcional para compatibilidad hacia atrás */
     private readonly emitter?: RunStepEventEmitter,
+    private readonly parentRunLink?: ParentRunLink,
   ) {
     this.hierarchy    = hierarchy
     this.executorFn   = executorFn
@@ -316,7 +322,11 @@ export class HierarchyOrchestrator {
       workspaceId,
       agentId:   this.hierarchy.level === 'agent' ? this.hierarchy.id : undefined,
       inputData: { task: rootTask, ...input },
-      metadata:  { hierarchyRoot: this.hierarchy.id, hierarchyLevel: this.hierarchy.level },
+      metadata:  {
+        hierarchyRoot:  this.hierarchy.id,
+        hierarchyLevel: this.hierarchy.level,
+        ...this.parentRunLink,
+      },
     })
     await this.repo.startRun(run.id)
 
@@ -972,6 +982,7 @@ export class HierarchyOrchestrator {
         this.supervisorFn,
         this.opts,
         this.emitter,  // propagar emitter al sub-orquestador
+        { parentRunId: runId, parentStepId: step.id },
       )
 
       const subResult = await subOrchestrator.orchestrate(
