@@ -4,7 +4,7 @@
  * Arquitectura:
  *   - Cada orchestrate() crea un Run en Prisma y persiste cada subtarea como RunStep.
  *   - La descomposición usa un supervisor LLM real (bloques ---DELEGATE---) con
- *     fallback a round-robin si el LLM falla o no hay hijos.
+ *     fallback por capability match si el LLM falla o no produce bloques válidos.
  *   - Retry configurable por subtarea con backoff exponencial.
  *   - HITL (Human-in-the-Loop): nodos marcados requiresApproval=true pausan el Run
  *     y esperan un Approval en DB antes de continuar.
@@ -148,6 +148,14 @@ export type RouteDecision =
   | { type: 'local';    node: HierarchyNode }
   | { type: 'delegate'; node: HierarchyNode; children: HierarchyNode[] }
 
+/** Bloque ---DELEGATE--- parseado desde la salida del supervisor LLM */
+export interface DelegateBlock {
+  to:       string
+  task:     string
+  context:  Record<string, unknown>
+  priority: 'high' | 'medium' | 'low'
+}
+
 // ── Opciones de configuración ────────────────────────────────────────────────────────────────
 
 export interface OrchestratorOptions {
@@ -169,6 +177,69 @@ const DEFAULT_OPTIONS: Required<OrchestratorOptions> = {
   subtaskTimeoutMs:  120_000,  // 2 min
   approvalTimeoutMs: 900_000,  // 15 min
   parallel:          true,
+}
+
+// ── Utilidades de módulo ───────────────────────────────────────────────────────────────
+
+/** Tokeniza texto en palabras lowercased para cálculo de Jaccard similarity */
+function tokenize(text: string): Set<string> {
+  return new Set(text.toLowerCase().match(/\b\w+\b/g) ?? [])
+}
+
+/** Jaccard similarity entre dos conjuntos de tokens: |A ∩ B| / |A ∪ B| */
+function jaccardScore(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 && b.size === 0) return 0
+  let intersection = 0
+  for (const t of a) if (b.has(t)) intersection++
+  const union = a.size + b.size - intersection
+  return union === 0 ? 0 : intersection / union
+}
+
+/**
+ * Extrae bloques ---DELEGATE--- ... ---END--- del texto del LLM.
+ * Función pura — sin efectos secundarios, nunca lanza.
+ *
+ * @returns Array de DelegateBlock válidos (vacío si no hay ninguno)
+ */
+export function parseDelegateBlocks(raw: string): DelegateBlock[] {
+  const BLOCK_RE = /---DELEGATE---([\.\s\S]*?)---END---/g
+  const blocks: DelegateBlock[] = []
+  let match: RegExpExecArray | null
+
+  while ((match = BLOCK_RE.exec(raw)) !== null) {
+    const body = match[1]
+
+    // Extrae el primer valor de una línea "KEY: value"
+    const field = (key: string): string | undefined => {
+      const re = new RegExp(`^\\s*${key}\\s*:\\s*(.+)$`, 'im')
+      return re.exec(body)?.[1]?.trim()
+    }
+
+    const to   = field('TO')
+    const task = field('TASK')
+    if (!to || !task) continue   // obligatorios
+
+    // CONTEXT: JSON opcional — ignorar si malformado
+    let context: Record<string, unknown> = {}
+    const rawCtx = field('CONTEXT')
+    if (rawCtx) {
+      try {
+        const parsed = JSON.parse(rawCtx)
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          context = parsed as Record<string, unknown>
+        }
+      } catch { /* ignorar JSON malformado */ }
+    }
+
+    // PRIORITY: normalizar; cualquier valor no reconocido → 'medium'
+    const rawPri = field('PRIORITY')?.toLowerCase()
+    const priority: DelegateBlock['priority'] =
+      rawPri === 'high' || rawPri === 'low' ? rawPri : 'medium'
+
+    blocks.push({ to, task, context, priority })
+  }
+
+  return blocks
 }
 
 // ── HierarchyOrchestrator ─────────────────────────────────────────────────────────────────
@@ -200,7 +271,7 @@ export class HierarchyOrchestrator {
    * Punto de entrada principal.
    *
    * 1. Crea un Run en Prisma
-   * 2. Descompone el task vía supervisor LLM (o round-robin fallback)
+   * 2. Descompone el task vía supervisor LLM (o capability-match fallback)
    * 3. Ejecuta subtareas (paralelo o secuencial) con checkpointing por RunStep
    * 4. Consolida el resultado vía supervisor LLM
    * 5. Marca el Run como completed/partial/failed
@@ -226,7 +297,7 @@ export class HierarchyOrchestrator {
     await this.repo.startRun(run.id)
 
     try {
-      // ── 2. Descomponer task ──────────────────────────────────────────────
+      // ── 2. Descomponer task ─────────────────────────────────────────────
       const subtasks = await this.decomposeTasks(rootTask, input)
 
       // ── 3. Ejecutar subtareas ─────────────────────────────────────────────
@@ -306,8 +377,9 @@ export class HierarchyOrchestrator {
    * Descompone el task en subtareas asignadas a agentes hoja.
    *
    * Estrategia:
-   *   1. Si hay supervisorFn: llama al LLM con un prompt estructurado y parsea la respuesta.
-   *   2. Si el LLM falla o no hay supervisorFn: fallback a round-robin.
+   *   1. Si hay supervisorFn: llama al LLM y parsea bloques ---DELEGATE---.
+   *   2. Si el LLM falla o no produce bloques válidos: fallbackToCapabilityMatch().
+   *   3. Si no hay supervisorFn: round-robin sobre todos los agentes.
    */
   private async decomposeTasks(
     rootTask: string,
@@ -315,7 +387,7 @@ export class HierarchyOrchestrator {
   ): Promise<HierarchyTask[]> {
     const agents = this.collectAgentNodes(this.hierarchy)
 
-    // Modo single-agent
+    // Modo single-agent: no hay sub-agentes, ejecutar directamente
     if (agents.length === 0) {
       return [{
         id:             `subtask-${this.hierarchy.id}`,
@@ -331,11 +403,11 @@ export class HierarchyOrchestrator {
       try {
         return await this.decomposeTask(rootTask, agents, input)
       } catch {
-        // fallback silencioso a round-robin
+        // decomposeTask() nunca debería lanzar, pero por si acaso
       }
     }
 
-    // Fallback: asignar el mismo task a todos los agentes (round-robin)
+    // Fallback final: round-robin sobre todos los agentes disponibles
     return agents.map((agent, idx) => ({
       id:             `subtask-${agent.id}-${idx}`,
       description:    `[${agent.name}]: ${rootTask}`,
@@ -347,12 +419,10 @@ export class HierarchyOrchestrator {
 
   /**
    * Descompone un task en subtareas usando el supervisor LLM.
-   * Formato de salida del LLM: bloques ---DELEGATE--- (ver F2a-05c).
-   * TODO F2a-05c: reemplazar parser JSON por parseDelegateBlocks().
+   * Formato de salida del LLM: bloques ---DELEGATE---/---END---.
    *
-   * El supervisor recibe un prompt con el formato ---DELEGATE---/---END---.
-   * Parser actual (temporal): extrae el primer bloque JSON del texto.
-   * El parser será migrado a parseDelegateBlocks() en F2a-05c.
+   * NUNCA lanza — todos los paths de error van a fallbackToCapabilityMatch().
+   * El try/catch del supervisorFn!() call NO puede eliminarse.
    */
   private async decomposeTask(
     rootTask: string,
@@ -397,31 +467,87 @@ export class HierarchyOrchestrator {
       agentList,
     ].join('\n')
 
-    const raw = await this.supervisorFn!(prompt)
-
-    // Extraer el primer bloque JSON del texto
-    const jsonMatch = raw.match(/\[\s*\{[\s\S]*?\}\s*\]/)
-    if (!jsonMatch) throw new Error('Supervisor did not return a valid JSON array')
-
-    const parsed = JSON.parse(jsonMatch[0]) as Array<{ agentId: string; task: string }>
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      throw new Error('Supervisor returned empty task list')
+    // Llamada al LLM — este try/catch NO puede eliminarse
+    let raw = ''
+    try {
+      raw = await this.supervisorFn!(prompt)
+    } catch {
+      // LLM falló (red, timeout, etc.) → fallback por capability
+      return this.fallbackToCapabilityMatch(rootTask, agents, input)
     }
 
-    // Filtrar asignaciones a agentes válidos
+    // Parsear bloques ---DELEGATE---
+    const blocks = parseDelegateBlocks(raw)
+
+    if (blocks.length === 0) {
+      return this.fallbackToCapabilityMatch(rootTask, agents, input)
+    }
+
+    // Filtrar TO: que apunten a agentes válidos del árbol
     const agentIds = new Set(agents.map((a) => a.id))
-    return parsed
-      .filter((p) => agentIds.has(p.agentId))
-      .map((p, idx) => {
-        const agent = agents.find((a) => a.id === p.agentId)!
-        return {
-          id:             `subtask-${p.agentId}-${idx}`,
-          description:    p.task,
-          assignedNodeId: p.agentId,
-          level:          agent.level,
-          input,
-        }
-      })
+    const validBlocks = blocks.filter((b) => agentIds.has(b.to))
+
+    if (validBlocks.length === 0) {
+      return this.fallbackToCapabilityMatch(rootTask, agents, input)
+    }
+
+    return validBlocks.map((block, idx) => {
+      const agent = agents.find((a) => a.id === block.to)!
+      return {
+        id:             `subtask-${block.to}-${idx}`,
+        description:    block.task,
+        assignedNodeId: block.to,
+        level:          agent.level,
+        input:          { ...input, ...block.context },
+      } satisfies HierarchyTask
+    })
+  }
+
+  /**
+   * Fallback cuando el supervisor no produce bloques válidos.
+   * Usa findSpecialistWithCapability() para asignación por Jaccard score.
+   * Nunca lanza. Siempre retorna al menos 1 HierarchyTask.
+   */
+  private async fallbackToCapabilityMatch(
+    rootTask: string,
+    agents:   HierarchyNode[],
+    input?:   Record<string, unknown>,
+  ): Promise<HierarchyTask[]> {
+    const match = await this.findSpecialistWithCapability(rootTask, agents)
+    return [{
+      id:             `subtask-${match.node.id}-0`,
+      description:    rootTask,
+      assignedNodeId: match.node.id,
+      level:          match.node.level,
+      input,
+    }]
+  }
+
+  /**
+   * Busca el agente más adecuado para el task usando Jaccard similarity
+   * contra el systemPrompt de cada agente.
+   *
+   * Retorna el agente con mayor score, o el primero si todos empatan en 0.
+   * Nunca lanza.
+   */
+  private async findSpecialistWithCapability(
+    rootTask: string,
+    agents:   HierarchyNode[],
+  ): Promise<{ node: HierarchyNode; score: number }> {
+    const taskTokens = tokenize(rootTask)
+
+    let best: { node: HierarchyNode; score: number } = { node: agents[0], score: -1 }
+
+    for (const agent of agents) {
+      const promptText = agent.agentConfig?.systemPrompt ?? agent.name
+      const agentTokens = tokenize(promptText)
+      const score = jaccardScore(taskTokens, agentTokens)
+      if (score > best.score) {
+        best = { node: agent, score }
+      }
+    }
+
+    return best
   }
 
   // ── Ejecución ──────────────────────────────────────────────────────────────────────────────
