@@ -1,15 +1,14 @@
-# Pasos pendientes para completar la feature/settings
+# Pasos pendientes para activar feature/settings
 
-## 1 — Agregar `SystemConfig` al schema Prisma
+## 1 — Migration: agregar `SystemConfig` + campos a `RunStep`
+
+### 1a — Agregar al final de `apps/api/prisma/schema.prisma`
 
 ```prisma
-// apps/api/prisma/schema.prisma — agregar al final del archivo
-
-// ── SystemConfig ──────────────────────────────────────────────────────────
+// ── SystemConfig ──────────────────────────────────────────────────────────────
 // Configuración global del sistema (single-tenant).
 // Almacena API keys y URLs de servicios externos: LLM providers, n8n.
 // Sin cifrado — mismo nivel de confianza que .env en disco.
-// Configurable desde Settings UI por el administrador.
 
 model SystemConfig {
   key       String   @id   // e.g. 'OPENAI_API_KEY', 'N8N_BASE_URL'
@@ -18,12 +17,23 @@ model SystemConfig {
 }
 ```
 
-Luego ejecutar:
-```bash
-npx prisma migrate dev --name add-system-config
+### 1b — Agregar campos a `RunStep` en el schema
+
+```diff
+model RunStep {
+  // ... campos existentes ...
++ model     String?  // modelo LLM usado en este step (ej. 'openai/gpt-4o')
++ provider  String?  // proveedor LLM (ej. 'openai')
++ index     Int      @default(0)  // posición del step dentro del run
+  // NOTA: usar completedAt (ya existe) — NO agregar finishedAt
+}
 ```
 
-**Requiere aprobación de Sebastián antes de ejecutar.**
+### 1c — Ejecutar (requiere aprobación de Sebastián)
+
+```bash
+npx prisma migrate dev --name add-system-config-and-runstep-fields
+```
 
 ---
 
@@ -31,59 +41,36 @@ npx prisma migrate dev --name add-system-config
 
 Archivo: `packages/run-engine/src/llm-client.ts`
 
-### 2a — Agregar interface `LLMClientOptions`
-
 ```typescript
-// Agregar antes de la función buildLLMClient
+// Agregar interface antes de buildLLMClient:
 export interface LLMClientOptions {
-  /** API keys cargadas desde SystemConfig (tiene prioridad sobre process.env). */
+  /** Keys de SystemConfig — tienen prioridad sobre process.env */
   configOverride?: Record<string, string>
 }
-```
 
-### 2b — Modificar firma de `buildLLMClient`
+// Modificar firma:
+// - buildLLMClient(modelId: string): ProviderAdapter
+// + buildLLMClient(modelId: string, opts?: LLMClientOptions): ProviderAdapter
 
-```diff
--export function buildLLMClient(modelId: string): ProviderAdapter {
-+export function buildLLMClient(modelId: string, opts?: LLMClientOptions): ProviderAdapter {
-```
+// En resolveApiKey(), cambiar el loop:
+// - const key = process.env[envVar]
+// + const key = opts?.configOverride?.[envVar] ?? process.env[envVar]
 
-### 2c — Modificar `resolveApiKey` para usar `configOverride`
-
-```diff
--  for (const envVar of envVars) {
--    const key = process.env[envVar]
--    if (key) return key
--  }
-+  for (const envVar of envVars) {
-+    const key = opts?.configOverride?.[envVar] ?? process.env[envVar]
-+    if (key) return key
-+  }
-```
-
-### 2d — Pasar `opts` a `resolveApiKey` internamente
-
-```diff
--  const apiKey = resolveApiKey(config.envVars)
-+  const apiKey = resolveApiKey(config.envVars, opts)
+// Pasar opts internamente:
+// - const apiKey = resolveApiKey(config.envVars)
+// + const apiKey = resolveApiKey(config.envVars, opts)
 ```
 
 ---
 
-## 3 — Registrar `SettingsModule` en el módulo raíz
+## 3 — Verificar import del prisma singleton
 
-Encontrar el archivo raíz (`app.module.ts` o equivalente) y agregar:
+`settings.service.ts` usa `new PrismaClient()` directamente.
+Si el proyecto ya exporta un singleton (ej. `lib/prisma.ts`), reemplazar:
 
-```typescript
-import { SettingsModule } from './modules/settings/settings.module'
-
-@Module({
-  imports: [
-    // ... módulos existentes ...
-    SettingsModule,
-  ],
-})
-export class AppModule {}
+```diff
+- const prisma = new PrismaClient()
++ import { prisma } from '../../lib/prisma'
 ```
 
 ---
@@ -91,8 +78,21 @@ export class AppModule {}
 ## 4 — Exportar desde `packages/run-engine/src/index.ts`
 
 ```typescript
-export { SystemConfigService }         from './system-config.service'
-export { PROVIDER_MODELS }             from './provider-models'
-export type { ProviderModelConfig }    from './provider-models'
-export type { LLMClientOptions }       from './llm-client'  // después del paso 2
+export { SystemConfigService }       from './system-config.service'
+export { PROVIDER_MODELS }           from './provider-models'
+export type { ProviderModelConfig }  from './provider-models'
+export type { LLMClientOptions }     from './llm-client'  // después del paso 2
 ```
+
+---
+
+## Checklist de criterios de aceptación
+
+- [ ] `GET /settings/providers` — lista providers con `hasKey` correcto
+- [ ] `PATCH /settings/providers/:id/key` — guarda en BD, no en .env
+- [ ] `GET /settings/providers` — NUNCA devuelve el valor de la API key
+- [ ] `POST /settings/providers/:id/test` — valida con llamada real de 1 token
+- [ ] `buildLLMClient()` sin opts → sigue leyendo process.env (CI no rompe)
+- [ ] `buildLLMClient()` con configOverride → usa BD (producción)
+- [ ] `PATCH /settings/n8n` — guarda baseUrl + apiKey
+- [ ] `POST /settings/n8n/test` — confirma conectividad con instancia n8n

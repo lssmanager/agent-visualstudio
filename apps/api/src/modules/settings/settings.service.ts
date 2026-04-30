@@ -1,20 +1,32 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common'
-import { PrismaService } from '../core/prisma/prisma.service'
-import { PROVIDER_MODELS } from '@agent-visualstudio/run-engine/provider-models'
+import { PrismaClient } from '@prisma/client'
+import { PROVIDER_MODELS } from '../../lib/provider-models'
 
-@Injectable()
+// Singleton prisma — si el proyecto exporta uno compartido (ej. lib/prisma.ts),
+// reemplazar esta línea con: import { prisma } from '../../lib/prisma'
+const prisma = new PrismaClient()
+
+// ── Errores tipados para el controller ───────────────────────────────────────
+export class NotFoundError extends Error {
+  readonly status = 404
+  constructor(msg: string) { super(msg); this.name = 'NotFoundError' }
+}
+export class BadRequestError extends Error {
+  readonly status = 400
+  constructor(msg: string) { super(msg); this.name = 'BadRequestError' }
+}
+
+// ── Service ──────────────────────────────────────────────────────────────────
 export class SettingsService {
-  constructor(private readonly prisma: PrismaService) {}
 
   // ── helpers ────────────────────────────────────────────────────────────────
 
   private async getSysConfig(): Promise<Record<string, string>> {
-    const rows = await this.prisma.systemConfig.findMany()
+    const rows = await prisma.systemConfig.findMany()
     return Object.fromEntries(rows.map(r => [r.key, r.value]))
   }
 
   private async setKey(key: string, value: string): Promise<void> {
-    await this.prisma.systemConfig.upsert({
+    await prisma.systemConfig.upsert({
       where:  { key },
       update: { value },
       create: { key, value },
@@ -22,19 +34,18 @@ export class SettingsService {
   }
 
   private async deleteKey(key: string): Promise<void> {
-    await this.prisma.systemConfig.deleteMany({ where: { key } })
+    await prisma.systemConfig.deleteMany({ where: { key } })
   }
 
   // ── providers ──────────────────────────────────────────────────────────────
 
   async listProviders() {
     const config = await this.getSysConfig()
-
     return Object.entries(PROVIDER_MODELS).map(([id, p]) => ({
       id,
       name:        p.label,
       requiresKey: p.requiresKey,
-      // hasKey: indica si la key está guardada en BD — NUNCA devuelve el valor
+      // hasKey: solo indica si existe la key — NUNCA devuelve el valor
       hasKey:      p.keyEnv ? Boolean(config[p.keyEnv]) : false,
       baseURL:     null as string | null,
       models:      p.models,
@@ -44,15 +55,15 @@ export class SettingsService {
 
   async setProviderKey(providerId: string, apiKey: string): Promise<void> {
     const provider = PROVIDER_MODELS[providerId]
-    if (!provider)        throw new NotFoundException(`Provider '${providerId}' not found`)
-    if (!provider.keyEnv) throw new BadRequestException(`Provider '${providerId}' does not use an API key`)
+    if (!provider)        throw new NotFoundError(`Provider '${providerId}' not found`)
+    if (!provider.keyEnv) throw new BadRequestError(`Provider '${providerId}' does not use an API key`)
     await this.setKey(provider.keyEnv, apiKey)
   }
 
   async deleteProviderKey(providerId: string): Promise<void> {
     const provider = PROVIDER_MODELS[providerId]
-    if (!provider)        throw new NotFoundException(`Provider '${providerId}' not found`)
-    if (!provider.keyEnv) throw new BadRequestException(`Provider '${providerId}' does not use an API key`)
+    if (!provider)        throw new NotFoundError(`Provider '${providerId}' not found`)
+    if (!provider.keyEnv) throw new BadRequestError(`Provider '${providerId}' does not use an API key`)
     await this.deleteKey(provider.keyEnv)
   }
 
@@ -61,21 +72,18 @@ export class SettingsService {
     modelId: string,
   ): Promise<{ ok: boolean; model: string; latencyMs: number; error?: string }> {
     const provider = PROVIDER_MODELS[providerId]
-    if (!provider) throw new NotFoundException(`Provider '${providerId}' not found`)
+    if (!provider) throw new NotFoundError(`Provider '${providerId}' not found`)
 
     const config = await this.getSysConfig()
     const start  = Date.now()
-
     try {
-      // Importación lazy para evitar dependencias circulares
+      // Import dinámico para evitar dependencias circulares
       const { buildLLMClient } = await import('@agent-visualstudio/run-engine')
       const client = buildLLMClient(modelId, { configOverride: config })
-
       await client.chat(
         [{ role: 'user', content: 'Reply with exactly: ok' }],
         { maxTokens: 5 },
       )
-
       return { ok: true, model: modelId, latencyMs: Date.now() - start }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -105,20 +113,14 @@ export class SettingsService {
     const baseUrl = config['N8N_BASE_URL']  ?? process.env['N8N_BASE_URL']
     const apiKey  = config['N8N_API_KEY']   ?? process.env['N8N_API_KEY']
 
-    if (!baseUrl) {
-      return { ok: false, workflowCount: 0, error: 'N8N_BASE_URL not configured' }
-    }
+    if (!baseUrl) return { ok: false, workflowCount: 0, error: 'N8N_BASE_URL not configured' }
 
     try {
       const url     = `${baseUrl.replace(/\/$/, '')}/api/v1/workflows?limit=1`
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       if (apiKey) headers['X-N8N-API-KEY'] = apiKey
 
-      const res = await fetch(url, {
-        headers,
-        signal: AbortSignal.timeout(8_000),
-      })
-
+      const res = await fetch(url, { headers, signal: AbortSignal.timeout(8_000) })
       if (!res.ok) throw new Error(`n8n responded ${res.status} ${res.statusText}`)
 
       const body = await res.json() as { data?: unknown[] }

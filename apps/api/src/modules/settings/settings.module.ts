@@ -1,10 +1,4 @@
-import { Module }             from '@nestjs/common'
-import { SettingsController }  from './settings.controller'
-import { SettingsService }     from './settings.service'
-
-@Module({
-  controllers: [SettingsController],
-  providers:   [SettingsService],
-  exports:     [SettingsService],
-})
-export class SettingsModule {}
+// Barrel export — este es un proyecto Express, no NestJS.
+// No hay decoradores @Module/@Injectable/@Controller.
+export { SettingsService } from './settings.service'
+export { registerSettingsRoutes } from './settings.controller'

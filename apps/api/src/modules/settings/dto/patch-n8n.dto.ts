@@ -1,10 +1,6 @@
-import { IsString, IsUrl, MinLength } from 'class-validator'
-
-export class PatchN8nDto {
-  @IsUrl()
-  baseUrl!: string
-
-  @IsString()
-  @MinLength(1)
-  apiKey!: string
+// Tipos de request body para settings de n8n.
+// Sin class-validator — validación manual en el controller.
+export interface PatchN8nBody {
+  baseUrl: string
+  apiKey:  string
 }

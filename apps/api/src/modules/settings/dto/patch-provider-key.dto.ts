@@ -1,7 +1,5 @@
-import { IsString, MinLength } from 'class-validator'
-
-export class PatchProviderKeyDto {
-  @IsString()
-  @MinLength(1)
-  apiKey!: string
+// Tipos de request body para settings de providers.
+// Sin class-validator — validación manual en el controller.
+export interface PatchProviderKeyBody {
+  apiKey: string
 }

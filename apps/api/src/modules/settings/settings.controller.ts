@@ -1,76 +1,95 @@
-import {
-  Controller,
-  Get,
-  Patch,
-  Delete,
-  Post,
-  Param,
-  Body,
-  HttpCode,
-  HttpStatus,
-} from '@nestjs/common'
-import { SettingsService }     from './settings.service'
-import { PatchProviderKeyDto }  from './dto/patch-provider-key.dto'
-import { PatchN8nDto }          from './dto/patch-n8n.dto'
+import { Router } from 'express'
+import { SettingsService, NotFoundError, BadRequestError } from './settings.service'
 
-@Controller('settings')
-export class SettingsController {
-  constructor(private readonly svc: SettingsService) {}
+export function registerSettingsRoutes(router: Router) {
+  const service = new SettingsService()
 
-  // ── providers ──────────────────────────────────────────────────────────────
+  // ── GET /settings/providers ──────────────────────────────────────────────
+  // Lista todos los providers. hasKey = true/false, NUNCA devuelve el valor.
+  router.get('/settings/providers', async (_req, res) => {
+    try {
+      res.json(await service.listProviders())
+    } catch (err) {
+      res.status(500).json({ ok: false, error: (err as Error).message })
+    }
+  })
 
-  /** Lista todos los providers con hasKey (sin exponer el valor de la key). */
-  @Get('providers')
-  listProviders() {
-    return this.svc.listProviders()
-  }
+  // ── PATCH /settings/providers/:providerId/key ────────────────────────────
+  // Guarda la API key en SystemConfig (BD). NO modifica .env.
+  router.patch('/settings/providers/:providerId/key', async (req, res) => {
+    const { apiKey } = req.body as { apiKey?: string }
+    if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
+      return res.status(400).json({ ok: false, error: 'apiKey is required' })
+    }
+    try {
+      await service.setProviderKey(req.params.providerId, apiKey.trim())
+      return res.json({ ok: true })
+    } catch (err) {
+      if (err instanceof NotFoundError)   return res.status(404).json({ ok: false, error: err.message })
+      if (err instanceof BadRequestError) return res.status(400).json({ ok: false, error: err.message })
+      return res.status(500).json({ ok: false, error: (err as Error).message })
+    }
+  })
 
-  /** Guarda la API key del provider en SystemConfig (no en .env). */
-  @Patch('providers/:providerId/key')
-  @HttpCode(HttpStatus.OK)
-  async setProviderKey(
-    @Param('providerId') providerId: string,
-    @Body() dto: PatchProviderKeyDto,
-  ) {
-    await this.svc.setProviderKey(providerId, dto.apiKey)
-    return { ok: true }
-  }
+  // ── DELETE /settings/providers/:providerId/key ───────────────────────────
+  // Elimina la key de BD — el sistema vuelve a leer process.env como fallback.
+  router.delete('/settings/providers/:providerId/key', async (req, res) => {
+    try {
+      await service.deleteProviderKey(req.params.providerId)
+      return res.json({ ok: true })
+    } catch (err) {
+      if (err instanceof NotFoundError)   return res.status(404).json({ ok: false, error: err.message })
+      if (err instanceof BadRequestError) return res.status(400).json({ ok: false, error: err.message })
+      return res.status(500).json({ ok: false, error: (err as Error).message })
+    }
+  })
 
-  /** Elimina la key de BD — el sistema vuelve a leer process.env como fallback. */
-  @Delete('providers/:providerId/key')
-  @HttpCode(HttpStatus.OK)
-  async deleteProviderKey(@Param('providerId') providerId: string) {
-    await this.svc.deleteProviderKey(providerId)
-    return { ok: true }
-  }
+  // ── POST /settings/providers/:providerId/test ────────────────────────────
+  // Llama al LLM con 1 token para validar que la key funciona.
+  router.post('/settings/providers/:providerId/test', async (req, res) => {
+    const { modelId } = req.body as { modelId?: string }
+    if (!modelId || typeof modelId !== 'string') {
+      return res.status(400).json({ ok: false, error: 'modelId is required' })
+    }
+    try {
+      res.json(await service.testProvider(req.params.providerId, modelId))
+    } catch (err) {
+      if (err instanceof NotFoundError) return res.status(404).json({ ok: false, error: err.message })
+      return res.status(500).json({ ok: false, error: (err as Error).message })
+    }
+  })
 
-  /** Valida la key con una llamada real de 1 token. */
-  @Post('providers/:providerId/test')
-  @HttpCode(HttpStatus.OK)
-  testProvider(
-    @Param('providerId') providerId: string,
-    @Body('modelId') modelId: string,
-  ) {
-    return this.svc.testProvider(providerId, modelId)
-  }
+  // ── GET /settings/n8n ───────────────────────────────────────────────────
+  router.get('/settings/n8n', async (_req, res) => {
+    try {
+      res.json(await service.getN8n())
+    } catch (err) {
+      res.status(500).json({ ok: false, error: (err as Error).message })
+    }
+  })
 
-  // ── n8n ────────────────────────────────────────────────────────────────────
+  // ── PATCH /settings/n8n ─────────────────────────────────────────────────
+  // Guarda N8N_BASE_URL y N8N_API_KEY en SystemConfig.
+  router.patch('/settings/n8n', async (req, res) => {
+    const { baseUrl, apiKey } = req.body as { baseUrl?: string; apiKey?: string }
+    if (!baseUrl || typeof baseUrl !== 'string') {
+      return res.status(400).json({ ok: false, error: 'baseUrl is required' })
+    }
+    try {
+      await service.setN8n(baseUrl.trim(), (apiKey ?? '').trim())
+      return res.json({ ok: true })
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: (err as Error).message })
+    }
+  })
 
-  @Get('n8n')
-  getN8n() {
-    return this.svc.getN8n()
-  }
-
-  @Patch('n8n')
-  @HttpCode(HttpStatus.OK)
-  async setN8n(@Body() dto: PatchN8nDto) {
-    await this.svc.setN8n(dto.baseUrl, dto.apiKey)
-    return { ok: true }
-  }
-
-  @Post('n8n/test')
-  @HttpCode(HttpStatus.OK)
-  testN8n() {
-    return this.svc.testN8n()
-  }
+  // ── POST /settings/n8n/test ─────────────────────────────────────────────
+  // Llama GET /api/v1/workflows en la instancia n8n configurada.
+  router.post('/settings/n8n/test', async (_req, res) => {
+    try {
+      res.json(await service.testN8n())
+    } catch (err) {
+      res.status(500).json({ ok: false, error: (err as Error).message })
+    }
+  })
 }
