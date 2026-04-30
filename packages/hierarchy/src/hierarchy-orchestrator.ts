@@ -183,6 +183,32 @@ export interface SpecialistMatch {
   allScores:  CapabilityScore[]
 }
 
+/**
+ * Resultado de isBlocked().
+ * Siempre se devuelve — nunca null, nunca lanza.
+ */
+export interface BlockedStatus {
+  /** true si el step/run está bloqueado */
+  blocked:     boolean
+
+  /** ID del RunStep bloqueado (si blocked = true) */
+  stepId?:     string
+
+  /** ID del Run al que pertenece el step bloqueado */
+  runId?:      string
+
+  /** nodeId del step bloqueado */
+  nodeId?:     string
+
+  /** Milisegundos transcurridos desde startedAt (si disponible) */
+  elapsedMs?:  number
+
+  /** El timeout que se superó */
+  timeoutMs?:  number
+
+  /** Razón textual para logging/alertas */
+  reason?:     string
+}
 
 // ── Opciones de configuración ────────────────────────────────────────────────────────────────
 
@@ -198,6 +224,21 @@ export interface OrchestratorOptions {
   /** Ejecutar subtareas en paralelo (true) o secuencial (false) */
   parallel?: boolean
 }
+
+/**
+ * Tiempo máximo que un RunStep de delegación puede estar
+ * en estado 'running' o 'queued' antes de considerarse bloqueado.
+ *
+ * No es un OrchestratorOptions — es un contrato de arquitectura.
+ * Si la delegación tarda más de esto, hay un problema estructural.
+ *
+ * Valor: 10 minutos. Racional:
+ *   - subtaskTimeoutMs default: 2 min (ejecución LLM)
+ *   - approvalTimeoutMs default: 15 min (espera humana)
+ *   - delegación: orquesta N subtasks de 2 min → 5 pasos
+ *     holgados = 10 min tope razonable
+ */
+export const DELEGATION_TIMEOUT_MS = 10 * 60 * 1000  // 10 minutos
 
 const DEFAULT_OPTIONS: Required<OrchestratorOptions> = {
   maxRetries:        2,
@@ -374,6 +415,136 @@ export class HierarchyOrchestrator {
     }
   }
 
+  /**
+   * Detecta si un RunStep de delegación está bloqueado.
+   *
+   * Un step está bloqueado cuando:
+   *   - status es 'running' o 'queued'
+   *   - startedAt + DELEGATION_TIMEOUT_MS < Date.now()
+   *
+   * NUNCA lanza — en caso de error de BD devuelve blocked: false
+   * (principio de fail-open: preferimos no fallar a falsos positivos).
+   *
+   * @param stepId  ID del RunStep a verificar
+   * @returns       BlockedStatus con diagnóstico completo
+   */
+  async isBlocked(stepId: string): Promise<BlockedStatus> {
+    try {
+      const step = await this.repo.findStep(stepId)
+
+      // Step no encontrado → no bloqueado (fail-open)
+      if (!step) {
+        return {
+          blocked: false,
+          reason:  `Step ${stepId} not found`,
+        }
+      }
+
+      // Solo steps de delegación en estado activo pueden bloquearse
+      if (step.nodeType !== 'delegation') {
+        return {
+          blocked: false,
+          stepId:  step.id,
+          runId:   step.runId,
+          reason:  `Step ${stepId} is not a delegation step (nodeType: ${step.nodeType})`,
+        }
+      }
+
+      // Step ya finalizado → no bloqueado
+      const activeStatuses = ['running', 'queued']
+      if (!activeStatuses.includes(step.status)) {
+        return {
+          blocked: false,
+          stepId:  step.id,
+          runId:   step.runId,
+          reason:  `Step ${stepId} has terminal status: ${step.status}`,
+        }
+      }
+
+      // Calcular tiempo transcurrido
+      // startedAt puede ser null si el step está 'queued' pero nunca llegó a 'running'.
+      // En ese caso usamos createdAt — un step queued durante 10 min también es un bloqueo.
+      const referenceTime = step.startedAt ?? step.createdAt
+      const elapsedMs     = Date.now() - referenceTime.getTime()
+
+      if (elapsedMs < DELEGATION_TIMEOUT_MS) {
+        return {
+          blocked:   false,
+          stepId:    step.id,
+          runId:     step.runId,
+          nodeId:    step.nodeId,
+          elapsedMs,
+          timeoutMs: DELEGATION_TIMEOUT_MS,
+          reason:    `Step running for ${elapsedMs}ms — within timeout (${DELEGATION_TIMEOUT_MS}ms)`,
+        }
+      }
+
+      // ── BLOQUEADO ──────────────────────────────────────────────
+      return {
+        blocked:   true,
+        stepId:    step.id,
+        runId:     step.runId,
+        nodeId:    step.nodeId,
+        elapsedMs,
+        timeoutMs: DELEGATION_TIMEOUT_MS,
+        reason:    `Delegation step ${stepId} blocked: running for ${elapsedMs}ms > ${DELEGATION_TIMEOUT_MS}ms timeout`,
+      }
+    } catch {
+      // Error de BD → fail-open
+      return {
+        blocked: false,
+        reason:  `isBlocked check failed for step ${stepId} — BD error`,
+      }
+    }
+  }
+
+  /**
+   * Verifica si algún RunStep de delegación en un Run está bloqueado.
+   * Útil para polls periódicos del gateway o n8n.
+   *
+   * NUNCA lanza.
+   *
+   * @param runId  ID del Run a verificar
+   * @returns      BlockedStatus del primer step bloqueado encontrado,
+   *               o { blocked: false } si ninguno lo está
+   */
+  async isRunBlocked(runId: string): Promise<BlockedStatus> {
+    try {
+      const steps = await this.repo.findDelegationStepsByRun(runId)
+
+      for (const step of steps) {
+        const activeStatuses = ['running', 'queued']
+        if (!activeStatuses.includes(step.status)) continue
+
+        const referenceTime = step.startedAt ?? step.createdAt
+        const elapsedMs     = Date.now() - referenceTime.getTime()
+
+        if (elapsedMs >= DELEGATION_TIMEOUT_MS) {
+          return {
+            blocked:   true,
+            stepId:    step.id,
+            runId:     step.runId,
+            nodeId:    step.nodeId,
+            elapsedMs,
+            timeoutMs: DELEGATION_TIMEOUT_MS,
+            reason:    `Run ${runId} blocked: delegation step ${step.id} running for ${elapsedMs}ms`,
+          }
+        }
+      }
+
+      return {
+        blocked: false,
+        runId,
+        reason:  `No blocked delegation steps in run ${runId}`,
+      }
+    } catch {
+      return {
+        blocked: false,
+        reason:  `isRunBlocked check failed for run ${runId} — BD error`,
+      }
+    }
+  }
+
   // ── Descomposición de tareas ─────────────────────────────────────────────────────────
 
   /**
@@ -411,8 +582,6 @@ export class HierarchyOrchestrator {
     }
 
     // [F2a-04] Fallback: asignar al especialista con mayor afinidad semántica
-    // Reemplaza el round-robin ciego anterior — si necesitas fan-out explícito,
-    // pásalo como opción al caller.
     const match = await this.findSpecialistWithCapability(rootTask, agents)
     return [{
       id:             `subtask-${match.node.id}-0`,
@@ -936,8 +1105,6 @@ export class HierarchyOrchestrator {
     }
 
     // Nodo intermedio → delegar al nivel inferior
-    // Los children son los nodos directos — no bajar más aquí;
-    // la recursión ocurre en el siguiente ciclo de orchestrate()
     return {
       type:     'delegate',
       node,
