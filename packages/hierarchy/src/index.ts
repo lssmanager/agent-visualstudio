@@ -9,6 +9,7 @@ export type {
   OrchestratorOptions,
   StepStatusResult,
   RouteDecision,
+  DelegateBlock,
 } from './hierarchy-orchestrator.js'
 
-export { HierarchyOrchestrator } from './hierarchy-orchestrator.js'
+export { HierarchyOrchestrator, parseDelegateBlocks } from './hierarchy-orchestrator.js'
