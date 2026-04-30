@@ -272,6 +272,13 @@ export class N8nService {
     if (!secretKeyHex) {
       throw new Error('N8N_SECRET not configured');
     }
+    if (!/^[0-9a-fA-F]{64}$/.test(secretKeyHex)) {
+      throw new Error('N8N_SECRET must be a valid hex string of 32 bytes');
+    }
+    // AES-256-GCM payload: [12b IV][16b authTag][>=1b ciphertext] = min 29 bytes = 58 hex chars
+    if (!/^[0-9a-fA-F]{58,}$/.test(conn.apiKeyEncrypted)) {
+      throw new Error('apiKeyEncrypted malformed');
+    }
     const apiKey = this.decryptApiKey(conn.apiKeyEncrypted, secretKeyHex);
 
     // ── Step 3: fetch workflow list from n8n ──────────────────────────
@@ -329,43 +336,46 @@ export class N8nService {
         const webhookUrl  = `${conn.baseUrl.replace(/\/$/, '')}/webhook/${webhookPath}`;
         const method      = (webhookNode?.parameters?.httpMethod ?? 'POST').toUpperCase();
 
-        // c. Upsert N8nWorkflow
-        await prisma.n8nWorkflow.upsert({
-          where: {
-            connectionId_n8nWorkflowId: { connectionId, n8nWorkflowId: wf.id },
-          },
-          create: {
-            connectionId,
-            n8nWorkflowId: wf.id,
-            name:          wf.name,
-            webhookUrl,
-            isActive:      true,
-          },
-          update: {
-            name:      wf.name,
-            webhookUrl,
-            isActive:  true,
-            updatedAt: new Date(),
-          },
-        });
+        // c+d. Upsert N8nWorkflow and Skill atomically
+        await prisma.$transaction(async (tx) => {
+          // c. Upsert N8nWorkflow
+          await tx.n8nWorkflow.upsert({
+            where: {
+              connectionId_n8nWorkflowId: { connectionId, n8nWorkflowId: wf.id },
+            },
+            create: {
+              connectionId,
+              n8nWorkflowId: wf.id,
+              name:          wf.name,
+              webhookUrl,
+              isActive:      true,
+            },
+            update: {
+              name:      wf.name,
+              webhookUrl,
+              isActive:  true,
+              updatedAt: new Date(),
+            },
+          });
 
-        // d. Upsert Skill
-        //    Skill.name is @unique — use 'n8n:{connectionId}:{workflowId}' to avoid collisions.
-        const skillName = `n8n:${connectionId}:${wf.id}`;
-        await prisma.skill.upsert({
-          where:  { name: skillName },
-          create: {
-            name:        skillName,
-            description: wf.name,
-            type:        'n8n_webhook',
-            config:      { webhookUrl, method },
-            schema:      null,
-          },
-          update: {
-            description: wf.name,
-            config:      { webhookUrl, method },
-            updatedAt:   new Date(),
-          },
+          // d. Upsert Skill
+          //    Skill.name is @unique — use 'n8n:{connectionId}:{workflowId}' to avoid collisions.
+          const skillName = `n8n:${connectionId}:${wf.id}`;
+          await tx.skill.upsert({
+            where:  { name: skillName },
+            create: {
+              name:        skillName,
+              description: wf.name,
+              type:        'n8n_webhook',
+              config:      { webhookUrl, method },
+              schema:      null,
+            },
+            update: {
+              description: wf.name,
+              config:      { webhookUrl, method },
+              updatedAt:   new Date(),
+            },
+          });
         });
 
         // e. Count success
@@ -486,6 +496,12 @@ export class N8nService {
    * @param keyHex        64-char hex string (32 bytes) master key
    */
   private decryptApiKey(encryptedHex: string, keyHex: string): string {
+    if (!/^[0-9a-fA-F]{64}$/.test(keyHex)) {
+      throw new Error('N8N_SECRET must be a valid hex string of 32 bytes');
+    }
+    if (!/^[0-9a-fA-F]{58,}$/.test(encryptedHex)) {
+      throw new Error('apiKeyEncrypted malformed');
+    }
     const key     = Buffer.from(keyHex, 'hex');
     const buf     = Buffer.from(encryptedHex, 'hex');
     const iv      = buf.subarray(0, 12);

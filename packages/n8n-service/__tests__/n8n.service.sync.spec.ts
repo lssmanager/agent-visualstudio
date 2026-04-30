@@ -80,7 +80,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 function makePrisma(
   connectionRow: typeof activeConnection | typeof inactiveConnection = activeConnection,
 ): N8nPrismaClient {
-  return {
+  const prismaObj = {
     n8nConnection: {
       findUniqueOrThrow: vi.fn().mockResolvedValue(connectionRow),
     },
@@ -90,7 +90,15 @@ function makePrisma(
     skill: {
       upsert: vi.fn().mockResolvedValue({}),
     },
+    $transaction: vi.fn(),
   } as unknown as N8nPrismaClient;
+
+  // Callback-form transaction: passes the same prisma object so spy assertions work
+  (prismaObj.$transaction as ReturnType<typeof vi.fn>).mockImplementation(
+    async (callback: (tx: unknown) => Promise<unknown>) => callback(prismaObj),
+  );
+
+  return prismaObj;
 }
 
 // ── Setup / teardown ──────────────────────────────────────────────────────
@@ -256,6 +264,27 @@ describe('N8nService.syncWorkflows()', () => {
     expect(res.errors).toHaveLength(1);
     expect(res.errors[0]?.workflowId).toBe('wf-fail');
     expect(res.errors[0]?.reason).toMatch(/DB constraint/);
+  });
+
+  // ── 6. CHANNEL_SECRET fallback ─────────────────────────────────────────
+
+  it('usa CHANNEL_SECRET como fallback cuando N8N_SECRET no está configurado', async () => {
+    delete process.env['N8N_SECRET'];
+    process.env['CHANNEL_SECRET'] = TEST_KEY_HEX;
+
+    const prisma = makePrisma();
+    const svc    = new N8nService({
+      baseUrl: BASE_URL, apiKey: 'dummy', prisma,
+    });
+
+    vi.spyOn(global, 'fetch').mockResolvedValue(
+      jsonResponse({ data: [makeWorkflow('wf-ch', true, 'hook-ch')] }),
+    );
+
+    const res = await svc.syncWorkflows(CONNECTION_ID);
+
+    expect(res.upserted).toBe(1);
+    expect(res.errors).toHaveLength(0);
   });
 
 });

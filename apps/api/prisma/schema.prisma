@@ -64,6 +64,7 @@ model Agent {
   runs           Run[]
   modelPolicies  ModelPolicy[]
   approvals      Approval[]
+  agentSkills    AgentSkill[]
 
   @@index([workspaceId])
 }
@@ -97,10 +98,30 @@ model Skill {
   description String?
   type        String    @default("function")
   config      Json      @default("{}")
+  isActive    Boolean   @default(true)
+  deletedAt   DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
+  agentSkills AgentSkill[]
+
   @@index([workspaceId])
+}
+
+// ── AgentSkill ────────────────────────────────────────────────────────────────
+model AgentSkill {
+  id             String   @id @default(cuid())
+  agentId        String
+  agent          Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  skillId        String
+  skill          Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  configOverride Json     @default("{}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([agentId, skillId])
+  @@index([agentId])
+  @@index([skillId])
 }
 
 // ── Policy ────────────────────────────────────────────────────────────────────
