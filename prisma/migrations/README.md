@@ -6,6 +6,7 @@
 |---|---------|-------------|
 | 1 | `20260428000000_init` | Schema base completo + partial unique indexes (C-20) |
 | 2 | `20260429_provider_catalog` | ProviderCredential, ModelCatalogEntry, CHECK constraints exactly-one-scope |
+| 3 | `20260429180000_system_config` | SystemConfig table para ajustes admin single-tenant (API keys, URLs) |
 
 ---
 
