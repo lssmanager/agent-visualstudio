@@ -69,6 +69,19 @@ export interface OrchestrationResult {
 }
 
 /**
+ * [F2a-06d] Resultado rico de la consolidación, incluye stats de ejecución.
+ */
+export interface ConsolidationResult {
+  summary: string
+  stats: {
+    total:     number
+    completed: number
+    failed:    number
+    rejected:  number
+  }
+}
+
+/**
  * Resultado rico devuelto por AgentExecutorFn al orchestrator.
  * Permite que completeStep() en Prisma reciba todos los metadatos de consumo LLM.
  */
@@ -655,9 +668,17 @@ export class HierarchyOrchestrator {
       return 'All subtasks failed. No output available.'
     }
 
+    // [F2a-06d] Calcular stats para pasarlos al supervisor
+    const stats: ConsolidationResult['stats'] = {
+      total:     results.length,
+      completed: completed.length,
+      failed:    results.filter((r) => r.status === 'failed').length,
+      rejected:  results.filter((r) => r.status === 'rejected').length,
+    }
+
     if (this.supervisorFn) {
       try {
-        return await this.consolidateWithSupervisor(rootTask, completed)
+        return await this.consolidateWithSupervisor(rootTask, completed, stats)
       } catch {
         // fallback a concatenación
       }
@@ -673,24 +694,38 @@ export class HierarchyOrchestrator {
     ].join('\n\n')
   }
 
+  // [F2a-06d] stats es obligatorio — TypeScript garantiza que consolidateResults() siempre lo pase
   private async consolidateWithSupervisor(
     rootTask:  string,
     completed: SubtaskResult[],
+    stats:     ConsolidationResult['stats'],
   ): Promise<string> {
+    // Línea de contexto de fallos — solo si hay fallos o rechazos
+    const statusLine =
+      stats.failed > 0 || stats.rejected > 0
+        ? `Note: ${stats.completed} of ${stats.total} subtasks completed` +
+          (stats.failed   > 0 ? `, ${stats.failed} failed`   : '') +
+          (stats.rejected > 0 ? `, ${stats.rejected} rejected` : '') +
+          '. Synthesize only from the available completed results.'
+        : ''
+
+    // Resultados de agentes para el prompt — solo completed, nunca failed/rejected
     const resultsSummary = completed
-      .map((r, i) => `Result ${i + 1} (agent ${r.nodeId}):\n${String(r.output)}`)
-      .join('\n\n')
+      .map((r, i) => `[${i + 1}] Agent ${r.nodeId}: ${String(r.output ?? '')}`)
+      .join('\n')
 
     const prompt = [
-      `You are a supervisor synthesizing results from multiple agents.`,
-      `Original task: ${rootTask}`,
-      ``,
-      `Agent results:`,
+      'You are a supervisor synthesizing results from multiple agents.',
+      `Original task: "${rootTask}"`,
+      statusLine,          // omitido si todos completaron (string vacío → .filter(Boolean) lo elimina)
+      '',
+      'Agent results:',
       resultsSummary,
-      ``,
-      `Provide a single, coherent, complete answer that synthesizes all results above.`,
-      `Do not mention agents or results — just provide the final answer directly.`,
-    ].join('\n')
+      '',
+      'Provide a single, coherent, complete answer.',
+      'Do not mention agents, task numbers, or partial failures.',
+      'Just provide the final synthesized answer.',
+    ].filter(Boolean).join('\n')
 
     return this.supervisorFn!(prompt)
   }
