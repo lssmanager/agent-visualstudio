@@ -19,6 +19,10 @@
 
 import type { PrismaClient } from '@prisma/client'
 import { RunRepository } from '../../run-engine/src/run-repository.js'
+import {
+  RunStepEventEmitter,
+  buildStatusChangeEvent,
+} from '../../run-engine/src/events/index.js'
 
 // ── Tipos públicos ───────────────────────────────────────────────────────────────────────────────
 
@@ -228,15 +232,6 @@ export interface OrchestratorOptions {
 /**
  * Tiempo máximo que un RunStep de delegación puede estar
  * en estado 'running' o 'queued' antes de considerarse bloqueado.
- *
- * No es un OrchestratorOptions — es un contrato de arquitectura.
- * Si la delegación tarda más de esto, hay un problema estructural.
- *
- * Valor: 10 minutos. Racional:
- *   - subtaskTimeoutMs default: 2 min (ejecución LLM)
- *   - approvalTimeoutMs default: 15 min (espera humana)
- *   - delegación: orquesta N subtasks de 2 min → 5 pasos
- *     holgados = 10 min tope razonable
  */
 export const DELEGATION_TIMEOUT_MS = 10 * 60 * 1000  // 10 minutos
 
@@ -249,11 +244,9 @@ const DEFAULT_OPTIONS: Required<OrchestratorOptions> = {
 }
 
 // ── [F2a-04] Funciones puras de tokenización y scoring ───────────────────────────────────────────
-// Ubicadas a nivel módulo (fuera de la clase) para ser testeables sin instanciar HierarchyOrchestrator.
 
 /**
  * Tokeniza texto en un Set de palabras lowercase sin stopwords.
- * Mínimo 3 caracteres por token para evitar ruido.
  */
 export function tokenize(text: string): Set<string> {
   const STOPWORDS = new Set([
@@ -277,7 +270,6 @@ export function tokenize(text: string): Set<string> {
 
 /**
  * Jaccard simplificado: |A ∩ B| / |A ∪ B|
- * Retorna 0 si ambos sets están vacíos.
  */
 export function jaccardScore(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 && b.size === 0) return 0
@@ -301,6 +293,8 @@ export class HierarchyOrchestrator {
     prisma:      PrismaClient,
     supervisorFn?: SupervisorFn,
     opts?:       OrchestratorOptions,
+    /** F2a-10: emitter de transiciones de RunStep — opcional para compatibilidad hacia atrás */
+    private readonly emitter?: RunStepEventEmitter,
   ) {
     this.hierarchy    = hierarchy
     this.executorFn   = executorFn
@@ -311,19 +305,6 @@ export class HierarchyOrchestrator {
 
   // ── API pública ──────────────────────────────────────────────────────────────────
 
-  /**
-   * Punto de entrada principal.
-   *
-   * 1. Crea un Run en Prisma
-   * 2. Descompone el task vía supervisor LLM (o capability-match fallback)
-   * 3. Ejecuta subtareas (paralelo o secuencial) con checkpointing por RunStep
-   * 4. Consolida el resultado vía supervisor LLM
-   * 5. Marca el Run como completed/partial/failed
-   *
-   * @param workspaceId ID del workspace (requerido para Run + Approval)
-   * @param rootTask    Descripción del task principal
-   * @param input       Payload de entrada (opcional)
-   */
   async orchestrate(
     workspaceId: string,
     rootTask: string,
@@ -331,7 +312,6 @@ export class HierarchyOrchestrator {
   ): Promise<OrchestrationResult> {
     const startTime = Date.now()
 
-    // ── 1. Crear Run ────────────────────────────────────────────────────────────
     const run = await this.repo.createRun({
       workspaceId,
       agentId:   this.hierarchy.level === 'agent' ? this.hierarchy.id : undefined,
@@ -341,23 +321,19 @@ export class HierarchyOrchestrator {
     await this.repo.startRun(run.id)
 
     try {
-      // ── 2. Descomponer task ──────────────────────────────────────────────
       const subtasks = await this.decomposeTasks(rootTask, input)
 
-      // ── 3. Ejecutar subtareas ─────────────────────────────────────────────
       const subtaskResults = this.opts.parallel
         ? await this.executeParallel(subtasks, run.id, workspaceId)
         : await this.executeSequential(subtasks, run.id, workspaceId)
 
-      // ── 4. Consolidar ────────────────────────────────────────────────────
       const consolidatedOutput = await this.consolidateResults(rootTask, subtaskResults)
 
-      // ── 5. Estado final del Run ──────────────────────────────────────────────
       const failed  = subtaskResults.filter((r) => r.status === 'failed' || r.status === 'rejected')
       const success = subtaskResults.filter((r) => r.status === 'completed')
       const runStatus: OrchestrationResult['status'] =
-        failed.length === 0                         ? 'completed'
-        : success.length === 0                      ? 'failed'
+        failed.length === 0  ? 'completed'
+        : success.length === 0 ? 'failed'
         : 'partial'
 
       if (runStatus === 'failed') {
@@ -381,13 +357,6 @@ export class HierarchyOrchestrator {
     }
   }
 
-  /**
-   * Consulta el estado actual de un RunStep desde BD.
-   * READ-ONLY — no modifica ningún registro.
-   *
-   * @param stepId  ID del RunStep (disponible en SubtaskResult.stepId)
-   * @returns       StepStatusResult con snapshot completo, o null si no existe
-   */
   async getStepStatus(stepId: string): Promise<StepStatusResult | null> {
     const step = await this.repo.findStep(stepId)
     if (!step) return null
@@ -409,105 +378,67 @@ export class HierarchyOrchestrator {
       totalTokens:      step.totalTokens      ?? null,
       costUsd:          step.costUsd          ?? null,
       startedAt:        step.startedAt        ?? null,
-      // completedAt en schema.prisma → finishedAt en StepStatusResult
       finishedAt:       step.completedAt      ?? null,
       createdAt:        step.createdAt,
     }
   }
 
-  /**
-   * Detecta si un RunStep de delegación está bloqueado.
-   *
-   * Un step está bloqueado cuando:
-   *   - status es 'running' o 'queued'
-   *   - startedAt + DELEGATION_TIMEOUT_MS < Date.now()
-   *
-   * NUNCA lanza — en caso de error de BD devuelve blocked: false
-   * (principio de fail-open: preferimos no fallar a falsos positivos).
-   *
-   * @param stepId  ID del RunStep a verificar
-   * @returns       BlockedStatus con diagnóstico completo
-   */
   async isBlocked(stepId: string): Promise<BlockedStatus> {
     try {
       const step = await this.repo.findStep(stepId)
 
-      // Step no encontrado → no bloqueado (fail-open)
       if (!step) {
-        return {
-          blocked: false,
-          reason:  `Step ${stepId} not found`,
-        }
+        return { blocked: false, reason: `Step ${stepId} not found` }
       }
 
-      // Solo steps de delegación en estado activo pueden bloquearse
       if (step.nodeType !== 'delegation') {
         return {
           blocked: false,
-          stepId:  step.id,
-          runId:   step.runId,
-          reason:  `Step ${stepId} is not a delegation step (nodeType: ${step.nodeType})`,
+          stepId: step.id,
+          runId: step.runId,
+          reason: `Step ${stepId} is not a delegation step (nodeType: ${step.nodeType})`,
         }
       }
 
-      // Step ya finalizado → no bloqueado
       const activeStatuses = ['running', 'queued']
       if (!activeStatuses.includes(step.status)) {
         return {
           blocked: false,
-          stepId:  step.id,
-          runId:   step.runId,
-          reason:  `Step ${stepId} has terminal status: ${step.status}`,
+          stepId: step.id,
+          runId: step.runId,
+          reason: `Step ${stepId} has terminal status: ${step.status}`,
         }
       }
 
-      // Calcular tiempo transcurrido
-      // startedAt puede ser null si el step está 'queued' pero nunca llegó a 'running'.
-      // En ese caso usamos createdAt — un step queued durante 10 min también es un bloqueo.
       const referenceTime = step.startedAt ?? step.createdAt
       const elapsedMs     = Date.now() - referenceTime.getTime()
 
       if (elapsedMs < DELEGATION_TIMEOUT_MS) {
         return {
-          blocked:   false,
-          stepId:    step.id,
-          runId:     step.runId,
-          nodeId:    step.nodeId,
+          blocked: false,
+          stepId: step.id,
+          runId: step.runId,
+          nodeId: step.nodeId,
           elapsedMs,
           timeoutMs: DELEGATION_TIMEOUT_MS,
-          reason:    `Step running for ${elapsedMs}ms — within timeout (${DELEGATION_TIMEOUT_MS}ms)`,
+          reason: `Step running for ${elapsedMs}ms — within timeout (${DELEGATION_TIMEOUT_MS}ms)`,
         }
       }
 
-      // ── BLOQUEADO ──────────────────────────────────────────────
       return {
-        blocked:   true,
-        stepId:    step.id,
-        runId:     step.runId,
-        nodeId:    step.nodeId,
+        blocked: true,
+        stepId: step.id,
+        runId: step.runId,
+        nodeId: step.nodeId,
         elapsedMs,
         timeoutMs: DELEGATION_TIMEOUT_MS,
-        reason:    `Delegation step ${stepId} blocked: running for ${elapsedMs}ms > ${DELEGATION_TIMEOUT_MS}ms timeout`,
+        reason: `Delegation step ${stepId} blocked: running for ${elapsedMs}ms > ${DELEGATION_TIMEOUT_MS}ms timeout`,
       }
     } catch {
-      // Error de BD → fail-open
-      return {
-        blocked: false,
-        reason:  `isBlocked check failed for step ${stepId} — BD error`,
-      }
+      return { blocked: false, reason: `isBlocked check failed for step ${stepId} — BD error` }
     }
   }
 
-  /**
-   * Verifica si algún RunStep de delegación en un Run está bloqueado.
-   * Útil para polls periódicos del gateway o n8n.
-   *
-   * NUNCA lanza.
-   *
-   * @param runId  ID del Run a verificar
-   * @returns      BlockedStatus del primer step bloqueado encontrado,
-   *               o { blocked: false } si ninguno lo está
-   */
   async isRunBlocked(runId: string): Promise<BlockedStatus> {
     try {
       const steps = await this.repo.findDelegationStepsByRun(runId)
@@ -521,47 +452,31 @@ export class HierarchyOrchestrator {
 
         if (elapsedMs >= DELEGATION_TIMEOUT_MS) {
           return {
-            blocked:   true,
-            stepId:    step.id,
-            runId:     step.runId,
-            nodeId:    step.nodeId,
+            blocked: true,
+            stepId: step.id,
+            runId: step.runId,
+            nodeId: step.nodeId,
             elapsedMs,
             timeoutMs: DELEGATION_TIMEOUT_MS,
-            reason:    `Run ${runId} blocked: delegation step ${step.id} running for ${elapsedMs}ms`,
+            reason: `Run ${runId} blocked: delegation step ${step.id} running for ${elapsedMs}ms`,
           }
         }
       }
 
-      return {
-        blocked: false,
-        runId,
-        reason:  `No blocked delegation steps in run ${runId}`,
-      }
+      return { blocked: false, runId, reason: `No blocked delegation steps in run ${runId}` }
     } catch {
-      return {
-        blocked: false,
-        reason:  `isRunBlocked check failed for run ${runId} — BD error`,
-      }
+      return { blocked: false, reason: `isRunBlocked check failed for run ${runId} — BD error` }
     }
   }
 
   // ── Descomposición de tareas ─────────────────────────────────────────────────────────
 
-  /**
-   * Descompone el task en subtareas asignadas a agentes hoja.
-   *
-   * Estrategia:
-   *   1. Si hay supervisorFn: llama al LLM con un prompt estructurado y parsea JSON.
-   *   2. Si el LLM falla o no hay supervisorFn: fallback a capability matching [F2a-04].
-   *      El agente con mayor afinidad semántica recibe el task completo.
-   */
   private async decomposeTasks(
     rootTask: string,
     input?: Record<string, unknown>,
   ): Promise<HierarchyTask[]> {
     const agents = this.collectAgentNodes(this.hierarchy)
 
-    // Modo single-agent
     if (agents.length === 0) {
       return [{
         id:             `subtask-${this.hierarchy.id}`,
@@ -572,7 +487,6 @@ export class HierarchyOrchestrator {
       }]
     }
 
-    // Intentar descomposición vía supervisor LLM
     if (this.supervisorFn) {
       try {
         return await this.decomposeTask(rootTask, agents, input)
@@ -581,7 +495,6 @@ export class HierarchyOrchestrator {
       }
     }
 
-    // [F2a-04] Fallback: asignar al especialista con mayor afinidad semántica
     const match = await this.findSpecialistWithCapability(rootTask, agents)
     return [{
       id:             `subtask-${match.node.id}-0`,
@@ -602,11 +515,7 @@ export class HierarchyOrchestrator {
    *   ---END---
    * que serán parseados por parseDelegateBlocks() una vez integrada (ver F2a-05c).
    *
-   * Estado actual: el prompt pide al supervisor un JSON array con objetos
-   *   { agentId: string, task: string }
-   * El parser JSON permanece en uso hasta que parseDelegateBlocks() esté integrado.
-   *
-   * Parseo robusto: extrae el primer bloque JSON del texto aunque haya prose.
+   * Estado actual: el parser JSON permanece en uso hasta que parseDelegateBlocks() esté integrado.
    *
    * TODO: Eliminar el parseo JSON y reemplazarlo con parseDelegateBlocks() una vez
    *       que dicha función esté disponible. Ver el símbolo parseDelegateBlocks()
@@ -639,7 +548,6 @@ export class HierarchyOrchestrator {
 
     const raw = await this.supervisorFn!(prompt)
 
-    // Extraer el primer bloque JSON del texto
     const jsonMatch = raw.match(/\[\s*\{[\s\S]*?\}\s*\]/)
     if (!jsonMatch) throw new Error('Supervisor did not return a valid JSON array')
 
@@ -648,7 +556,6 @@ export class HierarchyOrchestrator {
       throw new Error('Supervisor returned empty task list')
     }
 
-    // Filtrar asignaciones a agentes válidos
     const agentIds = new Set(agents.map((a) => a.id))
     return parsed
       .filter((p) => agentIds.has(p.agentId))
@@ -723,13 +630,6 @@ export class HierarchyOrchestrator {
     return results
   }
 
-  /**
-   * Ejecuta un subtask con:
-   *   - Checkpoint RunStep al inicio y fin
-   *   - HITL: pausa si requiresApproval y espera Approval en DB
-   *   - Retry con backoff exponencial
-   *   - Timeout por subtask
-   */
   private async executeWithRetry(
     task:        HierarchyTask,
     index:       number,
@@ -739,7 +639,6 @@ export class HierarchyOrchestrator {
     const start = Date.now()
     const node  = this.findNode(task.assignedNodeId)
 
-    // ── Checkpoint: crear RunStep ────────────────────────────────────────
     const step = await this.repo.createStep({
       runId,
       nodeId:   task.assignedNodeId,
@@ -748,7 +647,6 @@ export class HierarchyOrchestrator {
       input:    { task: task.description, ...task.input },
     })
 
-    // ── HITL: pausar si requiresApproval ──────────────────────────────
     if (node?.agentConfig?.requiresApproval) {
       await this.repo.pauseRun(runId)
 
@@ -764,7 +662,7 @@ export class HierarchyOrchestrator {
       })
 
       const decision = await this.repo.waitForApproval(approval.id, this.opts.approvalTimeoutMs)
-      await this.repo.startRun(runId)  // retomar estado running
+      await this.repo.startRun(runId)
 
       if (decision !== 'approved') {
         await this.repo.skipStep(step.id)
@@ -781,7 +679,6 @@ export class HierarchyOrchestrator {
       }
     }
 
-    // ── Ejecución con retry ───────────────────────────────────────────────
     const systemPrompt = node?.agentConfig?.systemPrompt
       ?? `You are ${node?.name ?? task.assignedNodeId}. Complete your assigned task.`
     const skills = node?.agentConfig?.skills
@@ -789,7 +686,6 @@ export class HierarchyOrchestrator {
     let lastError = ''
     for (let attempt = 0; attempt <= this.opts.maxRetries; attempt++) {
       if (attempt > 0) {
-        // Backoff exponencial
         const waitMs = this.opts.retryBaseMs * Math.pow(2, attempt - 1)
         await new Promise((r) => setTimeout(r, waitMs))
       }
@@ -801,7 +697,6 @@ export class HierarchyOrchestrator {
           `Subtask ${task.id} timed out after ${this.opts.subtaskTimeoutMs}ms`,
         )
 
-        // ── Checkpoint: step completado con todos los metadatos LLM ─────
         await this.repo.completeStep({
           stepId:           step.id,
           output:           execResult.response,
@@ -827,7 +722,6 @@ export class HierarchyOrchestrator {
       }
     }
 
-    // Todos los reintentos fallaron
     await this.repo.failStep({ stepId: step.id, error: lastError })
     return {
       taskId:     task.id,
@@ -852,7 +746,6 @@ export class HierarchyOrchestrator {
       return 'All subtasks failed. No output available.'
     }
 
-    // [F2a-06d] Calcular stats para pasarlos al supervisor
     const stats: ConsolidationResult['stats'] = {
       total:     results.length,
       completed: completed.length,
@@ -878,13 +771,11 @@ export class HierarchyOrchestrator {
     ].join('\n\n')
   }
 
-  // [F2a-06d] stats es obligatorio — TypeScript garantiza que consolidateResults() siempre lo pase
   private async consolidateWithSupervisor(
     rootTask:  string,
     completed: SubtaskResult[],
     stats:     ConsolidationResult['stats'],
   ): Promise<string> {
-    // Línea de contexto de fallos — solo si hay fallos o rechazos
     const statusLine =
       stats.failed > 0 || stats.rejected > 0
         ? `Note: ${stats.completed} of ${stats.total} subtasks completed` +
@@ -893,7 +784,6 @@ export class HierarchyOrchestrator {
           '. Synthesize only from the available completed results.'
         : ''
 
-    // Resultados de agentes para el prompt — solo completed, nunca failed/rejected
     const resultsSummary = completed
       .map((r, i) => `[${i + 1}] Agent ${r.nodeId}: ${String(r.output ?? '')}`)
       .join('\n')
@@ -901,7 +791,7 @@ export class HierarchyOrchestrator {
     const prompt = [
       'You are a supervisor synthesizing results from multiple agents.',
       `Original task: "${rootTask}"`,
-      statusLine,          // omitido si todos completaron (string vacío → .filter(Boolean) lo elimina)
+      statusLine,
       '',
       'Agent results:',
       resultsSummary,
@@ -935,7 +825,6 @@ export class HierarchyOrchestrator {
     return node.children.flatMap((child) => this.collectAgentNodes(child))
   }
 
-  /** Búsqueda BFS de un nodo por ID. */
   private findNode(id: string): HierarchyNode | undefined {
     const queue: HierarchyNode[] = [this.hierarchy]
     while (queue.length > 0) {
@@ -946,58 +835,25 @@ export class HierarchyOrchestrator {
     return undefined
   }
 
-  /**
-   * [F2a-04] Encuentra el agente hoja con mayor afinidad semántica
-   * para el task dado, usando score léxico sobre AgentProfile en BD.
-   *
-   * Algoritmo:
-   *   1. Colecta todos los nodos hoja (agent/subagent)
-   *   2. Carga sus AgentProfiles desde BD en una sola query
-   *   3. Calcula score Jaccard(taskTokens, profileTokens)
-   *      para systemPrompt, persona y knowledgeBase (toma el máximo)
-   *   4. Devuelve el agente de mayor score
-   *   5. Si todos los scores < MIN_SCORE → isFallback: true
-   *
-   * Restricciones:
-   *   - NO usa embeddings ni llamadas LLM
-   *   - NO lanza excepciones: siempre retorna un SpecialistMatch válido
-   *   - Una sola query BD para todos los agentes
-   *
-   * @param taskDescription  Texto libre del task a asignar
-   * @param candidates       Nodos hoja candidatos (si omitido, usa todos)
-   */
   private async findSpecialistWithCapability(
     taskDescription: string,
     candidates?:     HierarchyNode[],
   ): Promise<SpecialistMatch> {
     const agents = candidates ?? this.collectAgentNodes(this.hierarchy)
 
-    // Fallback inmediato si no hay agentes
     if (agents.length === 0) {
-      return {
-        node:       this.hierarchy,
-        score:      0,
-        isFallback: true,
-        allScores:  [],
-      }
+      return { node: this.hierarchy, score: 0, isFallback: true, allScores: [] }
     }
 
     try {
-      // 1. Cargar profiles desde BD (única query)
-      const profiles = await this.repo.findAgentProfiles(
-        agents.map((a) => a.id),
-      )
+      const profiles = await this.repo.findAgentProfiles(agents.map((a) => a.id))
       const profileMap = new Map(profiles.map((p) => [p.agentId, p]))
-
-      // 2. Tokenizar el task una sola vez
       const taskTokens = tokenize(taskDescription)
 
-      // 3. Calcular score por agente
       const scores: CapabilityScore[] = agents.map((node) => {
         const profile = profileMap.get(node.id)
 
         if (!profile) {
-          // Sin profile en BD: usar agentConfig.systemPrompt del árbol como texto de fallback
           const fallbackText = node.agentConfig?.systemPrompt ?? node.name
           return {
             node,
@@ -1007,121 +863,61 @@ export class HierarchyOrchestrator {
           }
         }
 
-        // Score sobre systemPrompt
         const promptScore = profile.systemPrompt
           ? jaccardScore(taskTokens, tokenize(profile.systemPrompt))
           : 0
 
-        // Score sobre persona (serializar JSON a texto plano)
         const personaText = typeof profile.persona === 'string'
           ? profile.persona
           : JSON.stringify(profile.persona)
         const personaScore = jaccardScore(taskTokens, tokenize(personaText))
 
-        // Score sobre knowledgeBase (array de { topic, content })
         const kbText = typeof profile.knowledgeBase === 'string'
           ? profile.knowledgeBase
           : JSON.stringify(profile.knowledgeBase)
         const kbScore = jaccardScore(taskTokens, tokenize(kbText))
 
-        // Tomar el máximo de los tres campos
         const maxScore = Math.max(promptScore, personaScore, kbScore)
         const matchedOn: CapabilityScore['matchedOn'] =
           maxScore === promptScore  ? 'systemPrompt'
           : maxScore === personaScore ? 'persona'
           : 'knowledgeBase'
 
-        return {
-          node,
-          score:        maxScore,
-          matchedOn,
-          profileFound: true,
-        }
+        return { node, score: maxScore, matchedOn, profileFound: true }
       })
 
-      // 4. Ordenar por score descendente
       scores.sort((a, b) => b.score - a.score)
       const best = scores[0]
-
-      // 5. Threshold mínimo: si todos son 0, es fallback
       const MIN_SCORE = 0.05
       const isFallback = best.score < MIN_SCORE
 
-      return {
-        node:       best.node,
-        score:      best.score,
-        isFallback,
-        allScores:  scores,
-      }
+      return { node: best.node, score: best.score, isFallback, allScores: scores }
     } catch {
-      // Nunca lanzar: en caso de error de BD, devolver el primer agente disponible
-      return {
-        node:       agents[0],
-        score:      0,
-        isFallback: true,
-        allScores:  [],
-      }
+      return { node: agents[0], score: 0, isFallback: true, allScores: [] }
     }
   }
 
-  /**
-   * [F2a-03] Decide si una tarea se ejecuta localmente (specialist)
-   * o debe delegarse al nivel inferior.
-   *
-   * Reglas:
-   *   - Nodo hoja (sin children o children vacío) con agentConfig
-   *     → local: el agente ejecuta directamente
-   *   - Nodo hoja SIN agentConfig (configuración incompleta)
-   *     → local con nodo sintético — se ejecuta con systemPrompt genérico
-   *   - Nodo no encontrado
-   *     → local con nodo sintético derivado del task
-   *   - Nodo intermedio (tiene children)
-   *     → delegate: crear RunStep de delegación y sub-orquestar
-   *
-   * NUNCA retorna 'delegate' si los hijos también son intermedios sin agentes;
-   * la recursión ocurre porque delegateTask() llama subOrchestrator.orchestrate()
-   * que a su vez llama routeTask() de nuevo en el nivel inferior.
-   */
   private routeTask(task: HierarchyTask): RouteDecision {
     const node = this.findNode(task.assignedNodeId)
 
-    // Nodo no encontrado → nodo sintético, ejecutar local
     if (!node) {
       return {
         type: 'local',
-        node: {
-          id:    task.assignedNodeId,
-          name:  task.assignedNodeId,
-          level: task.level,
-        },
+        node: { id: task.assignedNodeId, name: task.assignedNodeId, level: task.level },
       }
     }
 
     const hasChildren = node.children !== undefined && node.children.length > 0
+    if (!hasChildren) return { type: 'local', node }
 
-    // Nodo hoja → specialist local
-    if (!hasChildren) {
-      return { type: 'local', node }
-    }
-
-    // Nodo intermedio → delegar al nivel inferior
-    return {
-      type:     'delegate',
-      node,
-      children: node.children!,
-    }
+    return { type: 'delegate', node, children: node.children! }
   }
 
   /**
    * [F2a-03] Materializa una delegación en BD como RunStep { nodeType: 'delegation' }
    * y lanza sub-orquestación sobre los hijos del nodo delegado.
    *
-   * Contrato del Plan Maestro:
-   *   "Delegar = crear RunStep con nodeType: 'delegation' en BD.
-   *    Nunca texto, nunca log."
-   *
-   * El RunStep de delegación actúa como envelope del sub-resultado.
-   * Su output se llena cuando la sub-orquestación termina.
+   * F2a-10: emite null→queued DESPUÉS de createStep() en BD.
    */
   private async delegateTask(
     task:        HierarchyTask,
@@ -1132,7 +928,7 @@ export class HierarchyOrchestrator {
   ): Promise<SubtaskResult> {
     const start = Date.now()
 
-    // 1. Crear RunStep de delegación
+    // 1. Crear RunStep de delegación en BD
     const step = await this.repo.createStep({
       runId,
       nodeId:   decision.node.id,
@@ -1141,30 +937,49 @@ export class HierarchyOrchestrator {
       input:    { task: task.description, ...task.input },
     })
 
+    // 2. F2a-10: Emitir null → queued DESPUÉS del write en BD (D-23d)
+    if (this.emitter) {
+      try {
+        this.emitter.emitStepChanged(
+          buildStatusChangeEvent({
+            stepId:         step.id,
+            runId:          step.runId,
+            nodeId:         step.nodeId,
+            nodeType:       'delegation',
+            agentId:        null,
+            workspaceId,
+            previousStatus: null,
+            currentStatus:  'queued',
+            output: null, error: null,
+            model:  null, provider: null,
+            promptTokens: null, completionTokens: null,
+            totalTokens: null, costUsd: null,
+          }),
+        )
+      } catch { /* best-effort — nunca relanzar */ }
+    }
+
     try {
-      // 2. Construir sub-jerarquía con los hijos del nodo delegado
       const subHierarchy: HierarchyNode = {
         ...decision.node,
         children: decision.children,
       }
 
-      // 3. Crear sub-orquestador con la misma config pero jerarquía recortada
       const subOrchestrator = new HierarchyOrchestrator(
         subHierarchy,
         this.executorFn,
         this.repo.getPrisma(),
         this.supervisorFn,
         this.opts,
+        this.emitter,  // propagar emitter al sub-orquestador
       )
 
-      // 4. Orquestar en el sub-nivel
       const subResult = await subOrchestrator.orchestrate(
         workspaceId,
         task.description,
         task.input,
       )
 
-      // 5. Completar el RunStep de delegación con el output consolidado
       await this.repo.completeStep({
         stepId: step.id,
         output: subResult.consolidatedOutput,
