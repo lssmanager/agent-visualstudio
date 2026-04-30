@@ -3,7 +3,7 @@
  *
  * Arquitectura:
  *   - Cada orchestrate() crea un Run en Prisma y persiste cada subtarea como RunStep.
- *   - La descomposición usa un supervisor LLM real (JSON structured output) con
+ *   - La descomposición usa un supervisor LLM real (bloques ---DELEGATE---) con
  *     fallback a round-robin si el LLM falla o no hay hijos.
  *   - Retry configurable por subtarea con backoff exponencial.
  *   - HITL (Human-in-the-Loop): nodos marcados requiresApproval=true pausan el Run
@@ -306,7 +306,7 @@ export class HierarchyOrchestrator {
    * Descompone el task en subtareas asignadas a agentes hoja.
    *
    * Estrategia:
-   *   1. Si hay supervisorFn: llama al LLM con un prompt estructurado y parsea JSON.
+   *   1. Si hay supervisorFn: llama al LLM con un prompt estructurado y parsea la respuesta.
    *   2. Si el LLM falla o no hay supervisorFn: fallback a round-robin.
    */
   private async decomposeTasks(
@@ -348,31 +348,50 @@ export class HierarchyOrchestrator {
   /**
    * Descompone un task en subtareas usando el supervisor LLM.
    * Formato de salida del LLM: bloques ---DELEGATE--- (ver F2a-05c).
-   * TODO F2a-05b: migrar prompt a formato DELEGATE.
    * TODO F2a-05c: reemplazar parser JSON por parseDelegateBlocks().
    *
-   * El prompt pide al supervisor que devuelva un JSON array con objetos:
-   *   { agentId: string, task: string }
-   *
-   * Parseo robusto: extrae el primer bloque JSON del texto aunque haya prose.
+   * El supervisor recibe un prompt con el formato ---DELEGATE---/---END---.
+   * Parser actual (temporal): extrae el primer bloque JSON del texto.
+   * El parser será migrado a parseDelegateBlocks() en F2a-05c.
    */
   private async decomposeTask(
     rootTask: string,
     agents:   HierarchyNode[],
     input?:   Record<string, unknown>,
   ): Promise<HierarchyTask[]> {
-    const agentList = agents
-      .map((a) => `- id: ${a.id}, name: ${a.name}, level: ${a.level}`)
-      .join('\n')
+    // Enriquecer lista de agentes con role desde agentConfig
+    const agentList = agents.map((a) => {
+      const role = a.agentConfig?.systemPrompt?.slice(0, 80)
+        ?? `${a.name} (${a.level})`
+      return `- id: ${a.id} | name: ${a.name} | role: ${role}`
+    }).join('\n')
+
+    const contextHint = input
+      ? `\nInput context: ${JSON.stringify(input)}`
+      : ''
 
     const prompt = [
-      'You are a supervisor orchestrator. Decompose the following task into subtasks.',
-      'Assign each subtask to exactly one agent from the list below.',
-      'Respond ONLY with a valid JSON array. No prose, no markdown fences.',
-      'Format: [{ "agentId": "<id>", "task": "<description>" }, ...]',
+      'You are a supervisor orchestrator.',
+      'Decompose the task below into subtasks.',
+      'Assign each subtask to the most capable agent.',
       '',
-      `Task: ${rootTask}`,
-      input ? `Context: ${JSON.stringify(input)}` : '',
+      'RULES:',
+      '  - Emit one ---DELEGATE--- block per subtask.',
+      '  - TO must be the exact agent id from the list.',
+      '  - TASK must be a clear, self-contained instruction.',
+      '  - CONTEXT is optional JSON (single line, no newlines inside).',
+      '  - PRIORITY is optional: high | medium | low.',
+      '  - Emit ONLY the blocks — no prose before, between, or after.',
+      '',
+      'FORMAT:',
+      '---DELEGATE---',
+      'TO: <agentId>',
+      'TASK: <what the agent must do>',
+      'CONTEXT: {"key":"value"}',
+      'PRIORITY: medium',
+      '---END---',
+      '',
+      `Task: ${rootTask}${contextHint}`,
       '',
       'Available agents:',
       agentList,
