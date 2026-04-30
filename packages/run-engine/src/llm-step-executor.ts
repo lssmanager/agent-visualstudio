@@ -31,6 +31,7 @@ import type { FlowNode } from '../../core-types/src';
 import type { RunStep, RunSpec } from '../../core-types/src';
 import { calculateTokenCost } from '../../core-types/src';
 import { StepExecutor, type StepExecutionResult } from './step-executor';
+export type { StepExecutionResult };
 import { PolicyResolver, type PolicyResolverContext } from './policy-resolver';
 import { SkillInvoker } from './skill-invoker';
 import { buildToolDefinitions } from './build-tool-definitions';
@@ -693,3 +694,8 @@ function buildHierarchyNode(agent: AgentWithRelations): import('../../hierarchy/
 // Suppress potential --noUnusedLocals warning for ToolDefinition
 // (imported for type-checking the tools parameter in executeToolCalls)
 void (undefined as unknown as ToolDefinition);
+
+// ── Backward-compatible alias ─────────────────────────────────────────────────
+// agent-executor.service.ts and index.ts reference `LLMStepExecutor` (all-caps).
+// Keep both names pointing to the same class to avoid breaking existing consumers.
+export { LlmStepExecutor as LLMStepExecutor };

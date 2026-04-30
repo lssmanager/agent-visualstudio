@@ -109,7 +109,7 @@ describe('E2E: Run → GPT-4o → RunStep.status=completed [F1a-09]', () => {
 
       // Verificar Run.status = completed
       expect(prisma._runs['run-e2e-1'].status).toBe('completed');
-      expect(prisma._runs['run-e2e-1'].finishedAt).toBeInstanceOf(Date);
+      expect(prisma._runs['run-e2e-1'].completedAt).toBeInstanceOf(Date);
     });
 
     it('RunStep.status = completed for agent node', async () => {
@@ -134,7 +134,7 @@ describe('E2E: Run → GPT-4o → RunStep.status=completed [F1a-09]', () => {
       const agentStep = steps[0] as any;
       expect(agentStep.status).toBe('completed');
       expect(agentStep.nodeType).toBe('agent');
-      expect(agentStep.tokensUsed).toBe(10);
+      expect(agentStep.tokenUsage).toEqual({ total: 10 });
       expect(agentStep.costUsd).toBe(0.0001);
     });
 

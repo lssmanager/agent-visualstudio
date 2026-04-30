@@ -8,8 +8,16 @@
  *                ↖________________________↙  (ya no hay ciclo)
  */
 import type { PrismaClient, RunStep } from '@prisma/client';
-import type { LLMStepExecutor, StepExecutionResult } from './llm-step-executor';
+import type { StepExecutionResult } from './step-executor';
 import { executeCondition } from './execute-condition';
+
+/**
+ * Minimal interface for the step execution service as seen by AgentExecutor.
+ * Kept separate from LlmStepExecutor to avoid circular imports and allow mocking.
+ */
+export interface LLMStepExecutor {
+  executeStep(runStep: any): Promise<any>;
+}
 
 export interface AgentExecutorDeps {
   prisma: PrismaClient;
@@ -54,9 +62,9 @@ export class AgentExecutor {
       await prisma.runStep.update({
         where: { id: runStepId },
         data: {
-          status: 'failed',
-          error: `RunStep ${runStepId} not found`,
-          finishedAt: new Date(),
+          status:      'failed',
+          error:       `RunStep ${runStepId} not found`,
+          completedAt: new Date(),
         },
       });
       throw err;
@@ -69,14 +77,19 @@ export class AgentExecutor {
       const nodeType: string = (runStep as any).nodeType ?? 'agent';
 
       if (nodeType === 'condition') {
-        // Evaluar condición de forma segura
+        // Evaluar condición de forma segura.
+        // conditionExpr puede estar en runStep.input.conditionExpr (nuevo) o
+        // directamente en runStep.conditionExpr (columna legacy si existe).
         const previousOutputs = await this._getPreviousOutputs(prisma, runStep);
-        const conditionExpr: string = (runStep as any).conditionExpr ?? 'false';
+        const nodeInput = (runStep as any).input ?? {};
+        const conditionExpr: string =
+          (nodeInput as any).conditionExpr ??
+          (runStep as any).conditionExpr ??
+          'false';
         const conditionResult = executeCondition(conditionExpr, previousOutputs);
         result = {
+          status: 'completed',
           output: { conditionResult },
-          tokensUsed: 0,
-          costUsd: 0,
           branch: conditionResult ? 'true' : 'false',
         };
       } else {
@@ -88,11 +101,11 @@ export class AgentExecutor {
       await prisma.runStep.update({
         where: { id: runStepId },
         data: {
-          status: 'completed',
-          output: result.output as any,
-          tokensUsed: result.tokensUsed,
-          costUsd: result.costUsd,
-          finishedAt: new Date(),
+          status:      'completed',
+          output:      result.output as any,
+          tokenUsage:  { total: (result as any).tokensUsed } as any,
+          costUsd:     result.costUsd,
+          completedAt: new Date(),
         },
       });
 
@@ -103,9 +116,9 @@ export class AgentExecutor {
       await prisma.runStep.update({
         where: { id: runStepId },
         data: {
-          status: 'failed',
-          error: errMsg,
-          finishedAt: new Date(),
+          status:      'failed',
+          error:       errMsg,
+          completedAt: new Date(),
         },
       });
       throw error;

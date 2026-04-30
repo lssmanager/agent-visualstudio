@@ -66,5 +66,32 @@ module.exports = {
         '!src/**/index.ts',
       ],
     },
+    // ── run-engine: mock-based E2E tests (no DB required) ───────────────────
+    // Real-LLM and real-DB integration tests live in src/__tests__/e2e/ and are
+    // run explicitly via `jest --config src/__tests__/e2e/jest.e2e.config.ts`.
+    {
+      displayName: 'run-engine',
+      testEnvironment: 'node',
+      rootDir: 'packages/run-engine',
+      testMatch: ['<rootDir>/src/_tests_/e2e/run-gpt4o.e2e.test.ts'],
+      transform: {
+        '^.+\\.tsx?$': ['ts-jest', {
+          tsconfig: {
+            esModuleInterop: true,
+            allowSyntheticDefaultImports: true,
+            module: 'commonjs',
+            target: 'ES2020',
+          },
+        }],
+      },
+      moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
+      collectCoverageFrom: [
+        'src/**/*.ts',
+        '!src/**/*.d.ts',
+        '!src/**/index.ts',
+        '!src/_tests_/**',
+        '!src/__tests__/**',
+      ],
+    },
   ],
 };
