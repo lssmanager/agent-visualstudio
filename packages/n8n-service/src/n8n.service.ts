@@ -272,13 +272,16 @@ export class N8nService {
     if (!secretKeyHex) {
       throw new Error('N8N_SECRET not configured');
     }
-    // Validate secret key is a valid hex string of 32 or 64 bytes (64 or 128 hex characters)
-    if (!/^[0-9a-fA-F]{64}$|^[0-9a-fA-F]{128}$/.test(secretKeyHex)) {
+    // Validate secretKeyHex format (must be valid hex string of 32 or 64 bytes)
+    if (!/^[0-9a-fA-F]{64}$/.test(secretKeyHex) && !/^[0-9a-fA-F]{128}$/.test(secretKeyHex)) {
       throw new Error('N8N_SECRET must be a valid hex string of 32 or 64 bytes');
     }
-    // Validate apiKeyEncrypted is a non-empty string in expected format
-    if (!conn.apiKeyEncrypted || typeof conn.apiKeyEncrypted !== 'string' || conn.apiKeyEncrypted.trim() === '') {
-      throw new Error('apiKeyEncrypted malformed');
+    // Validate apiKeyEncrypted format (must be non-empty hex string)
+    if (!conn.apiKeyEncrypted || typeof conn.apiKeyEncrypted !== 'string' || conn.apiKeyEncrypted.length === 0) {
+      throw new Error('apiKeyEncrypted malformed: must be a non-empty string');
+    }
+    if (!/^[0-9a-fA-F]+$/.test(conn.apiKeyEncrypted)) {
+      throw new Error('apiKeyEncrypted malformed: must be a valid hex string');
     }
     const apiKey = this.decryptApiKey(conn.apiKeyEncrypted, secretKeyHex);
 
@@ -338,6 +341,7 @@ export class N8nService {
         const method      = (webhookNode?.parameters?.httpMethod ?? 'POST').toUpperCase();
 
         // c. & d. Upsert N8nWorkflow and Skill atomically within a transaction
+        //    Skill.name is @unique — use 'n8n:{connectionId}:{workflowId}' to avoid collisions.
         const skillName = `n8n:${connectionId}:${wf.id}`;
         await prisma.$transaction(async (tx) => {
           // c. Upsert N8nWorkflow
