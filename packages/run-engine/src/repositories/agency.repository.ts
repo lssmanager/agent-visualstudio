@@ -12,7 +12,7 @@
 
 import type { PrismaClient } from '@prisma/client'
 
-// ── DTOs ──────────────────────────────────────────────────────────────────────
+// ── DTOs ───────────────────────────────────────────────────────────────────
 
 export interface CreateAgencyInput {
   name:            string
@@ -34,12 +34,12 @@ export interface FindAgenciesOptions {
   offset?: number
 }
 
-// ── Repository ────────────────────────────────────────────────────────────────
+// ── Repository ──────────────────────────────────────────────────────────────────
 
 export class AgencyRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
-  // ── Write ─────────────────────────────────────────────────────────────
+  // ── Write ───────────────────────────────────────────────────────────────
 
   async create(input: CreateAgencyInput) {
     return this.prisma.agency.create({
@@ -73,7 +73,7 @@ export class AgencyRepository {
     })
   }
 
-  // ── Read ──────────────────────────────────────────────────────────────
+  // ── Read ─────────────────────────────────────────────────────────────────
 
   async findById(id: string) {
     return this.prisma.agency.findFirst({
@@ -104,6 +104,35 @@ export class AgencyRepository {
       orderBy: { createdAt: 'asc' },
       take:    opts.limit  ?? 50,
       skip:    opts.offset ?? 0,
+    })
+  }
+
+  /**
+   * [F2b-02] Retorna el Agent con isLevelOrchestrator = true
+   * dentro de la Agency dada, navegando la cadena completa:
+   *   Agency → Department orquestador → Workspace orquestador → Agent orquestador
+   *
+   * Devuelve null en cualquier nivel si la cadena está incompleta.
+   * Nunca itera colecciones — navega solo por el nodo orquestador de cada nivel.
+   */
+  async findOrchestratorAgent(agencyId: string) {
+    // 1. Department orquestador de la agency
+    const department = await this.prisma.department.findFirst({
+      where:  { agencyId, isLevelOrchestrator: true, deletedAt: null },
+      select: { id: true },
+    })
+    if (!department) return null
+
+    // 2. Workspace orquestador de ese department
+    const workspace = await this.prisma.workspace.findFirst({
+      where:  { departmentId: department.id, isLevelOrchestrator: true, deletedAt: null },
+      select: { id: true },
+    })
+    if (!workspace) return null
+
+    // 3. Agent orquestador dentro de ese workspace
+    return this.prisma.agent.findFirst({
+      where: { workspaceId: workspace.id, isLevelOrchestrator: true, deletedAt: null },
     })
   }
 
