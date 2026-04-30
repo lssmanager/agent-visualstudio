@@ -1,4 +1,4 @@
-import type { PrismaClient, RunStep } from '@prisma/client'
+import type { PrismaClient } from '@prisma/client'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -52,13 +52,29 @@ type RunWithRelations = {
   completedAt: Date | null
   metadata:    unknown
   createdAt:   Date
-  steps:       RunStep[]
+  steps:       RunStepRecord[]
   flow: {
     agent: {
       id:          string
       workspaceId: string
     }
   }
+}
+
+type RunStepRecord = {
+  id:          string
+  runId:       string
+  nodeId:      string
+  nodeType:    string
+  status:      string
+  input:       unknown
+  output:      unknown
+  error:       string | null
+  startedAt:   Date | null
+  completedAt: Date | null
+  createdAt:   Date
+  costUsd:     number | null
+  tokenUsage?: unknown
 }
 
 // ── Public types ───────────────────────────────────────────────────────────
@@ -269,7 +285,7 @@ export class HierarchyStatusService {
    */
   private async assembleTree(
     run:            RunWithRelations,
-    steps:          RunStep[],
+    steps:          RunStepRecord[],
     expansionDepth: number,
     nodeDepth:      number,
   ): Promise<RunStatusTree> {
@@ -325,7 +341,7 @@ export class HierarchyStatusService {
    * When expansionDepth === 0, childRun is always null — no DB queries.
    */
   private async buildStepNode(
-    step:            RunStep,
+    step:            RunStepRecord,
     fallbackIndex:   number,
     workspaceId:     string,
     parentCreatedAt: Date,
@@ -338,6 +354,8 @@ export class HierarchyStatusService {
     if (step.nodeType === 'delegation' && expansionDepth > 0) {
       childRun = await this.findAndExpandChildRun(
         step.nodeId,
+        step.runId,
+        step.id,
         workspaceId,
         parentCreatedAt,
         expansionDepth - 1,  // decrement: child has one less level to expand
@@ -378,7 +396,8 @@ export class HierarchyStatusService {
 
   /**
    * Finds the child Run of a delegation step by matching
-   * Run.metadata.hierarchyRoot === nodeId within the same workspace.
+   * Run.metadata.hierarchyRoot === nodeId plus parentRunId/parentStepId
+   * within the same workspace.
    *
    * BUG-FIX (workspaceId): filters via flow→agent→workspaceId relation;
    * Run has no direct workspaceId field in the canonical Prisma schema.
@@ -387,6 +406,8 @@ export class HierarchyStatusService {
    */
   private async findAndExpandChildRun(
     nodeId:          string,
+    parentRunId:     string,
+    parentStepId:    string,
     workspaceId:     string,
     parentCreatedAt: Date,
     expansionDepth:  number,
@@ -396,8 +417,12 @@ export class HierarchyStatusService {
       const childRun = await (this.prisma.run as any).findFirst({
         where: {
           createdAt: { gte: parentCreatedAt },
-          metadata:  { path: ['hierarchyRoot'], equals: nodeId },
           flow:      { agent: { workspaceId } },
+          AND: [
+            { metadata: { path: ['hierarchyRoot'], equals: nodeId } },
+            { metadata: { path: ['parentRunId'], equals: parentRunId } },
+            { metadata: { path: ['parentStepId'], equals: parentStepId } },
+          ],
         },
         orderBy: { createdAt: 'asc' },
         include: {
