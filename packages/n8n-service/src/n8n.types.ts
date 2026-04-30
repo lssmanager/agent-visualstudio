@@ -128,6 +128,12 @@ export interface N8nPrismaClient {
       };
     }): Promise<unknown>;
   };
+
+  /**
+   * Execute multiple operations atomically within a transaction.
+   * Supports both array form (parallel execution) and callback form (sequential).
+   */
+  $transaction<T extends Promise<unknown>[]>(operations: [...T]): Promise<{ [K in keyof T]: Awaited<T[K]> }>;
 }
 
 // ── BridgedSkillSpec ─────────────────────────────────────────────────────
