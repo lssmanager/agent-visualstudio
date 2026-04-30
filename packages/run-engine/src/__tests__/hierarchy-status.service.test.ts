@@ -296,6 +296,39 @@ describe('HierarchyStatusService.getRunStatus()', () => {
     expect(tree!.steps[0].childRun).toBeNull()  // null, not thrown
   })
 
+  it('falls back to hierarchyRoot-only child lookup for legacy runs', async () => {
+    const delegationStep = makeStep({
+      id: 'step-del', runId: 'run-parent', nodeType: 'delegation', nodeId: 'node-del',
+      status: 'running', startedAt: NOW, completedAt: null,
+    })
+    const parentRun = makeRun([delegationStep], { id: 'run-parent' })
+    const childRun  = makeRun([], {
+      id:       'run-child-legacy',
+      metadata: { hierarchyRoot: 'node-del' },
+      status:   'completed',
+    })
+
+    const findUnique = jest.fn().mockResolvedValue(parentRun)
+    const findFirst  = jest.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(childRun)
+    const svc = new HierarchyStatusService(makePrisma({ findUnique, findFirst }))
+
+    const tree = await svc.getRunStatus('run-parent')
+
+    expect(findFirst).toHaveBeenCalledTimes(2)
+    expect(findFirst).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          createdAt: { gte: parentRun.createdAt },
+          metadata:  { path: ['hierarchyRoot'], equals: 'node-del' },
+          flow:      { agent: { workspaceId: 'ws-1' } },
+        }),
+      }),
+    )
+    expect(tree!.steps[0].childRun!.runId).toBe('run-child-legacy')
+  })
+
   it('sets blockedSteps=1 when delegation step is queued for >30s without starting', async () => {
     // BUG-FIX: process.env set before module load — DELEGATION_TIMEOUT_MS=30000
     const oldCreatedAt = new Date(Date.now() - 31_000)  // 31 s ago
@@ -322,6 +355,21 @@ describe('HierarchyStatusService.getRunStatus()', () => {
     const svc = new HierarchyStatusService(prisma)
 
     const tree = await svc.getRunStatus('run-recent')
+    expect(tree!.blockedSteps).toBe(0)
+  })
+
+  it('does not derive blocked status from old queued non-delegation steps', async () => {
+    const oldCreatedAt = new Date(Date.now() - 31_000)
+    const queuedAgentStep = makeStep({
+      id: 'step-agent-queued', nodeType: 'agent', nodeId: 'agent-queued',
+      status: 'queued', startedAt: null, createdAt: oldCreatedAt,
+    })
+    const run = makeRun([queuedAgentStep], { id: 'run-agent-queued' })
+    const prisma = makePrisma({ findUnique: jest.fn().mockResolvedValue(run) })
+    const svc = new HierarchyStatusService(prisma)
+
+    const tree = await svc.getRunStatus('run-agent-queued')
+    expect(tree!.derivedStatus).toBe('queued')
     expect(tree!.blockedSteps).toBe(0)
   })
 })

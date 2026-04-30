@@ -120,7 +120,7 @@ function makeOrchestrator(
 function getHierarchySteps(prisma: PrismaClient) {
   return prisma.runStep.findMany({
     where:   { nodeId: { in: allNodeIds } },
-    orderBy: { createdAt: 'asc' },
+    orderBy: { startedAt: 'asc' },
   }) as Promise<HierarchyRunStep[]>
 }
 

@@ -300,11 +300,12 @@ export class HierarchyStatusService {
     // BUG-FIX: use step.effectiveStatus (not step.status) so delegation blocks/failures
     // are honoured when deriving parent status (D-23f).
     const nodeStatuses: NodeStatus[] = stepNodes.map((step) => ({
-      status: isBlocked({
-        status:    step.effectiveStatus,
-        startedAt: step.startedAt,
-        createdAt: step.createdAt,
-      })
+      status: step.nodeType === 'delegation'
+        && isBlocked({
+          status:    step.effectiveStatus,
+          startedAt: step.startedAt,
+          createdAt: step.createdAt,
+        })
         ? 'blocked'
         : (step.effectiveStatus as NodeStatus['status']),
     }))
@@ -414,7 +415,7 @@ export class HierarchyStatusService {
     nodeDepth:       number,
   ): Promise<RunStatusTree | null> {
     try {
-      const childRun = await (this.prisma.run as any).findFirst({
+      let childRun = await (this.prisma.run as any).findFirst({
         where: {
           createdAt: { gte: parentCreatedAt },
           flow:      { agent: { workspaceId } },
@@ -430,6 +431,21 @@ export class HierarchyStatusService {
           flow:  { include: { agent: { select: { id: true, workspaceId: true } } } },
         },
       })
+
+      if (!childRun) {
+        childRun = await (this.prisma.run as any).findFirst({
+          where: {
+            createdAt: { gte: parentCreatedAt },
+            metadata:  { path: ['hierarchyRoot'], equals: nodeId },
+            flow:      { agent: { workspaceId } },
+          },
+          orderBy: { createdAt: 'asc' },
+          include: {
+            steps: { orderBy: { createdAt: 'asc' } },
+            flow:  { include: { agent: { select: { id: true, workspaceId: true } } } },
+          },
+        })
+      }
 
       if (!childRun) return null
 
