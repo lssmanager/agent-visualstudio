@@ -8,6 +8,11 @@
  * findById incluye opcionalmente skills y subagentes para evitar N+1 en el
  * orquestador de jerarquía.
  *
+ * [F2b-04] PropagateHook:
+ *   create() y softDelete() llaman this.#triggerPropagate(agentId) después
+ *   del write en BD. El hook se inyecta en el constructor para evitar
+ *   dependencia circular con packages/hierarchy.
+ *
  * Convenciones:
  *   - Clase stateless; PrismaClient inyectado en constructor.
  *   - softDelete: marca deletedAt.
@@ -16,7 +21,7 @@
 
 import type { PrismaClient } from '@prisma/client'
 
-// ── DTOs ──────────────────────────────────────────────────────────────────────
+// ── DTOs ──────────────────────────────────────────────────────────────────────────────
 
 export interface CreateAgentInput {
   workspaceId:          string
@@ -46,23 +51,46 @@ export interface UpdateAgentInput {
 }
 
 export interface FindAgentsOptions {
-  limit?:       number
-  offset?:      number
-  kind?:        string
+  limit?:         number
+  offset?:        number
+  kind?:          string
   /** Incluir relaciones (skills, subagentes) en el resultado. */
   withSkills?:    boolean
   withSubagents?: boolean
 }
 
-// ── Repository ────────────────────────────────────────────────────────────────
+/**
+ * [F2b-04] Callback inyectado en AgentRepository para disparar propagateUp()
+ * cuando un Agent es creado o eliminado (soft-delete).
+ *
+ * El caller (service layer / DI container) resuelve la implementación real.
+ * El repo no importa nada de packages/hierarchy — sin dependencia circular.
+ *
+ * Contrato:
+ *   - Recibe el agentId afectado.
+ *   - Debe resolver sin lanzar (errores internos gestionados por el caller).
+ *   - Si lanza de todas formas, AgentRepository lo traga silenciosamente
+ *     (el write en BD ya se completó).
+ */
+export type PropagateHook = (agentId: string) => Promise<void>
+
+// ── Repository ──────────────────────────────────────────────────────────────────
 
 export class AgentRepository {
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(
+    private readonly prisma:         PrismaClient,
+    /**
+     * [F2b-04] Hook opcional de propagación de perfiles.
+     * Si se omite (undefined), create() y softDelete() funcionan igual
+     * que antes — sin cambio de comportamiento hacia atrás.
+     */
+    private readonly propagateHook?: PropagateHook,
+  ) {}
 
-  // ── Write ─────────────────────────────────────────────────────────────
+  // ── Write ───────────────────────────────────────────────────────────────
 
   async create(input: CreateAgentInput) {
-    return this.prisma.agent.create({
+    const agent = await this.prisma.agent.create({
       data: {
         workspaceId:         input.workspaceId,
         name:                input.name,
@@ -77,6 +105,12 @@ export class AgentRepository {
         metadata:            (input.metadata ?? {}) as never,
       },
     })
+
+    // [F2b-04] Disparar propagación después del write exitoso.
+    // Fire-and-forget: el caller no espera — errores son tragados.
+    this.#triggerPropagate(agent.id)
+
+    return agent
   }
 
   async update(id: string, data: UpdateAgentInput) {
@@ -95,13 +129,21 @@ export class AgentRepository {
         ...(data.metadata            !== undefined && { metadata:            data.metadata as never }),
       },
     })
+    // Nota: update() NO dispara propagación — solo create/softDelete
+    // porque update no cambia la composición del equipo del orchestrator.
   }
 
   async softDelete(id: string) {
-    return this.prisma.agent.update({
+    const agent = await this.prisma.agent.update({
       where: { id },
       data:  { deletedAt: new Date() },
     })
+
+    // [F2b-04] Disparar propagación después del soft-delete exitoso.
+    // Fire-and-forget: idem create().
+    this.#triggerPropagate(agent.id)
+
+    return agent
   }
 
   // ── Read ──────────────────────────────────────────────────────────────
@@ -165,5 +207,28 @@ export class AgentRepository {
 
   async count(workspaceId: string) {
     return this.prisma.agent.count({ where: { workspaceId, deletedAt: null } })
+  }
+
+  // ── Privado — F2b-04 ──────────────────────────────────────────────
+
+  /**
+   * [F2b-04] Dispara el hook de propagación de forma fire-and-forget.
+   *
+   * Contrato:
+   *   - No lanza nunca. Errores del hook son tragados con console.warn.
+   *   - No bloquea al caller — el await interno es best-effort.
+   *   - Si propagateHook no está inyectado, no-op silencioso.
+   */
+  #triggerPropagate(agentId: string): void {
+    if (!this.propagateHook) return
+
+    this.propagateHook(agentId).catch((err) => {
+      // Best-effort: el write en BD ya se completó.
+      // En producción este warn debe conectarse al logger de la app.
+      console.warn(
+        `[F2b-04] propagateHook failed for agent ${agentId}:`,
+        err instanceof Error ? err.message : String(err),
+      )
+    })
   }
 }
