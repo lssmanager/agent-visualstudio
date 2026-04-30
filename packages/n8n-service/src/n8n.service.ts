@@ -273,7 +273,7 @@ export class N8nService {
       throw new Error('N8N_SECRET not configured');
     }
     // Validate secretKeyHex format (must be valid hex string of 32 or 64 bytes)
-    if (!/^[0-9a-fA-F]{64}$/.test(secretKeyHex) && !/^[0-9a-fA-F]{128}$/.test(secretKeyHex)) {
+    if (!/^[0-9a-fA-F]{64}(?:[0-9a-fA-F]{64})?$/.test(secretKeyHex)) {
       throw new Error('N8N_SECRET must be a valid hex string of 32 or 64 bytes');
     }
     // Validate apiKeyEncrypted format (must be non-empty hex string)
