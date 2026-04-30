@@ -37,7 +37,10 @@ function makePrismaMock(
     skill: {
       upsert: vi.fn().mockResolvedValue({}),
     },
-  };
+    $transaction: vi.fn().mockImplementation(
+      async (callback: (tx: unknown) => Promise<unknown>) => callback(this),
+    ),
+  } as unknown as N8nPrismaClient;
 }
 
 /** Sample workflow rows as returned by Prisma */
@@ -125,6 +128,17 @@ describe('N8nService.getWorkflowsAsSkills()', () => {
     const result = await service.getWorkflowsAsSkills('conn-abc');
 
     expect(result).toEqual([]);
+
+    // Verify findMany was called with the correct WHERE filter
+    expect(prisma.n8nWorkflow.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          connectionId: 'conn-abc',
+          isActive:     true,
+          webhookUrl:   { not: null },
+        }),
+      }),
+    );
   });
 
   // ── Case 3: webhookUrl null — excluded by Prisma WHERE ────────────────
@@ -142,7 +156,11 @@ describe('N8nService.getWorkflowsAsSkills()', () => {
     // Verify findMany was called with the correct WHERE shape
     expect(prisma.n8nWorkflow.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ webhookUrl: { not: null } }),
+        where: expect.objectContaining({
+          connectionId: 'conn-xyz',
+          isActive:     true,
+          webhookUrl:   { not: null },
+        }),
       }),
     );
     expect(result).toEqual([]);
