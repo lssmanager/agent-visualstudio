@@ -1,170 +1,131 @@
-/**
- * settings.service.ts
- *
- * Business logic for Settings API (providers + n8n).
- * Injected into settings.routes.ts via factory function.
- *
- * Responsibilities:
- *  - List providers with hasKey (never exposes key value)
- *  - Save / delete API keys in SystemConfig
- *  - Test provider connectivity with a real 1-token call
- *  - Get / save / test n8n connection details
- */
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common'
+import { PrismaService } from '../core/prisma/prisma.service'
+import { PROVIDER_MODELS } from '@agent-visualstudio/run-engine/provider-models'
 
-import { PrismaClient } from '@prisma/client'
-import { buildLLMClient } from '@agent-visualstudio/run-engine'
-import { SystemConfigService } from '@agent-visualstudio/run-engine'
-import { PROVIDER_MODELS, ProviderModelEntry } from '@agent-visualstudio/run-engine'
-
-// ── Types ──────────────────────────────────────────────────────────────────────
-
-export interface ProviderSummary {
-  id:          string
-  name:        string
-  requiresKey: boolean
-  hasKey:      boolean   // true if stored in SystemConfig — value is NEVER returned
-  keyEnv:      string | null
-  freeInput:   boolean
-  models:      string[]
-}
-
-export interface N8nConfigSummary {
-  baseUrl:   string | null
-  hasApiKey: boolean
-}
-
-export interface TestProviderResult {
-  ok:         boolean
-  model:      string
-  latencyMs:  number
-  error?:     string
-}
-
-export interface TestN8nResult {
-  ok:            boolean
-  workflowCount: number
-  error?:        string
-}
-
-// ── Service ───────────────────────────────────────────────────────────────────
-
+@Injectable()
 export class SettingsService {
-  private readonly sysConfig: SystemConfigService
+  constructor(private readonly prisma: PrismaService) {}
 
-  constructor(private readonly prisma: PrismaClient) {
-    this.sysConfig = new SystemConfigService(prisma)
+  // ── helpers ────────────────────────────────────────────────────────────────
+
+  private async getSysConfig(): Promise<Record<string, string>> {
+    const rows = await this.prisma.systemConfig.findMany()
+    return Object.fromEntries(rows.map(r => [r.key, r.value]))
   }
 
-  // ── Providers ──────────────────────────────────────────────────────────────
-
-  async listProviders(): Promise<ProviderSummary[]> {
-    const stored = await this.sysConfig.getAll()
-
-    return Object.entries(PROVIDER_MODELS).map(([id, entry]: [string, ProviderModelEntry]) => {
-      const hasKey = entry.keyEnv !== null
-        ? Boolean(stored[entry.keyEnv])
-        : !entry.requiresKey  // local/OAuth providers always "have" a key
-
-      return {
-        id,
-        name:        entry.label,
-        requiresKey: entry.requiresKey,
-        hasKey,
-        keyEnv:      entry.keyEnv,
-        freeInput:   entry.freeInput ?? false,
-        models:      entry.models,
-      }
+  private async setKey(key: string, value: string): Promise<void> {
+    await this.prisma.systemConfig.upsert({
+      where:  { key },
+      update: { value },
+      create: { key, value },
     })
   }
 
-  async saveProviderKey(providerId: string, apiKey: string): Promise<void> {
-    const entry = PROVIDER_MODELS[providerId]
-    if (!entry) throw new Error(`Unknown provider: ${providerId}`)
-    if (!entry.keyEnv) throw new Error(`Provider ${providerId} does not use an API key`)
-    await this.sysConfig.set(entry.keyEnv, apiKey)
+  private async deleteKey(key: string): Promise<void> {
+    await this.prisma.systemConfig.deleteMany({ where: { key } })
+  }
+
+  // ── providers ──────────────────────────────────────────────────────────────
+
+  async listProviders() {
+    const config = await this.getSysConfig()
+
+    return Object.entries(PROVIDER_MODELS).map(([id, p]) => ({
+      id,
+      name:        p.label,
+      requiresKey: p.requiresKey,
+      // hasKey: indica si la key está guardada en BD — NUNCA devuelve el valor
+      hasKey:      p.keyEnv ? Boolean(config[p.keyEnv]) : false,
+      baseURL:     null as string | null,
+      models:      p.models,
+      freeInput:   p.freeInput ?? false,
+    }))
+  }
+
+  async setProviderKey(providerId: string, apiKey: string): Promise<void> {
+    const provider = PROVIDER_MODELS[providerId]
+    if (!provider)        throw new NotFoundException(`Provider '${providerId}' not found`)
+    if (!provider.keyEnv) throw new BadRequestException(`Provider '${providerId}' does not use an API key`)
+    await this.setKey(provider.keyEnv, apiKey)
   }
 
   async deleteProviderKey(providerId: string): Promise<void> {
-    const entry = PROVIDER_MODELS[providerId]
-    if (!entry) throw new Error(`Unknown provider: ${providerId}`)
-    if (!entry.keyEnv) throw new Error(`Provider ${providerId} does not use an API key`)
-    await this.sysConfig.delete(entry.keyEnv)
+    const provider = PROVIDER_MODELS[providerId]
+    if (!provider)        throw new NotFoundException(`Provider '${providerId}' not found`)
+    if (!provider.keyEnv) throw new BadRequestException(`Provider '${providerId}' does not use an API key`)
+    await this.deleteKey(provider.keyEnv)
   }
 
-  async testProvider(providerId: string, modelId: string): Promise<TestProviderResult> {
-    const config = await this.sysConfig.getAll()
+  async testProvider(
+    providerId: string,
+    modelId: string,
+  ): Promise<{ ok: boolean; model: string; latencyMs: number; error?: string }> {
+    const provider = PROVIDER_MODELS[providerId]
+    if (!provider) throw new NotFoundException(`Provider '${providerId}' not found`)
+
+    const config = await this.getSysConfig()
     const start  = Date.now()
 
     try {
+      // Importación lazy para evitar dependencias circulares
+      const { buildLLMClient } = await import('@agent-visualstudio/run-engine')
       const client = buildLLMClient(modelId, { configOverride: config })
-      const result = await client.chat(
-        [{ role: 'user', content: 'Hi' }],
-        [],
-        { model: modelId, temperature: 0, maxTokens: 1 },
+
+      await client.chat(
+        [{ role: 'user', content: 'Reply with exactly: ok' }],
+        { maxTokens: 5 },
       )
-      return {
-        ok:        true,
-        model:     result.model,
-        latencyMs: Date.now() - start,
-      }
-    } catch (err) {
-      return {
-        ok:        false,
-        model:     modelId,
-        latencyMs: Date.now() - start,
-        error:     err instanceof Error ? err.message : String(err),
-      }
+
+      return { ok: true, model: modelId, latencyMs: Date.now() - start }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { ok: false, model: modelId, latencyMs: Date.now() - start, error: msg }
     }
   }
 
   // ── n8n ────────────────────────────────────────────────────────────────────
 
-  async getN8nConfig(): Promise<N8nConfigSummary> {
-    const stored = await this.sysConfig.getAll()
+  async getN8n() {
+    const config = await this.getSysConfig()
     return {
-      baseUrl:   stored['N8N_BASE_URL'] ?? null,
-      hasApiKey: Boolean(stored['N8N_API_KEY']),
+      baseUrl:   config['N8N_BASE_URL']  ?? null,
+      hasApiKey: Boolean(config['N8N_API_KEY']),
     }
   }
 
-  async saveN8nConfig(baseUrl: string, apiKey: string): Promise<void> {
-    await this.sysConfig.set('N8N_BASE_URL', baseUrl)
-    await this.sysConfig.set('N8N_API_KEY',  apiKey)
+  async setN8n(baseUrl: string, apiKey: string): Promise<void> {
+    await Promise.all([
+      this.setKey('N8N_BASE_URL', baseUrl),
+      this.setKey('N8N_API_KEY',  apiKey),
+    ])
   }
 
-  async testN8n(): Promise<TestN8nResult> {
-    const stored  = await this.sysConfig.getAll()
-    const baseUrl = stored['N8N_BASE_URL'] ?? process.env['N8N_BASE_URL']
-    const apiKey  = stored['N8N_API_KEY']  ?? process.env['N8N_API_KEY']
+  async testN8n(): Promise<{ ok: boolean; workflowCount: number; error?: string }> {
+    const config  = await this.getSysConfig()
+    const baseUrl = config['N8N_BASE_URL']  ?? process.env['N8N_BASE_URL']
+    const apiKey  = config['N8N_API_KEY']   ?? process.env['N8N_API_KEY']
 
     if (!baseUrl) {
-      return { ok: false, workflowCount: 0, error: 'N8N_BASE_URL is not configured' }
+      return { ok: false, workflowCount: 0, error: 'N8N_BASE_URL not configured' }
     }
 
     try {
+      const url     = `${baseUrl.replace(/\/$/, '')}/api/v1/workflows?limit=1`
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       if (apiKey) headers['X-N8N-API-KEY'] = apiKey
 
-      const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/v1/workflows?limit=1`, {
+      const res = await fetch(url, {
         headers,
         signal: AbortSignal.timeout(8_000),
       })
 
-      if (!res.ok) {
-        const text = await res.text().catch(() => res.statusText)
-        return { ok: false, workflowCount: 0, error: `n8n responded ${res.status}: ${text}` }
-      }
+      if (!res.ok) throw new Error(`n8n responded ${res.status} ${res.statusText}`)
 
-      const data = await res.json() as { count?: number; data?: unknown[] }
-      const count = data.count ?? data.data?.length ?? 0
-
-      return { ok: true, workflowCount: count }
-    } catch (err) {
-      return {
-        ok:            false,
-        workflowCount: 0,
-        error:         err instanceof Error ? err.message : String(err),
-      }
+      const body = await res.json() as { data?: unknown[] }
+      return { ok: true, workflowCount: body.data?.length ?? 0 }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { ok: false, workflowCount: 0, error: msg }
     }
   }
 }

@@ -1,67 +1,47 @@
 /**
- * provider-models.ts
- *
- * Static map of provider → model list for Settings UI.
- * Used by GET /api/settings/providers to populate the frontend selector.
- * The user can also type a free model ID (freeInput: true providers).
- *
- * Model IDs follow the canonical format: 'provider/model-name'
- * Sources: OpenClaw docs, provider release notes — April 2026
- *
- * DO NOT modify LLMProvider enum or PROVIDER_CONFIG_MAP in llm-client.ts.
- * This file is purely additive metadata for the Settings UI.
+ * Mapa estático de providers LLM → modelos disponibles.
+ * Consumido por GET /api/settings/providers para poblar el selector UI.
+ * El usuario también puede escribir un model ID libre si freeInput = true.
  */
-
-export interface ProviderModelEntry {
-  /** Human-readable provider name shown in Settings UI */
-  label: string
-  /** Whether an API key is required to use this provider */
+export interface ProviderModelConfig {
+  label:       string
   requiresKey: boolean
-  /** Env var name — matches PROVIDER_CONFIG_MAP in llm-client.ts */
-  keyEnv: string | null
-  /** Pre-populated model list shown in the model selector */
-  models: string[]
-  /**
-   * If true, show a free-text input so the user can type any model ID.
-   * Used for gateways (OpenRouter) and local providers (Ollama, LM Studio).
-   */
-  freeInput?: boolean
+  keyEnv:      string | null   // coincide con variable de entorno del provider
+  models:      string[]
+  freeInput?:  boolean         // true = el usuario puede escribir cualquier model ID
 }
 
-export const PROVIDER_MODELS: Record<string, ProviderModelEntry> = {
+export const PROVIDER_MODELS: Record<string, ProviderModelConfig> = {
 
-  // ── OpenAI (API key de pago) ──────────────────────────────────────────────
+  // ── OpenAI ────────────────────────────────────────────────────────────────
   openai: {
     label: 'OpenAI',
     requiresKey: true,
     keyEnv: 'OPENAI_API_KEY',
     models: [
-      // ── Frontier — recomendados para agentes
-      'openai/gpt-5.5',           // flagship actual — abril 2026
-      'openai/gpt-5.5-pro',       // más compute, respuestas más precisas
-      'openai/gpt-5.4',           // coding + professional work
-      'openai/gpt-5.4-pro',       // variante pro de gpt-5.4
-      'openai/gpt-5.4-mini',      // coding + computer use + subagents
-      'openai/gpt-5.4-nano',      // tareas simples, alto volumen, bajo costo
-      'openai/gpt-5-mini',        // near-frontier, bajo costo, baja latencia
-      'openai/gpt-5-nano',        // más rápido y económico de la familia GPT-5
-      'openai/gpt-5',             // razonamiento configurable
-      // ── Razonamiento — activos en API
-      'openai/o3',                // reasoning complejo
-      'openai/o3-pro',            // o3 con más compute
-      // ── Open-weight (Apache 2.0 — deploy propio)
+      'openai/gpt-5.5',
+      'openai/gpt-5.5-pro',
+      'openai/gpt-5.4',
+      'openai/gpt-5.4-pro',
+      'openai/gpt-5.4-mini',
+      'openai/gpt-5.4-nano',
+      'openai/gpt-5-mini',
+      'openai/gpt-5-nano',
+      'openai/gpt-5',
+      'openai/o3',
+      'openai/o3-pro',
       'openai/gpt-oss-120b',
       'openai/gpt-oss-20b',
     ],
   },
 
-  // ── OpenAI Codex (suscripción ChatGPT — OAuth, sin billing por token) ─────
+  // ── OpenAI Codex (OAuth / suscripción ChatGPT) ────────────────────────────
   'openai-codex': {
-    label: 'OpenAI Codex',
-    requiresKey: false,           // OAuth — NO API key de pago
-    keyEnv: null,
+    label: 'OpenAI Codex (ChatGPT subscription)',
+    requiresKey: false,
+    keyEnv: 'OPENAI_API_KEY',   // fallback local
     models: [
-      'openai-codex/gpt-5.3-codex', // MÁS CAPAZ — agentic coding actual
+      'openai-codex/gpt-5.3-codex',
       'openai-codex/gpt-5.5',
       'openai-codex/gpt-5.4',
       'openai-codex/gpt-5.4-mini',
@@ -69,45 +49,42 @@ export const PROVIDER_MODELS: Record<string, ProviderModelEntry> = {
   },
 
   // ── Anthropic ─────────────────────────────────────────────────────────────
-  // Opus 4.7 GA el 22 abril 2026, Sonnet 4.6 sigue como default de velocidad
   anthropic: {
     label: 'Anthropic',
     requiresKey: true,
     keyEnv: 'ANTHROPIC_API_KEY',
     models: [
-      'anthropic/claude-opus-4-7',    // flagship abril 2026 — agentes complejos
-      'anthropic/claude-opus-4-6',    // default docs OpenClaw — adaptive thinking
-      'anthropic/claude-sonnet-4-6',  // velocidad / diario
-      'anthropic/claude-haiku-3-5',   // económico / baja latencia
+      'anthropic/claude-opus-4.7',
+      'anthropic/claude-opus-4-6',
+      'anthropic/claude-sonnet-4-6',
+      'anthropic/claude-haiku-3-5',
     ],
   },
 
   // ── Google Gemini ─────────────────────────────────────────────────────────
-  // Gemini 3.1 Pro lideró benchmarks de razonamiento en marzo 2026
   google: {
     label: 'Google Gemini',
     requiresKey: true,
     keyEnv: 'GEMINI_API_KEY',
     models: [
-      'google/gemini-3.1-pro',         // flagship multimodal marzo 2026
-      'google/gemini-3.1-flash',       // velocidad + costo
-      'google/gemini-3.1-flash-lite',  // ultra económico
-      'google/gemini-2.5-pro',         // stable — aún ampliamente usado
-      'google/gemini-2.5-flash',       // stable económico
+      'google/gemini-3.1-pro',
+      'google/gemini-3.1-flash',
+      'google/gemini-3.1-flash-lite',
+      'google/gemini-2.5-pro',
+      'google/gemini-2.5-flash',
     ],
   },
 
   // ── DeepSeek ──────────────────────────────────────────────────────────────
-  // V4 preview lanzado 24 abril 2026 con contexto 1M tokens
   deepseek: {
     label: 'DeepSeek',
     requiresKey: true,
     keyEnv: 'DEEPSEEK_API_KEY',
     models: [
-      'deepseek/deepseek-v4-pro',   // flagship — 1.6T params MoE
-      'deepseek/deepseek-v4-flash', // económico — 284B params MoE
-      'deepseek/deepseek-v3-2',     // stable anterior
-      'deepseek/deepseek-r1',       // razonamiento — aún activo
+      'deepseek/deepseek-v4-pro',
+      'deepseek/deepseek-v4-flash',
+      'deepseek/deepseek-v3-2',
+      'deepseek/deepseek-r1',
     ],
   },
 
@@ -117,8 +94,8 @@ export const PROVIDER_MODELS: Record<string, ProviderModelEntry> = {
     requiresKey: true,
     keyEnv: 'XAI_API_KEY',
     models: [
-      'xai/grok-4-20',  // real-time data + multi-agent
-      'xai/grok-3',     // stable anterior
+      'xai/grok-4-20',
+      'xai/grok-3',
     ],
   },
 
@@ -128,13 +105,13 @@ export const PROVIDER_MODELS: Record<string, ProviderModelEntry> = {
     requiresKey: true,
     keyEnv: 'MISTRAL_API_KEY',
     models: [
-      'mistral/mistral-small-4',   // lanzado marzo 2026
-      'mistral/mistral-large-3',   // flagship anterior
-      'mistral/codestral-2501',    // código
+      'mistral/mistral-small-4',
+      'mistral/mistral-large-3',
+      'mistral/codestral-2501',
     ],
   },
 
-  // ── Groq (LPU — inferencia rápida) ───────────────────────────────────────
+  // ── Groq (LPU) ───────────────────────────────────────────────────────────
   groq: {
     label: 'Groq',
     requiresKey: true,
@@ -146,7 +123,7 @@ export const PROVIDER_MODELS: Record<string, ProviderModelEntry> = {
     ],
   },
 
-  // ── Qwen (Alibaba Model Studio) ──────────────────────────────────────────
+  // ── Qwen (Alibaba) ────────────────────────────────────────────────────────
   qwen: {
     label: 'Qwen (Alibaba)',
     requiresKey: true,
@@ -159,7 +136,7 @@ export const PROVIDER_MODELS: Record<string, ProviderModelEntry> = {
     ],
   },
 
-  // ── OpenRouter (gateway — acceso a 300+ modelos) ─────────────────────────
+  // ── OpenRouter (gateway 300+ modelos) ────────────────────────────────────
   openrouter: {
     label: 'OpenRouter',
     requiresKey: true,
@@ -198,7 +175,7 @@ export const PROVIDER_MODELS: Record<string, ProviderModelEntry> = {
     ],
   },
 
-  // ── Ollama (local — sin API key) ─────────────────────────────────────────
+  // ── Ollama (local — sin API key) ──────────────────────────────────────────
   ollama: {
     label: 'Ollama (local)',
     requiresKey: false,
@@ -219,25 +196,23 @@ export const PROVIDER_MODELS: Record<string, ProviderModelEntry> = {
     requiresKey: false,
     keyEnv: null,
     freeInput: true,
-    models: [
-      'lmstudio/local-model',
-    ],
+    models: ['lmstudio/local-model'],
   },
 
-  // ── Providers adicionales — input libre sin lista fija ───────────────────
-  cerebras:    { label: 'Cerebras',            requiresKey: true,  keyEnv: 'CEREBRAS_API_KEY',         models: [], freeInput: true },
-  together:    { label: 'Together AI',          requiresKey: true,  keyEnv: 'TOGETHER_API_KEY',         models: [], freeInput: true },
-  fireworks:   { label: 'Fireworks AI',         requiresKey: true,  keyEnv: 'FIREWORKS_API_KEY',        models: [], freeInput: true },
-  nvidia:      { label: 'NVIDIA',               requiresKey: true,  keyEnv: 'NVIDIA_API_KEY',           models: [], freeInput: true },
-  huggingface: { label: 'Hugging Face',         requiresKey: true,  keyEnv: 'HUGGINGFACE_HUB_TOKEN',    models: [], freeInput: true },
-  deepinfra:   { label: 'DeepInfra',            requiresKey: true,  keyEnv: 'DEEPINFRA_API_KEY',        models: [], freeInput: true },
-  litellm:     { label: 'LiteLLM (gateway)',    requiresKey: false, keyEnv: 'LITELLM_API_KEY',          models: [], freeInput: true },
-  kilocode:    { label: 'Kilocode',             requiresKey: true,  keyEnv: 'KILOCODE_API_KEY',         models: [], freeInput: true },
-  venice:      { label: 'Venice AI (privacy)',  requiresKey: true,  keyEnv: 'VENICE_API_KEY',           models: [], freeInput: true },
-  arcee:       { label: 'Arcee AI',             requiresKey: true,  keyEnv: 'ARCEE_API_KEY',            models: [], freeInput: true },
-  chutes:      { label: 'Chutes',               requiresKey: true,  keyEnv: 'CHUTES_API_KEY',           models: [], freeInput: true },
-  tencent:     { label: 'Tencent (TokenHub)',   requiresKey: true,  keyEnv: 'TENCENT_API_KEY',          models: [], freeInput: true },
-  volcengine:  { label: 'Volcengine (Doubao)',  requiresKey: true,  keyEnv: 'VOLCANO_ENGINE_API_KEY',   models: [], freeInput: true },
-  vllm:        { label: 'vLLM (local)',         requiresKey: false, keyEnv: null,                       models: [], freeInput: true },
-  sglang:      { label: 'SGLang (local)',       requiresKey: false, keyEnv: null,                       models: [], freeInput: true },
+  // ── Providers adicionales — input libre, sin lista fija ──────────────────
+  cerebras:    { label: 'Cerebras',           requiresKey: true,  keyEnv: 'CEREBRAS_API_KEY',          models: [], freeInput: true },
+  together:    { label: 'Together AI',         requiresKey: true,  keyEnv: 'TOGETHER_API_KEY',           models: [], freeInput: true },
+  fireworks:   { label: 'Fireworks AI',        requiresKey: true,  keyEnv: 'FIREWORKS_API_KEY',          models: [], freeInput: true },
+  nvidia:      { label: 'NVIDIA',              requiresKey: true,  keyEnv: 'NVIDIA_API_KEY',             models: [], freeInput: true },
+  huggingface: { label: 'Hugging Face',        requiresKey: true,  keyEnv: 'HUGGINGFACE_HUB_TOKEN',      models: [], freeInput: true },
+  deepinfra:   { label: 'DeepInfra',           requiresKey: true,  keyEnv: 'DEEPINFRA_API_KEY',          models: [], freeInput: true },
+  litellm:     { label: 'LiteLLM (gateway)',   requiresKey: false, keyEnv: 'LITELLM_API_KEY',            models: [], freeInput: true },
+  kilocode:    { label: 'Kilocode',            requiresKey: true,  keyEnv: 'KILOCODE_API_KEY',           models: [], freeInput: true },
+  venice:      { label: 'Venice AI (privacy)', requiresKey: true,  keyEnv: 'VENICE_API_KEY',             models: [], freeInput: true },
+  arcee:       { label: 'Arcee AI',            requiresKey: true,  keyEnv: 'ARCEE_API_KEY',              models: [], freeInput: true },
+  chutes:      { label: 'Chutes',              requiresKey: true,  keyEnv: 'CHUTES_API_KEY',             models: [], freeInput: true },
+  tencent:     { label: 'Tencent (TokenHub)',  requiresKey: true,  keyEnv: 'TENCENT_API_KEY',            models: [], freeInput: true },
+  volcengine:  { label: 'Volcengine (Doubao)', requiresKey: true,  keyEnv: 'VOLCANO_ENGINE_API_KEY',     models: [], freeInput: true },
+  vllm:        { label: 'vLLM (local)',        requiresKey: false, keyEnv: null,                         models: [], freeInput: true },
+  sglang:      { label: 'SGLang (local)',      requiresKey: false, keyEnv: null,                         models: [], freeInput: true },
 }
