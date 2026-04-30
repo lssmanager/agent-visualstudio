@@ -31,7 +31,9 @@ export class DualFormatStore extends WorkspaceStore {
   /**
    * @deprecated
    * @param rootPath  Workspace root directory (OPENCLAW_WORKSPACE_ROOT).
-   * @param _format   Kept for backward-compat; reads from JSON, writes to both.
+   * @param _format   Accepted for API backward-compat but intentionally ignored.
+   *                  This store always reads from JSON and writes to both JSON and
+   *                  YAML formats simultaneously, regardless of the value passed.
    */
   constructor(rootPath: string, _format: StoreFormat = 'json') {
     super();
