@@ -329,7 +329,7 @@ export class HierarchyOrchestrator {
     // Intentar descomposición vía supervisor LLM
     if (this.supervisorFn) {
       try {
-        return await this.decomposeWithSupervisor(rootTask, agents, input)
+        return await this.decomposeTask(rootTask, agents, input)
       } catch {
         // fallback silencioso a round-robin
       }
@@ -346,14 +346,17 @@ export class HierarchyOrchestrator {
   }
 
   /**
-   * Descomposición vía supervisor LLM.
+   * Descompone un task en subtareas usando el supervisor LLM.
+   * Formato de salida del LLM: bloques ---DELEGATE--- (ver F2a-05c).
+   * TODO F2a-05b: migrar prompt a formato DELEGATE.
+   * TODO F2a-05c: reemplazar parser JSON por parseDelegateBlocks().
    *
    * El prompt pide al supervisor que devuelva un JSON array con objetos:
    *   { agentId: string, task: string }
    *
    * Parseo robusto: extrae el primer bloque JSON del texto aunque haya prose.
    */
-  private async decomposeWithSupervisor(
+  private async decomposeTask(
     rootTask: string,
     agents:   HierarchyNode[],
     input?:   Record<string, unknown>,
