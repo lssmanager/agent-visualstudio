@@ -128,6 +128,10 @@ export interface N8nPrismaClient {
       };
     }): Promise<unknown>;
   };
+
+  $transaction<T>(
+    fn: (tx: Omit<N8nPrismaClient, '$transaction'>) => Promise<T>,
+  ): Promise<T>;
 }
 
 // ── BridgedSkillSpec ─────────────────────────────────────────────────────
