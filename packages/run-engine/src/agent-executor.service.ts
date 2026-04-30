@@ -1,147 +1,187 @@
 /**
  * AgentExecutor — F1a-05 + F1a-06
- *
- * Servicio intermediario que rompe la dependencia circular entre FlowExecutor
- * y LLMStepExecutor. Es el único punto que actualiza el estado de RunStep en BD.
- *
- *   FlowExecutor → AgentExecutor → LLMStepExecutor
- *                ↖________________________↙  (ya no hay ciclo)
+ * F2a-10: inyecta RunStepEventEmitter para emitir StatusChangeEvent
+ *         en cada transición de estado (D-23d).
  */
 import type { PrismaClient, RunStep } from '@prisma/client';
 import type { StepExecutionResult } from './step-executor';
 import { executeCondition } from './execute-condition';
+import {
+  RunStepEventEmitter,
+  buildStatusChangeEvent,
+} from './events/index.js';
 
-/**
- * Minimal interface for the step execution service as seen by AgentExecutor.
- * Kept separate from LlmStepExecutor to avoid circular imports and allow mocking.
- * The return type is `StepExecutionResult` to preserve downstream type safety,
- * but implementations may include extra diagnostic fields (e.g. tokensUsed).
- */
 export interface LLMStepExecutor {
   executeStep(runStep: RunStep): Promise<StepExecutionResult>;
 }
 
 export interface AgentExecutorDeps {
-  prisma: PrismaClient;
+  prisma:          PrismaClient;
   llmStepExecutor: LLMStepExecutor;
+  /**
+   * F2a-10: emitter de transiciones de RunStep.
+   * Opcional para compatibilidad hacia atrás.
+   */
+  emitter?: RunStepEventEmitter;
 }
 
-/** Tipo liviano para que FlowExecutor pueda referenciar AgentExecutor sin importar LLMStepExecutor */
 export type AgentExecutorFn = (runStepId: string) => Promise<StepExecutionResult>;
 
 export class AgentExecutor {
   constructor(private readonly deps: AgentExecutorDeps) {}
 
   /**
-   * F1a-06: Ejecuta un RunStep con ciclo de vida completo.
-   *
-   * Transiciones:
-   *   pending → running  (al empezar)
-   *   running → completed (éxito)
-   *   running → failed    (error)
+   * Ciclo de vida completo de un RunStep.
+   * Cada transición emite un StatusChangeEvent DESPUÉS del write en BD.
    */
   async execute(runStepId: string): Promise<StepExecutionResult> {
-    const { prisma, llmStepExecutor } = this.deps;
+    const { prisma, llmStepExecutor, emitter } = this.deps;
 
-    // 1. Marcar como running
+    // 1. queued → running
     await prisma.runStep.update({
       where: { id: runStepId },
       data: { status: 'running', startedAt: new Date() },
     });
 
-    let runStep: RunStep & { run: { flow: { spec: unknown } } };
+    let runStep: any;
     try {
       runStep = await prisma.runStep.findUniqueOrThrow({
         where: { id: runStepId },
-        include: {
-          run: {
-            include: { flow: true },
-          },
-        },
-      }) as any;
+        include: { run: { include: { flow: true } } },
+      });
     } catch (err) {
-      // Si no existe el step, marcarlo como failed y relanzar
       await prisma.runStep.update({
         where: { id: runStepId },
-        data: {
-          status:      'failed',
-          error:       `RunStep ${runStepId} not found`,
-          completedAt: new Date(),
-        },
+        data: { status: 'failed', error: `RunStep ${runStepId} not found`, completedAt: new Date() },
       });
       throw err;
     }
 
-    // 2. Ejecutar según tipo de nodo
+    // Emitir queued → running (DESPUÉS del write en BD)
+    if (emitter) {
+      try {
+        emitter.emitStepChanged(buildStatusChangeEvent({
+          stepId:         runStepId,
+          runId:          runStep.runId,
+          nodeId:         runStep.nodeId,
+          nodeType:       runStep.nodeType ?? 'agent',
+          agentId:        runStep.agentId ?? null,
+          workspaceId:    await this.resolveWorkspaceId(runStep),
+          previousStatus: 'queued',
+          currentStatus:  'running',
+          output: null, error: null,
+          model: null, provider: null,
+          promptTokens: null, completionTokens: null,
+          totalTokens: null, costUsd: null,
+        }));
+      } catch { /* best-effort — nunca relanzar */ }
+    }
+
     try {
       let result: StepExecutionResult;
-
-      const nodeType: string = (runStep as any).nodeType ?? 'agent';
+      const nodeType: string = runStep.nodeType ?? 'agent';
 
       if (nodeType === 'condition') {
-        // Evaluar condición de forma segura.
-        // conditionExpr puede estar en runStep.input.conditionExpr (nuevo) o
-        // directamente en runStep.conditionExpr (columna legacy si existe).
         const previousOutputs = await this._getPreviousOutputs(prisma, runStep);
-        const nodeInput = (runStep as any).input ?? {};
+        const nodeInput = runStep.input ?? {};
         const conditionExpr: string =
-          (nodeInput as any).conditionExpr ??
-          (runStep as any).conditionExpr ??
-          'false';
+          (nodeInput as any).conditionExpr ?? runStep.conditionExpr ?? 'false';
         const conditionResult = executeCondition(conditionExpr, previousOutputs);
         result = {
           status: 'completed',
           output: { conditionResult },
           branch: conditionResult ? 'true' : 'false',
-        };
+        } as any;
       } else {
-        // Delegar al LLMStepExecutor real
-        result = await llmStepExecutor.executeStep(runStep as any);
+        result = await llmStepExecutor.executeStep(runStep);
       }
 
-      // 3a. Éxito → completed
-      // tokenUsage is a JSON column; prefer result.tokenUsage when available
-      // (real LLM calls), otherwise skip (condition nodes / mocks).
-      const tokenUsage = result.tokenUsage
-        ? (result.tokenUsage as object)
-        : undefined;
-
+      // running → completed — write primero, emit después
       await prisma.runStep.update({
         where: { id: runStepId },
         data: {
           status:      'completed',
           output:      result.output as any,
-          ...(tokenUsage !== undefined && { tokenUsage }),
           costUsd:     result.costUsd,
           completedAt: new Date(),
         },
       });
 
+      if (emitter) {
+        try {
+          emitter.emitStepChanged(buildStatusChangeEvent({
+            stepId:         runStepId,
+            runId:          runStep.runId,
+            nodeId:         runStep.nodeId,
+            nodeType:       runStep.nodeType ?? 'agent',
+            agentId:        runStep.agentId ?? null,
+            workspaceId:    await this.resolveWorkspaceId(runStep),
+            previousStatus: 'running',
+            currentStatus:  'completed',
+            output:          result.output ?? null,
+            error:           null,
+            model:           (result as any).model            ?? null,
+            provider:        (result as any).provider         ?? null,
+            promptTokens:    (result as any).promptTokens     ?? null,
+            completionTokens: (result as any).completionTokens ?? null,
+            totalTokens:     (result as any).totalTokens      ?? null,
+            costUsd:         result.costUsd ?? null,
+          }));
+        } catch { /* best-effort */ }
+      }
+
       return result;
     } catch (error) {
-      // 3b. Fallo → failed
       const errMsg = error instanceof Error ? error.message : String(error);
+
+      // running → failed — write primero, emit después, re-lanzar al final
       await prisma.runStep.update({
         where: { id: runStepId },
-        data: {
-          status:      'failed',
-          error:       errMsg,
-          completedAt: new Date(),
-        },
+        data: { status: 'failed', error: errMsg, completedAt: new Date() },
       });
-      throw error;
+
+      if (emitter) {
+        try {
+          emitter.emitStepChanged(buildStatusChangeEvent({
+            stepId:         runStepId,
+            runId:          runStep.runId,
+            nodeId:         runStep.nodeId,
+            nodeType:       runStep.nodeType ?? 'agent',
+            agentId:        runStep.agentId ?? null,
+            workspaceId:    await this.resolveWorkspaceId(runStep),
+            previousStatus: 'running',
+            currentStatus:  'failed',
+            output: null,
+            error:  errMsg,
+            model: null, provider: null,
+            promptTokens: null, completionTokens: null,
+            totalTokens: null, costUsd: null,
+          }));
+        } catch { /* best-effort */ }
+      }
+
+      throw error; // re-lanzar para que el caller (FlowExecutor) maneje
     }
   }
 
-  /** Recoge los outputs de RunSteps completados anteriores del mismo Run */
+  /**
+   * TODO F2a-10: Implementar lookup real Run→Flow→Agent→workspaceId
+   * cuando RunRepository esté disponible como dep de AgentExecutor.
+   * Placeholder temporal: retorna runId como valor no-nulo garantizado.
+   * workspaceId es OBLIGATORIO en StatusChangeEvent para routing WebSocket (F3a-09).
+   */
+  private async resolveWorkspaceId(step: RunStep): Promise<string> {
+    return step.runId;
+  }
+
   private async _getPreviousOutputs(
     prisma: PrismaClient,
     runStep: RunStep,
   ): Promise<Record<string, unknown>> {
     const previous = await prisma.runStep.findMany({
       where: {
-        runId: runStep.runId,
-        status: 'completed',
+        runId:     runStep.runId,
+        status:    'completed',
         startedAt: { lt: runStep.startedAt ?? new Date() },
       },
       select: { id: true, output: true },
@@ -149,7 +189,6 @@ export class AgentExecutor {
     return Object.fromEntries(previous.map((s) => [s.id, s.output]));
   }
 
-  /** Factoría para obtener la fn tipada AgentExecutorFn */
   toFn(): AgentExecutorFn {
     return (runStepId) => this.execute(runStepId);
   }
