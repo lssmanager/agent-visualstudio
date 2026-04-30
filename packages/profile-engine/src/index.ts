@@ -17,6 +17,7 @@ export type {
   KnowledgeBaseEntry,
   PropagateProfileInput,
   ResolvedProfile,
+  PropagateUpResult,
 } from './profile-propagator.service.js'
 
 export { ProfilePropagatorService } from './profile-propagator.service.js'

@@ -9,6 +9,7 @@
  *   2. getProfile(agentId)      — lee el perfil activo desde Prisma
  *   3. buildSystemPrompt(profile) — compila el system prompt final para LLMStepExecutor
  *   4. resolveForAgent(agentId) — shortcut: getProfile + buildSystemPrompt
+ *   5. propagateUp(agentId, input) — [F2b-01] propaga al orchestrator de cada nivel jerárquico
  *
  * Diseño:
  *   - Un solo registro por agente (1-to-1 con Agent).
@@ -59,6 +60,16 @@ export interface ResolvedProfile {
   contextWindow:  number
   memoryEnabled:  boolean
   propagatedAt:   Date
+}
+
+/**
+ * [F2b-01] Resultado de propagateUp().
+ * - updated: perfiles actualizados en orden workspace → department → agency
+ * - skipped: IDs de niveles sin orchestratorId o que son el propio agentId (anti-loop)
+ */
+export interface PropagateUpResult {
+  updated: ResolvedProfile[]
+  skipped: string[]   // IDs de niveles sin orchestratorId o que son el propio agentId
 }
 
 // ── Service ────────────────────────────────────────────────────────────────
@@ -113,6 +124,78 @@ export class ProfilePropagatorService {
     })
 
     return this.toResolved(agentId, profile)
+  }
+
+  /**
+   * [F2b-01] Propaga el perfil hacia arriba por la jerarquía:
+   *   Agent → Workspace orchestrator → Department orchestrator → Agency orchestrator
+   *
+   * Regla irrevocable (D-24f): solo se llama a this.propagate() con el
+   * orchestratorId de cada entidad padre — nunca con todos los agentes del scope.
+   * Si un nivel no tiene orchestratorId, se añade al array `skipped`.
+   * Si el orchestratorId es igual al agentId fuente, se añade a `skipped` (anti-loop).
+   *
+   * @param agentId  ID del agente cuyo perfil se propaga hacia arriba
+   * @param input    Datos del perfil a propagar (misma shape que propagate())
+   */
+  async propagateUp(
+    agentId: string,
+    input: PropagateProfileInput,
+  ): Promise<PropagateUpResult> {
+    const updated: ResolvedProfile[] = []
+    const skipped: string[] = []
+
+    // 1. Leer el agente y su workspaceId
+    const agent = await this.prisma.agent.findUnique({
+      where:   { id: agentId },
+      select:  { workspaceId: true },
+    })
+    if (!agent) throw new Error(`Agent "${agentId}" not found`)
+
+    // 2. Leer el workspace (con departmentId para navegar hacia arriba)
+    const workspace = await this.prisma.workspace.findUnique({
+      where:   { id: agent.workspaceId },
+      select:  { id: true, orchestratorId: true, departmentId: true },
+    })
+    if (!workspace) throw new Error(`Workspace not found for agent "${agentId}"`)
+
+    // 3. Nivel Workspace — propagar al orchestrator si existe y no es el fuente
+    if (!workspace.orchestratorId || workspace.orchestratorId === agentId) {
+      skipped.push(`workspace:${workspace.id}`)
+    } else {
+      const profile = await this.propagate(workspace.orchestratorId, input)
+      updated.push(profile)
+    }
+
+    // 4. Nivel Department (si el workspace pertenece a uno)
+    if (workspace.departmentId) {
+      const department = await this.prisma.department.findUnique({
+        where:  { id: workspace.departmentId },
+        select: { id: true, orchestratorId: true, agencyId: true },
+      })
+      if (!department?.orchestratorId || department.orchestratorId === agentId) {
+        skipped.push(`department:${workspace.departmentId}`)
+      } else {
+        const profile = await this.propagate(department.orchestratorId, input)
+        updated.push(profile)
+      }
+
+      // 5. Nivel Agency (si el department pertenece a una)
+      if (department?.agencyId) {
+        const agency = await this.prisma.agency.findUnique({
+          where:  { id: department.agencyId },
+          select: { id: true, orchestratorId: true },
+        })
+        if (!agency?.orchestratorId || agency.orchestratorId === agentId) {
+          skipped.push(`agency:${department.agencyId}`)
+        } else {
+          const profile = await this.propagate(agency.orchestratorId, input)
+          updated.push(profile)
+        }
+      }
+    }
+
+    return { updated, skipped }
   }
 
   // ── Lectura ────────────────────────────────────────────────────────────────────
