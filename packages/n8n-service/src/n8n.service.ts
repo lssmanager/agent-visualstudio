@@ -273,7 +273,7 @@ export class N8nService {
       throw new Error('N8N_SECRET not configured');
     }
     // Validate secretKeyHex format (must be valid hex string of 32 or 64 bytes)
-    if (!/^[0-9a-fA-F]{64}$/.test(secretKeyHex) && !/^[0-9a-fA-F]{128}$/.test(secretKeyHex)) {
+    if (!/^[0-9a-fA-F]{64}(?:[0-9a-fA-F]{64})?$/.test(secretKeyHex)) {
       throw new Error('N8N_SECRET must be a valid hex string of 32 or 64 bytes');
     }
     // Validate apiKeyEncrypted format (must be non-empty hex string)
@@ -340,11 +340,12 @@ export class N8nService {
         const webhookUrl  = `${conn.baseUrl.replace(/\/$/, '')}/webhook/${webhookPath}`;
         const method      = (webhookNode?.parameters?.httpMethod ?? 'POST').toUpperCase();
 
-        // c. & d. Upsert N8nWorkflow and Skill in a transaction
+        // c. & d. Upsert N8nWorkflow and Skill atomically within a transaction
         //    Skill.name is @unique — use 'n8n:{connectionId}:{workflowId}' to avoid collisions.
         const skillName = `n8n:${connectionId}:${wf.id}`;
-        await prisma.$transaction([
-          prisma.n8nWorkflow.upsert({
+        await prisma.$transaction(async (tx) => {
+          // c. Upsert N8nWorkflow
+          await tx.n8nWorkflow.upsert({
             where: {
               connectionId_n8nWorkflowId: { connectionId, n8nWorkflowId: wf.id },
             },
@@ -361,8 +362,11 @@ export class N8nService {
               isActive:  true,
               updatedAt: new Date(),
             },
-          }),
-          prisma.skill.upsert({
+          });
+
+          // d. Upsert Skill
+          //    Skill.name is @unique — use 'n8n:{connectionId}:{workflowId}' to avoid collisions.
+          await tx.skill.upsert({
             where:  { name: skillName },
             create: {
               name:        skillName,
@@ -376,8 +380,8 @@ export class N8nService {
               config:      { webhookUrl, method },
               updatedAt:   new Date(),
             },
-          }),
-        ]);
+          });
+        });
 
         // e. Count success
         result.upserted++;
