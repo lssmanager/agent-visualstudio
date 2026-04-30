@@ -199,7 +199,7 @@ describe('E2E: Agente con skill n8n_webhook ejecuta tool call [F1b-09]', () => {
     // → interceptar con spyOn ANTES de instanciar ejecutores
     fetchSpy = jest
       .spyOn(global, 'fetch')
-      .mockImplementation(async (url: RequestInfo | URL) => {
+      .mockImplementation(async (url: string | URL) => {
         if (String(url).includes('n8n.example.com')) {
           return new Response(
             JSON.stringify({ success: true, message: 'Notification sent' }),
@@ -274,7 +274,7 @@ describe('E2E: Agente con skill n8n_webhook ejecuta tool call [F1b-09]', () => {
 
     it('Run.status = failed si el webhook responde con 4xx', async () => {
       // Sobreescribir el fetchSpy para simular error 401
-      fetchSpy.mockImplementation(async (url: RequestInfo | URL) => {
+      fetchSpy.mockImplementation(async (url: string | URL) => {
         if (String(url).includes('n8n.example.com')) {
           return new Response(
             JSON.stringify({ error: 'Unauthorized' }),

@@ -18,7 +18,9 @@
     "test:coverage": "jest --coverage",
     "test:profile-engine": "jest --selectProjects=profile-engine",
     "test:workspace-engine": "jest --selectProjects=workspace-engine",
-    "test:api": "jest --selectProjects=api"
+    "test:api": "jest --selectProjects=api",
+    "test:run-engine": "jest --selectProjects=run-engine",
+    "test:e2e:run-engine": "jest --config packages/run-engine/src/__tests__/e2e/jest.e2e.config.ts --runInBand"
   },
   "keywords": [
     "openclaw",

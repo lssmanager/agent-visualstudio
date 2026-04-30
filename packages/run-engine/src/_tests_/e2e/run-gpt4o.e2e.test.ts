@@ -109,11 +109,16 @@ describe('E2E: Run → GPT-4o → RunStep.status=completed [F1a-09]', () => {
 
       // Verificar Run.status = completed
       expect(prisma._runs['run-e2e-1'].status).toBe('completed');
-      expect(prisma._runs['run-e2e-1'].finishedAt).toBeInstanceOf(Date);
+      expect(prisma._runs['run-e2e-1'].completedAt).toBeInstanceOf(Date);
     });
 
     it('RunStep.status = completed for agent node', async () => {
-      const mockLLMResult = { output: { text: 'Hello' }, tokensUsed: 10, costUsd: 0.0001 };
+      const mockLLMResult = {
+        status:     'completed' as const,
+        output:     { text: 'Hello' },
+        tokenUsage: { input: 6, output: 4 },
+        costUsd:    0.0001,
+      };
       const mockLLMExecutor = { executeStep: jest.fn().mockResolvedValue(mockLLMResult) };
 
       const agentExecutor = new AgentExecutor({
@@ -134,7 +139,7 @@ describe('E2E: Run → GPT-4o → RunStep.status=completed [F1a-09]', () => {
       const agentStep = steps[0] as any;
       expect(agentStep.status).toBe('completed');
       expect(agentStep.nodeType).toBe('agent');
-      expect(agentStep.tokensUsed).toBe(10);
+      expect(agentStep.tokenUsage).toEqual({ input: 6, output: 4 });
       expect(agentStep.costUsd).toBe(0.0001);
     });
 

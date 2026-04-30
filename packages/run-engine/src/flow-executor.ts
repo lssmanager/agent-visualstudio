@@ -61,7 +61,7 @@ export class FlowExecutor {
         include: { flow: true },
       });
 
-      const spec = run.flow.spec as FlowSpec;
+      const spec = run.flow.spec as unknown as FlowSpec;
       const nodes = spec?.nodes ?? [];
       if (nodes.length === 0) throw new Error('Flow.spec has no nodes');
 
@@ -77,7 +77,7 @@ export class FlowExecutor {
       // Completar el Run
       await prisma.run.update({
         where: { id: runId },
-        data: { status: 'completed', finishedAt: new Date() },
+        data: { status: 'completed', completedAt: new Date() },
       });
     } catch (err) {
       await prisma.run.update({
@@ -85,7 +85,7 @@ export class FlowExecutor {
         data: {
           status: 'failed',
           error: err instanceof Error ? err.message : String(err),
-          finishedAt: new Date(),
+          completedAt: new Date(),
         },
       });
       throw err;
@@ -124,15 +124,19 @@ export class FlowExecutor {
         continue;
       }
 
-      // Crear RunStep para este nodo
+      // Crear RunStep para este nodo.
+      // conditionExpr no es columna en RunStep: se guarda en el campo JSON
+      // `input` para que AgentExecutor pueda leerlo al evaluar la condición.
       const runStep = await prisma.runStep.create({
         data: {
           runId,
           nodeId,
           nodeType: node.type,
-          agentId: node.agentId ?? null,
-          conditionExpr: node.conditionExpr ?? null,
-          status: 'pending',
+          agentId:  node.agentId,
+          status:   'pending',
+          input: {
+            conditionExpr: node.conditionExpr ?? null,
+          },
         },
       });
 
