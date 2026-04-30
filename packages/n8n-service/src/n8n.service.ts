@@ -272,6 +272,14 @@ export class N8nService {
     if (!secretKeyHex) {
       throw new Error('N8N_SECRET not configured');
     }
+    // Validate secret key is a valid hex string of 32 or 64 bytes (64 or 128 hex characters)
+    if (!/^[0-9a-fA-F]{64}$|^[0-9a-fA-F]{128}$/.test(secretKeyHex)) {
+      throw new Error('N8N_SECRET must be a valid hex string of 32 or 64 bytes');
+    }
+    // Validate apiKeyEncrypted is a non-empty string in expected format
+    if (!conn.apiKeyEncrypted || typeof conn.apiKeyEncrypted !== 'string' || conn.apiKeyEncrypted.trim() === '') {
+      throw new Error('apiKeyEncrypted malformed');
+    }
     const apiKey = this.decryptApiKey(conn.apiKeyEncrypted, secretKeyHex);
 
     // ── Step 3: fetch workflow list from n8n ──────────────────────────
@@ -329,43 +337,46 @@ export class N8nService {
         const webhookUrl  = `${conn.baseUrl.replace(/\/$/, '')}/webhook/${webhookPath}`;
         const method      = (webhookNode?.parameters?.httpMethod ?? 'POST').toUpperCase();
 
-        // c. Upsert N8nWorkflow
-        await prisma.n8nWorkflow.upsert({
-          where: {
-            connectionId_n8nWorkflowId: { connectionId, n8nWorkflowId: wf.id },
-          },
-          create: {
-            connectionId,
-            n8nWorkflowId: wf.id,
-            name:          wf.name,
-            webhookUrl,
-            isActive:      true,
-          },
-          update: {
-            name:      wf.name,
-            webhookUrl,
-            isActive:  true,
-            updatedAt: new Date(),
-          },
-        });
-
-        // d. Upsert Skill
-        //    Skill.name is @unique — use 'n8n:{connectionId}:{workflowId}' to avoid collisions.
+        // c. & d. Upsert N8nWorkflow and Skill atomically within a transaction
         const skillName = `n8n:${connectionId}:${wf.id}`;
-        await prisma.skill.upsert({
-          where:  { name: skillName },
-          create: {
-            name:        skillName,
-            description: wf.name,
-            type:        'n8n_webhook',
-            config:      { webhookUrl, method },
-            schema:      null,
-          },
-          update: {
-            description: wf.name,
-            config:      { webhookUrl, method },
-            updatedAt:   new Date(),
-          },
+        await prisma.$transaction(async (tx) => {
+          // c. Upsert N8nWorkflow
+          await tx.n8nWorkflow.upsert({
+            where: {
+              connectionId_n8nWorkflowId: { connectionId, n8nWorkflowId: wf.id },
+            },
+            create: {
+              connectionId,
+              n8nWorkflowId: wf.id,
+              name:          wf.name,
+              webhookUrl,
+              isActive:      true,
+            },
+            update: {
+              name:      wf.name,
+              webhookUrl,
+              isActive:  true,
+              updatedAt: new Date(),
+            },
+          });
+
+          // d. Upsert Skill
+          //    Skill.name is @unique — use 'n8n:{connectionId}:{workflowId}' to avoid collisions.
+          await tx.skill.upsert({
+            where:  { name: skillName },
+            create: {
+              name:        skillName,
+              description: wf.name,
+              type:        'n8n_webhook',
+              config:      { webhookUrl, method },
+              schema:      null,
+            },
+            update: {
+              description: wf.name,
+              config:      { webhookUrl, method },
+              updatedAt:   new Date(),
+            },
+          });
         });
 
         // e. Count success
