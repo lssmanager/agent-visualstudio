@@ -115,6 +115,12 @@ export class DepartmentRepository {
    * Nunca itera colecciones — navega solo por el nodo orquestador de cada nivel.
    */
   async findOrchestratorAgent(departmentId: string) {
+    const department = await this.prisma.department.findFirst({
+      where:  { id: departmentId, deletedAt: null },
+      select: { id: true },
+    })
+    if (!department) return null
+
     // 1. Workspace orquestador del department
     const workspace = await this.prisma.workspace.findFirst({
       where:  { departmentId, isLevelOrchestrator: true, deletedAt: null },

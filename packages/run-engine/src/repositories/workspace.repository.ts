@@ -121,6 +121,12 @@ export class WorkspaceRepository {
    * Nunca usa findMany — el partial unique index C-20 garantiza unicidad.
    */
   async findOrchestratorAgent(workspaceId: string) {
+    const workspace = await this.prisma.workspace.findFirst({
+      where:  { id: workspaceId, deletedAt: null },
+      select: { id: true },
+    })
+    if (!workspace) return null
+
     return this.prisma.agent.findFirst({
       where: { workspaceId, isLevelOrchestrator: true, deletedAt: null },
     })

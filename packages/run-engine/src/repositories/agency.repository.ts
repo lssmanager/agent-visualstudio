@@ -116,6 +116,12 @@ export class AgencyRepository {
    * Nunca itera colecciones — navega solo por el nodo orquestador de cada nivel.
    */
   async findOrchestratorAgent(agencyId: string) {
+    const agency = await this.prisma.agency.findFirst({
+      where:  { id: agencyId, deletedAt: null },
+      select: { id: true },
+    })
+    if (!agency) return null
+
     // 1. Department orquestador de la agency
     const department = await this.prisma.department.findFirst({
       where:  { agencyId, isLevelOrchestrator: true, deletedAt: null },
