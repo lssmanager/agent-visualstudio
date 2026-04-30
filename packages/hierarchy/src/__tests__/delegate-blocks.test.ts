@@ -180,7 +180,7 @@ describe('HierarchyOrchestrator.decomposeTask() integración', () => {
     // Acceder al método privado para test unitario
     // (cast a any — patrón aceptable en tests de caja blanca)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const orch = orchestrator as unknown as Record<string, Function>
+    const orch = orchestrator as unknown as Record<string, (...args: any[]) => any>
 
     const collectAgents: HierarchyNode[] = orch['collectAgentNodes'](hierarchy) as HierarchyNode[]
     const result = await orch['decomposeTask']('Write a summary', collectAgents, {})
