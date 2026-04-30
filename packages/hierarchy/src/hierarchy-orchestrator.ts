@@ -202,7 +202,7 @@ function jaccardScore(a: Set<string>, b: Set<string>): number {
  * @returns Array de DelegateBlock válidos (vacío si no hay ninguno)
  */
 export function parseDelegateBlocks(raw: string): DelegateBlock[] {
-  const BLOCK_RE = /---DELEGATE---([\.\s\S]*?)---END---/g
+  const BLOCK_RE = /---DELEGATE---([\s\S]*?)---END---/g
   const blocks: DelegateBlock[] = []
   let match: RegExpExecArray | null
 
