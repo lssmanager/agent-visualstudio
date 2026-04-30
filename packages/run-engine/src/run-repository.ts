@@ -250,6 +250,32 @@ export class RunRepository {
   }
 
   /**
+   * Devuelve todos los RunSteps de tipo 'delegation' de un Run.
+   * Usado por HierarchyOrchestrator.isRunBlocked().
+   *
+   * Solo selecciona los campos necesarios para la verificación de bloqueo —
+   * no toda la fila. Importante para queries frecuentes (polling del gateway).
+   */
+  async findDelegationStepsByRun(runId: string) {
+    return this.prisma.runStep.findMany({
+      where: {
+        runId,
+        nodeType: 'delegation',
+      },
+      select: {
+        id:        true,
+        runId:     true,
+        nodeId:    true,
+        nodeType:  true,
+        status:    true,
+        startedAt: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    })
+  }
+
+  /**
    * Exposes the PrismaClient for sub-orchestrators created by delegateTask().
    * Required by F2a-03: HierarchyOrchestrator needs to pass the same client
    * to child orchestrators without breaking the repository abstraction.
