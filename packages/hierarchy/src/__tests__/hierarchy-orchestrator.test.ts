@@ -102,20 +102,25 @@ function makeExecutorFn(partial?: Partial<AgentExecutionResult>): AgentExecutorF
 
 /**
  * supervisorFn factory para tests F2a-05b.
- * - Para llamadas de descomposición: retorna JSON array válido
- *   (el parser JSON actual aún está activo — se migra en F2a-05c).
+ * - Para llamadas de descomposición: retorna bloques ---DELEGATE---
+ *   que el orchestrator actual puede parsear.
  * - Para llamadas de consolidación: retorna texto plano.
  */
 function makeSupervisorSpy(agentIds: string[]): SupervisorFn {
   return vi.fn().mockImplementation(async (prompt: string) => {
-    // Consolidation call — no JSON needed
+    // Consolidation call — plain text response
     if (!prompt.includes('Decompose') && !prompt.includes('Available agents')) {
       return 'Consolidated supervisor result';
     }
-    // Decomposition call — return JSON that the existing parser can consume
-    return JSON.stringify(
-      agentIds.map((id) => ({ agentId: id, task: `Task for ${id}` }))
-    );
+    // Decomposition call — return ---DELEGATE--- blocks that the orchestrator can parse
+    return agentIds
+      .map(
+        (id) =>
+          `---DELEGATE---
+agentId: ${id}
+task: Task for ${id}`
+      )
+      .join('\n');
   });
 }
 
