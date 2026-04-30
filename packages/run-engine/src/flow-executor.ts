@@ -132,7 +132,7 @@ export class FlowExecutor {
           runId,
           nodeId,
           nodeType: node.type,
-          agentId:  node.agentId ?? undefined,
+          agentId:  node.agentId,
           status:   'pending',
           input: {
             conditionExpr: node.conditionExpr ?? null,

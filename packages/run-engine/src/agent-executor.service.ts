@@ -14,9 +14,11 @@ import { executeCondition } from './execute-condition';
 /**
  * Minimal interface for the step execution service as seen by AgentExecutor.
  * Kept separate from LlmStepExecutor to avoid circular imports and allow mocking.
+ * The return type is `StepExecutionResult` to preserve downstream type safety,
+ * but implementations may include extra diagnostic fields (e.g. tokensUsed).
  */
 export interface LLMStepExecutor {
-  executeStep(runStep: any): Promise<any>;
+  executeStep(runStep: RunStep): Promise<StepExecutionResult>;
 }
 
 export interface AgentExecutorDeps {
@@ -98,12 +100,18 @@ export class AgentExecutor {
       }
 
       // 3a. Éxito → completed
+      // tokenUsage is a JSON column; prefer result.tokenUsage when available
+      // (real LLM calls), otherwise skip (condition nodes / mocks).
+      const tokenUsage = result.tokenUsage
+        ? (result.tokenUsage as object)
+        : undefined;
+
       await prisma.runStep.update({
         where: { id: runStepId },
         data: {
           status:      'completed',
           output:      result.output as any,
-          tokenUsage:  { total: (result as any).tokensUsed } as any,
+          ...(tokenUsage !== undefined && { tokenUsage }),
           costUsd:     result.costUsd,
           completedAt: new Date(),
         },

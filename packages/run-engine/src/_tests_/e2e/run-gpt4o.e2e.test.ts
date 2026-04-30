@@ -113,7 +113,12 @@ describe('E2E: Run → GPT-4o → RunStep.status=completed [F1a-09]', () => {
     });
 
     it('RunStep.status = completed for agent node', async () => {
-      const mockLLMResult = { output: { text: 'Hello' }, tokensUsed: 10, costUsd: 0.0001 };
+      const mockLLMResult = {
+        status:     'completed' as const,
+        output:     { text: 'Hello' },
+        tokenUsage: { input: 6, output: 4 },
+        costUsd:    0.0001,
+      };
       const mockLLMExecutor = { executeStep: jest.fn().mockResolvedValue(mockLLMResult) };
 
       const agentExecutor = new AgentExecutor({
@@ -134,7 +139,7 @@ describe('E2E: Run → GPT-4o → RunStep.status=completed [F1a-09]', () => {
       const agentStep = steps[0] as any;
       expect(agentStep.status).toBe('completed');
       expect(agentStep.nodeType).toBe('agent');
-      expect(agentStep.tokenUsage).toEqual({ total: 10 });
+      expect(agentStep.tokenUsage).toEqual({ input: 6, output: 4 });
       expect(agentStep.costUsd).toBe(0.0001);
     });
 
