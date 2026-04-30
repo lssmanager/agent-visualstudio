@@ -308,4 +308,28 @@ export class RunRepository {
     }
     return 'timeout'
   }
+
+  // ── [F2a-04] AgentProfile matching ──────────────────────────────────────────────────────────────
+
+  /**
+   * Carga AgentProfiles para una lista de agentIds en una sola query BD.
+   * Usado por HierarchyOrchestrator.findSpecialistWithCapability().
+   *
+   * Devuelve solo los profiles que existen — agentes sin profile
+   * simplemente no aparecen en el resultado (profileFound: false en el caller).
+   *
+   * El tipo de retorno lo infiere TypeScript desde Prisma para no acoplar al schema.
+   */
+  async findAgentProfiles(agentIds: string[]) {
+    if (agentIds.length === 0) return []
+    return this.prisma.agentProfile.findMany({
+      where: { agentId: { in: agentIds } },
+      select: {
+        agentId:       true,
+        systemPrompt:  true,
+        persona:       true,
+        knowledgeBase: true,
+      },
+    })
+  }
 }

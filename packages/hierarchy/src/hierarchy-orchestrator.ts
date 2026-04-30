@@ -148,6 +148,29 @@ export type RouteDecision =
   | { type: 'local';    node: HierarchyNode }
   | { type: 'delegate'; node: HierarchyNode; children: HierarchyNode[] }
 
+// ── [F2a-04] Tipos de matching por capacidad ─────────────────────────────────────────────────────
+
+/** Score de afinidad de un agente para un task dado */
+export interface CapabilityScore {
+  node:         HierarchyNode
+  score:        number    // 0.0 – 1.0 (Jaccard simplificado)
+  matchedOn:    'systemPrompt' | 'persona' | 'knowledgeBase' | 'fallback'
+  profileFound: boolean  // false si AgentProfile no existe en BD
+}
+
+/**
+ * Resultado de findSpecialistWithCapability().
+ * Siempre devuelve un nodo — nunca null.
+ * Si no hay match real, isFallback = true.
+ */
+export interface SpecialistMatch {
+  node:       HierarchyNode
+  score:      number
+  isFallback: boolean
+  allScores:  CapabilityScore[]
+}
+
+
 // ── Opciones de configuración ────────────────────────────────────────────────────────────────
 
 export interface OrchestratorOptions {
@@ -169,6 +192,44 @@ const DEFAULT_OPTIONS: Required<OrchestratorOptions> = {
   subtaskTimeoutMs:  120_000,  // 2 min
   approvalTimeoutMs: 900_000,  // 15 min
   parallel:          true,
+}
+
+// ── [F2a-04] Funciones puras de tokenización y scoring ───────────────────────────────────────────
+// Ubicadas a nivel módulo (fuera de la clase) para ser testeables sin instanciar HierarchyOrchestrator.
+
+/**
+ * Tokeniza texto en un Set de palabras lowercase sin stopwords.
+ * Mínimo 3 caracteres por token para evitar ruido.
+ */
+export function tokenize(text: string): Set<string> {
+  const STOPWORDS = new Set([
+    'the','a','an','and','or','but','in','on','at','to',
+    'for','of','with','by','from','as','is','are','was',
+    'be','been','have','has','had','do','does','did',
+    'will','would','could','should','may','might','must',
+    'this','that','these','those','it','its','you','your',
+    'we','our','they','their','he','she','his','her',
+    'el','la','los','las','un','una','de','en','con','por',
+    'para','que','es','son','tiene','este','esta',
+  ])
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-záéíóúüñ\w\s]/gi, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length >= 3 && !STOPWORDS.has(w)),
+  )
+}
+
+/**
+ * Jaccard simplificado: |A ∩ B| / |A ∪ B|
+ * Retorna 0 si ambos sets están vacíos.
+ */
+export function jaccardScore(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 && b.size === 0) return 0
+  const intersection = [...a].filter((t) => b.has(t)).length
+  const union = new Set([...a, ...b]).size
+  return intersection / union
 }
 
 // ── HierarchyOrchestrator ─────────────────────────────────────────────────────────────────
@@ -200,7 +261,7 @@ export class HierarchyOrchestrator {
    * Punto de entrada principal.
    *
    * 1. Crea un Run en Prisma
-   * 2. Descompone el task vía supervisor LLM (o round-robin fallback)
+   * 2. Descompone el task vía supervisor LLM (o capability-match fallback)
    * 3. Ejecuta subtareas (paralelo o secuencial) con checkpointing por RunStep
    * 4. Consolida el resultado vía supervisor LLM
    * 5. Marca el Run como completed/partial/failed
@@ -307,7 +368,8 @@ export class HierarchyOrchestrator {
    *
    * Estrategia:
    *   1. Si hay supervisorFn: llama al LLM con un prompt estructurado y parsea JSON.
-   *   2. Si el LLM falla o no hay supervisorFn: fallback a round-robin.
+   *   2. Si el LLM falla o no hay supervisorFn: fallback a capability matching [F2a-04].
+   *      El agente con mayor afinidad semántica recibe el task completo.
    */
   private async decomposeTasks(
     rootTask: string,
@@ -331,18 +393,21 @@ export class HierarchyOrchestrator {
       try {
         return await this.decomposeWithSupervisor(rootTask, agents, input)
       } catch {
-        // fallback silencioso a round-robin
+        // fallback silencioso a capability matching
       }
     }
 
-    // Fallback: asignar el mismo task a todos los agentes (round-robin)
-    return agents.map((agent, idx) => ({
-      id:             `subtask-${agent.id}-${idx}`,
-      description:    `[${agent.name}]: ${rootTask}`,
-      assignedNodeId: agent.id,
-      level:          agent.level,
+    // [F2a-04] Fallback: asignar al especialista con mayor afinidad semántica
+    // Reemplaza el round-robin ciego anterior — si necesitas fan-out explícito,
+    // pásalo como opción al caller.
+    const match = await this.findSpecialistWithCapability(rootTask, agents)
+    return [{
+      id:             `subtask-${match.node.id}-0`,
+      description:    rootTask,
+      assignedNodeId: match.node.id,
+      level:          match.node.level,
       input,
-    }))
+    }]
   }
 
   /**
@@ -660,6 +725,124 @@ export class HierarchyOrchestrator {
       if (node.children) queue.push(...node.children)
     }
     return undefined
+  }
+
+  /**
+   * [F2a-04] Encuentra el agente hoja con mayor afinidad semántica
+   * para el task dado, usando score léxico sobre AgentProfile en BD.
+   *
+   * Algoritmo:
+   *   1. Colecta todos los nodos hoja (agent/subagent)
+   *   2. Carga sus AgentProfiles desde BD en una sola query
+   *   3. Calcula score Jaccard(taskTokens, profileTokens)
+   *      para systemPrompt, persona y knowledgeBase (toma el máximo)
+   *   4. Devuelve el agente de mayor score
+   *   5. Si todos los scores < MIN_SCORE → isFallback: true
+   *
+   * Restricciones:
+   *   - NO usa embeddings ni llamadas LLM
+   *   - NO lanza excepciones: siempre retorna un SpecialistMatch válido
+   *   - Una sola query BD para todos los agentes
+   *
+   * @param taskDescription  Texto libre del task a asignar
+   * @param candidates       Nodos hoja candidatos (si omitido, usa todos)
+   */
+  private async findSpecialistWithCapability(
+    taskDescription: string,
+    candidates?:     HierarchyNode[],
+  ): Promise<SpecialistMatch> {
+    const agents = candidates ?? this.collectAgentNodes(this.hierarchy)
+
+    // Fallback inmediato si no hay agentes
+    if (agents.length === 0) {
+      return {
+        node:       this.hierarchy,
+        score:      0,
+        isFallback: true,
+        allScores:  [],
+      }
+    }
+
+    try {
+      // 1. Cargar profiles desde BD (única query)
+      const profiles = await this.repo.findAgentProfiles(
+        agents.map((a) => a.id),
+      )
+      const profileMap = new Map(profiles.map((p) => [p.agentId, p]))
+
+      // 2. Tokenizar el task una sola vez
+      const taskTokens = tokenize(taskDescription)
+
+      // 3. Calcular score por agente
+      const scores: CapabilityScore[] = agents.map((node) => {
+        const profile = profileMap.get(node.id)
+
+        if (!profile) {
+          // Sin profile en BD: usar agentConfig.systemPrompt del árbol como texto de fallback
+          const fallbackText = node.agentConfig?.systemPrompt ?? node.name
+          return {
+            node,
+            score:        jaccardScore(taskTokens, tokenize(fallbackText)),
+            matchedOn:    'fallback' as const,
+            profileFound: false,
+          }
+        }
+
+        // Score sobre systemPrompt
+        const promptScore = profile.systemPrompt
+          ? jaccardScore(taskTokens, tokenize(profile.systemPrompt))
+          : 0
+
+        // Score sobre persona (serializar JSON a texto plano)
+        const personaText = typeof profile.persona === 'string'
+          ? profile.persona
+          : JSON.stringify(profile.persona)
+        const personaScore = jaccardScore(taskTokens, tokenize(personaText))
+
+        // Score sobre knowledgeBase (array de { topic, content })
+        const kbText = typeof profile.knowledgeBase === 'string'
+          ? profile.knowledgeBase
+          : JSON.stringify(profile.knowledgeBase)
+        const kbScore = jaccardScore(taskTokens, tokenize(kbText))
+
+        // Tomar el máximo de los tres campos
+        const maxScore = Math.max(promptScore, personaScore, kbScore)
+        const matchedOn: CapabilityScore['matchedOn'] =
+          maxScore === promptScore  ? 'systemPrompt'
+          : maxScore === personaScore ? 'persona'
+          : 'knowledgeBase'
+
+        return {
+          node,
+          score:        maxScore,
+          matchedOn,
+          profileFound: true,
+        }
+      })
+
+      // 4. Ordenar por score descendente
+      scores.sort((a, b) => b.score - a.score)
+      const best = scores[0]
+
+      // 5. Threshold mínimo: si todos son 0, es fallback
+      const MIN_SCORE = 0.05
+      const isFallback = best.score < MIN_SCORE
+
+      return {
+        node:       best.node,
+        score:      best.score,
+        isFallback,
+        allScores:  scores,
+      }
+    } catch {
+      // Nunca lanzar: en caso de error de BD, devolver el primer agente disponible
+      return {
+        node:       agents[0],
+        score:      0,
+        isFallback: true,
+        allScores:  [],
+      }
+    }
   }
 
   /**
