@@ -17,16 +17,16 @@
 
 import { Injectable }      from '@nestjs/common';
 import { createDecipheriv } from 'crypto';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient }  from '@prisma/client';
 import {
   registry,
   SessionManager,
   type IncomingMessage,
   type OutboundMessage,
 } from '@agent-vs/gateway-sdk';
-import { AgentRunner }          from '@agent-vs/flow-engine';
-import type { IChannelAdapter }  from './channels/channel-adapter.interface';
-import { PrismaService }         from './prisma/prisma.service';
+import { AgentRunner }        from '@agent-vs/flow-engine';
+import type { IChannelAdapter } from './channels/channel-adapter.interface';
+import { PrismaService }       from './prisma/prisma.service';
 
 // ---------------------------------------------------------------------------
 // Tipos internos

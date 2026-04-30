@@ -33,7 +33,7 @@ async function bootstrap(): Promise<void> {
   }));
 
   // NOTA: no usar setGlobalPrefix aquí — las rutas legacy ya tienen sus paths
-  // correctos montados en createApp() de server.ts a través del bridge.
+  // correctos montados en createApp() de server.ts
 
   const port = Number(process.env.GATEWAY_PORT ?? process.env.PORT ?? 3200);
   await app.listen(port);

@@ -1,13 +1,13 @@
 /**
- * [F3a-01] HealthController — GET /health
+ * HealthController — GET /health
  *
  * Liveness probe para Coolify / Docker healthcheck.
  * Este endpoint es el único Controller NestJS "nativo" en F3a-01.
  * Su presencia verifica que el DI de NestJS funciona correctamente.
  *
  * IMPORTANTE: NestJS registra sus routes ANTES de que Express maneje
- * el request — el Controller /health tiene prioridad sobre la ruta
- * /health de la Express legacy app (si existe).
+ * el request — el Controller /health tiene prioridad sobre cualquier
+ * ruta /health de la Express legacy app (si existe).
  */
 
 import { Controller, Get } from '@nestjs/common';

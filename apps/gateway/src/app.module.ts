@@ -26,8 +26,8 @@ import { PrismaModule }    from './prisma/prisma.module';
 import { GatewayModule }   from './gateway.module';
 import { PrismaService }   from './prisma/prisma.service';
 
-// Legacy Express app factory (bridge — eliminar en F3a-02/03)
-import { createApp } from './server';
+// Legacy Express routes (bridge — eliminar en F3a-02/03)
+import { createApp }       from './server';
 
 @Module({
   imports: [
@@ -60,11 +60,10 @@ export class AppModule implements OnModuleInit {
     const expressApp  = httpAdapter.getInstance<Application>();
 
     // Crear la Express app legacy con el PrismaService del DI
-    // PrismaService extiende PrismaClient — compatible 1:1 con AppOptions.db
     const legacyApp = createApp({ db: this.prisma });
 
     // Montar todos los handlers de la app legacy en el Express subyacente.
-    // NestJS registra sus propios handlers ANTES (mayor prioridad para /health).
+    // NestJS registra sus propios handlers DESPUÉS (mayor prioridad para /health).
     expressApp.use(legacyApp);
 
     console.info('[AppModule] Legacy Express routes mounted (bridge pattern)');
