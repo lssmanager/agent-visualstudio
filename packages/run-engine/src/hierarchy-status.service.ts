@@ -301,7 +301,7 @@ export class HierarchyStatusService {
     // are honoured when deriving parent status (D-23f).
     const nodeStatuses: NodeStatus[] = stepNodes.map((step) => ({
       status: isBlocked({
-        status:    step.status,
+        status:    step.effectiveStatus,
         startedAt: step.startedAt,
         createdAt: step.createdAt,
       })
