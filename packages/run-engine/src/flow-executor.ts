@@ -1,269 +1,167 @@
-import crypto from 'node:crypto';
-
+/**
+ * FlowExecutor — F1a-08
+ *
+ * Ejecuta un Run completo siguiendo el grafo definido en Flow.spec.
+ * Usa AgentExecutor como único punto de entrada para RunSteps, eliminando
+ * la dependencia circular que existía con LLMStepExecutor.
+ *
+ * Orden de ejecución:
+ *  1. Cargar el Run con su Flow.spec y RunSteps existentes
+ *  2. Iterar nodos del grafo en orden topológico
+ *  3. Para cada nodo crear (o reusar) un RunStep y delegarlo a AgentExecutor
+ *  4. Manejar nodos de tipo `condition` ramificando el grafo
+ *  5. Marcar el Run como completed o failed según el resultado
+ */
 import type { PrismaClient } from '@prisma/client';
-import type { FlowSpec, FlowNode, FlowEdge } from '../../core-types/src';
-import type { RunSpec, RunStep, RunStatus, StepStatus, RunTrigger } from '../../core-types/src';
+import type { AgentExecutorFn } from './agent-executor.service';
 
-import { StepExecutor, type StepExecutionResult } from './step-executor';
-import { RunRepository } from './run-repository';
-import { ApprovalQueue } from './approval-queue';
-
-export interface FlowExecutorOptions {
-  workspaceId: string;
-  repository: RunRepository;
-  approvalQueue: ApprovalQueue;
-  /**
-   * stepExecutor explícito — usar cuando se quiere control total sobre
-   * qué executor se usa (tests, mocks, custom implementations).
-   */
-  stepExecutor?: StepExecutor;
-  /**
-   * PrismaClient — si se provee y no hay stepExecutor explícito,
-   * FlowExecutor construye automáticamente un StepExecutor con db
-   * que delega a LlmStepExecutor para nodos agent/tool.
-   */
-  db?: PrismaClient;
-  maxToolRounds?: number;
+/** Nodo mínimo del Flow.spec */
+export interface FlowNode {
+  id: string;
+  type: 'agent' | 'condition' | 'input' | 'output' | 'approval' | 'subflow' | 'n8n_workflow' | string;
+  /** Para nodos condition: rama 'true' / 'false' → nodeId siguiente */
+  branches?: { true?: string; false?: string };
+  /** Para nodos agent: expresión de condición (cuando type === 'condition') */
+  conditionExpr?: string;
+  /** ID del agente o subagente asignado a este nodo */
+  agentId?: string;
 }
 
-/**
- * Traverses a FlowSpec graph and executes nodes sequentially.
- * Uses setImmediate-based scheduling to avoid blocking the event loop.
- *
- * Uso mínimo con LLM real:
- *   new FlowExecutor({ workspaceId, repository, approvalQueue, db: prisma })
- *
- * Uso con executor custom (tests):
- *   new FlowExecutor({ workspaceId, repository, approvalQueue, stepExecutor: myExecutor })
- */
+/** Spec mínima del Flow */
+export interface FlowSpec {
+  nodes: FlowNode[];
+  edges: Array<{ source: string; target: string; label?: string }>;
+  entryNodeId?: string;
+}
+
+export interface FlowExecutorDeps {
+  prisma: PrismaClient;
+  executeAgent: AgentExecutorFn;
+}
+
 export class FlowExecutor {
-  private readonly workspaceId: string;
-  private readonly repository: RunRepository;
-  private readonly stepExecutor: StepExecutor;
-  private readonly approvalQueue: ApprovalQueue;
-
-  constructor(options: FlowExecutorOptions) {
-    this.workspaceId   = options.workspaceId;
-    this.repository    = options.repository;
-    this.approvalQueue = options.approvalQueue;
-
-    if (options.stepExecutor) {
-      // Executor explícito tiene prioridad
-      this.stepExecutor = options.stepExecutor;
-    } else if (options.db) {
-      // Auto-construir StepExecutor con db → delega a LlmStepExecutor internamente
-      this.stepExecutor = new StepExecutor({
-        db: options.db,
-        maxToolRounds: options.maxToolRounds,
-      });
-    } else {
-      // Sin db y sin executor explícito: StepExecutor vacío
-      // executeAgent/executeTool retornarán error descriptivo en lugar de stub
-      this.stepExecutor = new StepExecutor();
-    }
-  }
+  constructor(private readonly deps: FlowExecutorDeps) {}
 
   /**
-   * Start a new run from a flow spec.
-   * Returns the RunSpec immediately (queued). Execution proceeds async.
+   * Ejecuta el Run identificado por `runId`.
+   * Actualiza Run.status → 'running' al inicio y 'completed'|'failed' al final.
    */
-  startRun(flow: FlowSpec, trigger: RunTrigger): RunSpec {
-    const run: RunSpec = {
-      id: crypto.randomUUID(),
-      workspaceId: this.workspaceId,
-      flowId: flow.id,
-      status: 'queued',
-      trigger,
-      steps: [],
-      startedAt: new Date().toISOString(),
-    };
+  async executeRun(runId: string): Promise<void> {
+    const { prisma, executeAgent } = this.deps;
 
-    this.repository.save(run);
-
-    // Schedule async execution
-    setImmediate(() => void this.executeRun(run.id, flow));
-
-    return run;
-  }
-
-  /**
-   * Cancel a running/queued run.
-   */
-  cancelRun(runId: string): RunSpec | null {
-    const run = this.repository.findById(runId);
-    if (!run) return null;
-
-    if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
-      return run;
-    }
-
-    run.status = 'cancelled';
-    run.completedAt = new Date().toISOString();
-
-    for (const step of run.steps) {
-      if (step.status === 'queued' || step.status === 'running' || step.status === 'waiting_approval') {
-        step.status = 'skipped';
-        step.completedAt = new Date().toISOString();
-      }
-    }
-
-    this.repository.save(run);
-    return run;
-  }
-
-  private async executeRun(runId: string, flow: FlowSpec): Promise<void> {
-    const run = this.repository.findById(runId);
-    if (!run || run.status === 'cancelled') return;
-
-    run.status = 'running';
-    this.repository.save(run);
+    // Marcar Run como running
+    await prisma.run.update({
+      where: { id: runId },
+      data: { status: 'running', startedAt: new Date() },
+    });
 
     try {
-      const startNode = this.findStartNode(flow);
-      if (!startNode) {
-        run.status = 'failed';
-        run.error = 'No trigger or start node found in flow';
-        run.completedAt = new Date().toISOString();
-        this.repository.save(run);
-        return;
-      }
+      const run = await prisma.run.findUniqueOrThrow({
+        where: { id: runId },
+        include: { flow: true },
+      });
 
-      await this.walkGraph(run, flow, startNode.id);
+      const spec = run.flow.spec as unknown as FlowSpec;
+      const nodes = spec?.nodes ?? [];
+      if (nodes.length === 0) throw new Error('Flow.spec has no nodes');
 
-      const freshRun = this.repository.findById(runId)!;
-      if (freshRun.status === 'cancelled') return;
+      // Determinar nodo de entrada
+      const entryNodeId =
+        spec.entryNodeId ??
+        nodes.find((n) => n.type === 'input')?.id ??
+        nodes[0].id;
 
-      if (freshRun.status !== 'waiting_approval') {
-        const hasFailed = freshRun.steps.some((s) => s.status === 'failed');
-        freshRun.status = hasFailed ? 'failed' : 'completed';
-        freshRun.completedAt = new Date().toISOString();
-        if (hasFailed) {
-          const failedStep = freshRun.steps.find((s) => s.status === 'failed');
-          freshRun.error = failedStep?.error ?? 'Step failed';
-        }
-        this.repository.save(freshRun);
-      }
+      // Ejecutar el grafo en orden topológico (BFS)
+      await this._traverseGraph(runId, spec, entryNodeId, executeAgent, prisma);
+
+      // Completar el Run
+      await prisma.run.update({
+        where: { id: runId },
+        data: { status: 'completed', completedAt: new Date() },
+      });
     } catch (err) {
-      const freshRun = this.repository.findById(runId);
-      if (freshRun && freshRun.status !== 'cancelled') {
-        freshRun.status = 'failed';
-        freshRun.error = err instanceof Error ? err.message : String(err);
-        freshRun.completedAt = new Date().toISOString();
-        this.repository.save(freshRun);
-      }
+      await prisma.run.update({
+        where: { id: runId },
+        data: {
+          status: 'failed',
+          error: err instanceof Error ? err.message : String(err),
+          completedAt: new Date(),
+        },
+      });
+      throw err;
     }
-  }
-
-  private async walkGraph(run: RunSpec, flow: FlowSpec, currentNodeId: string): Promise<void> {
-    const visited = new Set<string>();
-
-    let nodeId: string | null = currentNodeId;
-    while (nodeId) {
-      const freshRun = this.repository.findById(run.id);
-      if (!freshRun || freshRun.status === 'cancelled') return;
-
-      if (visited.has(nodeId)) break;
-      visited.add(nodeId);
-
-      const node = flow.nodes.find((n) => n.id === nodeId);
-      if (!node) break;
-
-      const step: RunStep = {
-        id: crypto.randomUUID(),
-        runId: run.id,
-        nodeId: node.id,
-        nodeType: node.type,
-        status: 'queued',
-        startedAt: new Date().toISOString(),
-        retryCount: 0,
-      };
-      freshRun.steps.push(step);
-      this.repository.save(freshRun);
-
-      if (node.type === 'approval') {
-        step.status = 'waiting_approval';
-        freshRun.status = 'waiting_approval';
-        this.repository.save(freshRun);
-        this.approvalQueue.enqueue(freshRun.id, step.id);
-        return;
-      }
-
-      step.status = 'running';
-      this.repository.save(freshRun);
-
-      await new Promise<void>((resolve) => setImmediate(resolve));
-
-      const result = await this.stepExecutor.execute(node, step, freshRun);
-
-      step.status = result.status;
-      step.output = result.output;
-      step.error = result.error;
-      step.tokenUsage = result.tokenUsage;
-      step.costUsd = result.costUsd;
-      step.completedAt = new Date().toISOString();
-      this.repository.save(freshRun);
-
-      if (result.status === 'failed') break;
-      if (node.type === 'end') break;
-
-      nodeId = this.resolveNextNode(flow, node, result);
-    }
-  }
-
-  private findStartNode(flow: FlowSpec): FlowNode | undefined {
-    const trigger = flow.nodes.find((n) => n.type === 'trigger');
-    if (trigger) return trigger;
-    const targets = new Set(flow.edges.map((e) => e.to));
-    const roots = flow.nodes.filter((n) => !targets.has(n.id));
-    return roots[0] ?? flow.nodes[0];
-  }
-
-  private resolveNextNode(flow: FlowSpec, currentNode: FlowNode, result: StepExecutionResult): string | null {
-    const outEdges = flow.edges.filter((e) => e.from === currentNode.id);
-    if (outEdges.length === 0) return null;
-
-    if (currentNode.type === 'condition' && outEdges.length > 1) {
-      const outcomeEdge = outEdges.find((e) => e.condition === result.branch);
-      if (outcomeEdge) return outcomeEdge.to;
-      const defaultEdge = outEdges.find((e) => !e.condition) ?? outEdges[0];
-      return defaultEdge.to;
-    }
-
-    return outEdges[0].to;
   }
 
   /**
-   * Resume a run that was paused for approval.
+   * Recorre el grafo BFS desde `currentNodeId`.
+   * Para nodos condition toma la rama según el resultado booleano.
    */
-  async resumeAfterApproval(
+  private async _traverseGraph(
     runId: string,
-    stepId: string,
-    approved: boolean,
-    reason?: string,
-  ): Promise<RunSpec | null> {
-    const run = this.repository.findById(runId);
-    if (!run) return null;
+    spec: FlowSpec,
+    startNodeId: string,
+    executeAgent: AgentExecutorFn,
+    prisma: PrismaClient,
+  ): Promise<void> {
+    const nodeMap = new Map(spec.nodes.map((n) => [n.id, n]));
+    const edgeMap = this._buildEdgeMap(spec);
 
-    const step = run.steps.find((s) => s.id === stepId);
-    if (!step || step.status !== 'waiting_approval') return run;
+    const queue: string[] = [startNodeId];
+    const visited = new Set<string>();
 
-    if (!approved) {
-      step.status = 'failed';
-      step.error = reason ?? 'Rejected';
-      step.completedAt = new Date().toISOString();
-      run.status = 'failed';
-      run.error = `Approval rejected: ${reason ?? 'No reason'}`;
-      run.completedAt = new Date().toISOString();
-      this.repository.save(run);
-      return run;
+    while (queue.length > 0) {
+      const nodeId = queue.shift()!;
+      if (visited.has(nodeId)) continue;
+      visited.add(nodeId);
+
+      const node = nodeMap.get(nodeId);
+      if (!node) throw new Error(`Node ${nodeId} not found in Flow.spec`);
+
+      // Nodos de infraestructura que no generan RunStep
+      if (node.type === 'input' || node.type === 'output') {
+        const nextIds = edgeMap.get(nodeId) ?? [];
+        queue.push(...nextIds);
+        continue;
+      }
+
+      // Crear RunStep para este nodo.
+      // conditionExpr no es columna en RunStep: se guarda en el campo JSON
+      // `input` para que AgentExecutor pueda leerlo al evaluar la condición.
+      const runStep = await prisma.runStep.create({
+        data: {
+          runId,
+          nodeId,
+          nodeType: node.type,
+          agentId:  node.agentId,
+          status:   'pending',
+          input: {
+            conditionExpr: node.conditionExpr ?? null,
+          },
+        },
+      });
+
+      // Ejecutar via AgentExecutor
+      const result = await executeAgent(runStep.id);
+
+      // Determinar siguientes nodos
+      if (node.type === 'condition') {
+        const branch = result.branch ?? (result.output as any)?.conditionResult ? 'true' : 'false';
+        const nextNodeId = node.branches?.[branch as 'true' | 'false'];
+        if (nextNodeId) queue.push(nextNodeId);
+      } else {
+        const nextIds = edgeMap.get(nodeId) ?? [];
+        queue.push(...nextIds);
+      }
     }
+  }
 
-    step.status = 'completed';
-    step.completedAt = new Date().toISOString();
-    run.status = 'running';
-    this.repository.save(run);
-    this.approvalQueue.dequeue(runId, stepId);
-
-    return run;
+  /** Construye un mapa source → [target, ...] desde las edges del spec */
+  private _buildEdgeMap(spec: FlowSpec): Map<string, string[]> {
+    const map = new Map<string, string[]>();
+    for (const edge of spec.edges ?? []) {
+      if (!map.has(edge.source)) map.set(edge.source, []);
+      map.get(edge.source)!.push(edge.target);
+    }
+    return map;
   }
 }

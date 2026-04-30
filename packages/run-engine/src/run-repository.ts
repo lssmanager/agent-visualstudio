@@ -6,7 +6,8 @@
  * no necesiten cambios en sus imports.
  *
  * Checkpointing por RunStep:
- *   - upsertStep(): crea o actualiza un RunStep por (runId, nodeId, index)
+ *   - upsertStep(): crea o devuelve existente por (runId, nodeId, index) — idempotente
+ *   - createStep(): crea directamente sin check de existencia (uso primario en FlowExecutor)
  *   - completeStep() / failStep(): transición de estado atómica con timestamps
  *
  * La clase es stateless — no mantiene cache en memoria.
@@ -15,7 +16,7 @@
 
 import type { PrismaClient, RunStatus, RunStepStatus } from '@prisma/client'
 
-// ── DTOs públicos ──────────────────────────────────────────────────────────────
+// ── DTOs públicos ───────────────────────────────────────────────────────────────────────────────────
 
 export interface CreateRunInput {
   workspaceId: string
@@ -51,12 +52,12 @@ export interface FailStepInput {
   error:  string
 }
 
-// ── Repository ────────────────────────────────────────────────────────────────
+// ── Repository ───────────────────────────────────────────────────────────────────────────────────
 
 export class RunRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
-  // ── Run CRUD ───────────────────────────────────────────────────────────
+  // ── Run CRUD ────────────────────────────────────────────────────────────────
 
   async createRun(input: CreateRunInput) {
     return this.prisma.run.create({
@@ -143,48 +144,42 @@ export class RunRepository {
     })
   }
 
-  // ── RunStep (checkpoints) ──────────────────────────────────────────────
+  // ── RunStep (checkpoints) ─────────────────────────────────────────────────────
 
   /**
-   * Crea un RunStep en estado 'running'.
-   * Si ya existe uno con el mismo (runId, nodeId, index), lo devuelve sin modificar
-   * (idempotente para retry seguro).
+   * Returns the existing RunStep for (runId, nodeId, index) if it already exists,
+   * otherwise creates a new one in status 'running'.
+   *
+   * Idempotent: safe to call multiple times for the same step (e.g. on retry).
+   * Replaces the previous `id: 'non-existent'` upsert hack.
    */
   async upsertStep(input: UpsertStepInput) {
-    return this.prisma.runStep.upsert({
+    const existing = await this.prisma.runStep.findFirst({
       where: {
-        // compound unique no existe en schema, usamos findFirst + create
-        id: 'non-existent', // forzar always-create path via try/catch
+        runId:  input.runId,
+        nodeId: input.nodeId,
+        index:  input.index,
       },
-      create: {
-        runId:    input.runId,
-        nodeId:   input.nodeId,
-        nodeType: input.nodeType,
-        index:    input.index,
-        input:    (input.input ?? {}) as never,
-        status:   'running',
+    })
+    if (existing) return existing
+
+    return this.prisma.runStep.create({
+      data: {
+        runId:     input.runId,
+        nodeId:    input.nodeId,
+        nodeType:  input.nodeType,
+        index:     input.index,
+        input:     (input.input ?? {}) as never,
+        status:    'running',
         startedAt: new Date(),
       },
-      update: {},
-    }).catch(() =>
-      // Fallback: create directo si el upsert trick falla
-      this.prisma.runStep.create({
-        data: {
-          runId:    input.runId,
-          nodeId:   input.nodeId,
-          nodeType: input.nodeType,
-          index:    input.index,
-          input:    (input.input ?? {}) as never,
-          status:   'running',
-          startedAt: new Date(),
-        },
-      })
-    )
+    })
   }
 
   /**
-   * Crea un nuevo RunStep directamente (sin upsert trick).
-   * Preferir este método desde HierarchyOrchestrator.
+   * Creates a RunStep directly (no existence check).
+   * Primary method used by FlowExecutor.walkGraph().
+   * Prefer this over upsertStep when you know the step is new.
    */
   async createStep(input: UpsertStepInput) {
     return this.prisma.runStep.create({
@@ -246,11 +241,54 @@ export class RunRepository {
     return this.prisma.runStep.findUnique({ where: { id: stepId } })
   }
 
-  // ── Approval helper ───────────────────────────────────────────────────────
+  /**
+   * Alias semántico de getStepById — usado por HierarchyOrchestrator.getStepStatus().
+   * READ-ONLY: no modifica el step.
+   */
+  async findStep(stepId: string) {
+    return this.prisma.runStep.findUnique({ where: { id: stepId } })
+  }
 
   /**
-   * Crea un Approval vinculado a un Run + RunStep.
-   * Usado por HierarchyOrchestrator cuando hitl=true en el nodo.
+   * Devuelve todos los RunSteps de tipo 'delegation' de un Run.
+   * Usado por HierarchyOrchestrator.isRunBlocked().
+   *
+   * Solo selecciona los campos necesarios para la verificación de bloqueo —
+   * no toda la fila. Importante para queries frecuentes (polling del gateway).
+   */
+  async findDelegationStepsByRun(runId: string) {
+    return this.prisma.runStep.findMany({
+      where: {
+        runId,
+        nodeType: 'delegation',
+      },
+      select: {
+        id:        true,
+        runId:     true,
+        nodeId:    true,
+        nodeType:  true,
+        status:    true,
+        startedAt: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    })
+  }
+
+  /**
+   * Exposes the PrismaClient for sub-orchestrators created by delegateTask().
+   * Required by F2a-03: HierarchyOrchestrator needs to pass the same client
+   * to child orchestrators without breaking the repository abstraction.
+   */
+  getPrisma(): PrismaClient {
+    return this.prisma
+  }
+
+  // ── Approval helper ─────────────────────────────────────────────────────────────
+
+  /**
+   * Creates an Approval linked to a Run + RunStep.
+   * Used by HierarchyOrchestrator when hitl=true on a node.
    */
   async createApproval(params: {
     workspaceId: string
@@ -278,12 +316,12 @@ export class RunRepository {
   }
 
   /**
-   * Espera activa (polling) hasta que el Approval cambia de estado.
-   * Usa un intervalo de 2s y un timeout configurable.
+   * Active polling until an Approval changes status.
+   * Uses a 2s interval and a configurable timeout.
    */
   async waitForApproval(
     approvalId: string,
-    timeoutMs = 15 * 60 * 1000, // 15 min por defecto
+    timeoutMs = 15 * 60 * 1000, // 15 min default
   ): Promise<'approved' | 'rejected' | 'expired' | 'timeout'> {
     const deadline = Date.now() + timeoutMs
     const POLL_MS  = 2_000
@@ -295,5 +333,29 @@ export class RunRepository {
       await new Promise((r) => setTimeout(r, POLL_MS))
     }
     return 'timeout'
+  }
+
+  // ── [F2a-04] AgentProfile matching ──────────────────────────────────────────────────────────────
+
+  /**
+   * Carga AgentProfiles para una lista de agentIds en una sola query BD.
+   * Usado por HierarchyOrchestrator.findSpecialistWithCapability().
+   *
+   * Devuelve solo los profiles que existen — agentes sin profile
+   * simplemente no aparecen en el resultado (profileFound: false en el caller).
+   *
+   * El tipo de retorno lo infiere TypeScript desde Prisma para no acoplar al schema.
+   */
+  async findAgentProfiles(agentIds: string[]) {
+    if (agentIds.length === 0) return []
+    return this.prisma.agentProfile.findMany({
+      where: { agentId: { in: agentIds } },
+      select: {
+        agentId:       true,
+        systemPrompt:  true,
+        persona:       true,
+        knowledgeBase: true,
+      },
+    })
   }
 }

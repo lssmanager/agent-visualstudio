@@ -13,7 +13,7 @@
  */
 import { EventEmitter } from 'node:events';
 import type { RunSpec, RunTrigger } from '../../../../../packages/core-types/src';
-import { workspaceStore, studioConfig } from '../../config';
+import { workspaceStore, studioConfig } from '../../config'; // @deprecated(F0-08) — migrate to RunRepository (Prisma)
 import { SseEmitterService } from './sse-emitter.service';
 
 // ── BullMQ is optional — only imported when Redis is available ───────────────

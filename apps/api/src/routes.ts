@@ -1,6 +1,7 @@
 import { Express, Router } from 'express';
 
 import { studioConfig } from './config';
+import { prisma } from './modules/core/db/prisma.service';
 import { registerAgentsRoutes } from './modules/agents/agents.controller';
 import { registerChannelsRoutes } from './modules/channels/channels.controller';
 import { registerDeployRoutes } from './modules/deploy/deploy.controller';
@@ -30,6 +31,7 @@ import { registerRunsStreamRoutes } from './modules/runtime/runs-stream.controll
 import { registerDashboardRoutes } from './modules/dashboard/dashboard.controller';
 import { registerLlmProvidersRoutes } from './modules/llm-providers/llm-providers.controller';
 import { registerCatalogRoutes } from './modules/catalog/catalog.controller';
+import { registerSettingsRoutes } from './modules/settings/settings.controller';
 
 export function registerRoutes(app: Express) {
   const router = Router();
@@ -65,11 +67,13 @@ export function registerRoutes(app: Express) {
   registerBuilderAgentRoutes(router);
   registerRuntimeInspectionRoutes(router);
   registerRunsStreamRoutes(router);
-  registerDashboardRoutes(router);
+  registerDashboardRoutes(router, prisma);
   // LLM Providers + OAuth
   registerLlmProvidersRoutes(router);
   // Model Catalog (ModelCatalogEntry + ProviderCredential sync)
   registerCatalogRoutes(router);
+  // Settings: API keys de providers LLM + conexión n8n
+  registerSettingsRoutes(router);
 
   app.use(studioConfig.apiPrefix, router);
 }

@@ -1,5 +1,6 @@
 import path from 'node:path';
 
+// @deprecated(F0-08) — workspace-store is being phased out. See packages/workspace-store/DEPRECATED.md
 import { DualFormatStore, type StoreFormat } from '../../../packages/workspace-store/src';
 
 export const studioConfig = {
@@ -14,6 +15,9 @@ export const studioConfig = {
  * Shared store instance — all repositories should use this instead of
  * constructing their own JsonFileStore. The format is controlled by
  * the WORKSPACE_STORE_FORMAT env variable (default: 'json').
+ *
+ * @deprecated F0-08 — Migrate consumers to individual Prisma repositories.
+ * See packages/workspace-store/DEPRECATED.md
  */
 export const workspaceStore = new DualFormatStore(
   studioConfig.workspaceRoot,

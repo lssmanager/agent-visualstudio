@@ -1,12 +1,12 @@
-export { FlowExecutor, type FlowExecutorOptions } from './flow-executor';
-export { StepExecutor, type StepExecutionResult } from './step-executor';
-export {
-  LlmStepExecutor,
-  type GatewayRpcClient,
-  type LlmStepExecutorOptions,
-  BudgetExceededError,
-} from './llm-step-executor';
-export { RunRepository } from './run-repository';
-export { ApprovalQueue, type PendingApproval } from './approval-queue';
-export { PolicyResolver, type PolicyResolverContext } from './policy-resolver';
-export { SkillInvoker, type SkillInvokeResult } from './skill-invoker';
+/**
+ * run-engine public API
+ */
+export { LLMStepExecutor } from './llm-step-executor';
+export { AgentExecutor } from './agent-executor.service';
+export type { AgentExecutorFn } from './agent-executor.service';
+export { FlowExecutor } from './flow-executor';
+export type { FlowSpec, FlowNode } from './flow-executor';
+export { executeCondition, ConditionSyntaxError, ConditionRuntimeError } from './execute-condition';
+
+// Events — F2a-10
+export * from './events/index.js';

@@ -1,120 +1,63 @@
-import {
-  AgentSpec,
-  FlowSpec,
-  SkillSpec,
-  PolicySpec,
-  WorkspaceSpec,
-  HookSpec,
-} from '../../core-types/src';
-import { WorkspaceStore } from './workspace-store';
+/**
+ * @deprecated F0-08
+ *
+ * DualFormatStore bridges JSON ↔ YAML during the migration window.
+ * Both formats are deprecated. Migrate to Prisma repositories.
+ *
+ * @see packages/workspace-store/DEPRECATED.md
+ */
+
+import * as path from 'path';
+import { WorkspaceStore }    from './workspace-store';
 import { JsonWorkspaceStore } from './json-workspace-store';
 import { YamlWorkspaceStore } from './yaml-workspace-store';
-
-export type StoreFormat = 'json' | 'yaml' | 'dual';
+import {
+  AgentSpec, FlowSpec, SkillSpec, PolicySpec, WorkspaceSpec, HookSpec,
+} from '../../core-types/src';
 
 /**
- * Dual-format store — reads from both JSON and YAML sources,
- * writes to the configured target format.
- *
- * Read priority:
- *   - If format='json' → read from JSON only
- *   - If format='yaml' → read from YAML only
- *   - If format='dual' → read from JSON first, fall back to YAML
- *
- * Write behavior:
- *   - Always writes to the configured target (json or yaml)
- *   - In 'dual' mode, writes default to json (configurable via writeTarget)
+ * @deprecated — allowed values for WORKSPACE_STORE_FORMAT.
+ * Will be removed together with this package in F1.
+ */
+export type StoreFormat = 'json' | 'yaml';
+
+/**
+ * @deprecated Bridges JSON and YAML stores. Use Prisma repositories instead.
  */
 export class DualFormatStore extends WorkspaceStore {
-  private readonly jsonStore: JsonWorkspaceStore;
-  private readonly yamlStore: YamlWorkspaceStore;
-  private readonly format: StoreFormat;
-  private readonly writeTarget: 'json' | 'yaml';
+  private readonly json: JsonWorkspaceStore;
+  private readonly yaml: YamlWorkspaceStore;
 
-  constructor(
-    rootDir: string,
-    format: StoreFormat = 'json',
-    writeTarget?: 'json' | 'yaml',
-  ) {
+  /**
+   * @deprecated
+   * @param rootPath  Workspace root directory (OPENCLAW_WORKSPACE_ROOT).
+   * @param _format   Accepted for API backward-compat but intentionally ignored.
+   *                  This store always reads from JSON and writes to both JSON and
+   *                  YAML formats simultaneously, regardless of the value passed.
+   */
+  constructor(rootPath: string, _format: StoreFormat = 'json') {
     super();
-    this.jsonStore = new JsonWorkspaceStore(rootDir);
-    this.yamlStore = new YamlWorkspaceStore(rootDir);
-    this.format = format;
-    this.writeTarget = writeTarget ?? (format === 'yaml' ? 'yaml' : 'json');
+    const storeDir = path.join(rootPath, '.openclaw');
+    this.json = new JsonWorkspaceStore(path.join(storeDir, 'workspace-state.json'));
+    this.yaml = new YamlWorkspaceStore(path.join(storeDir, 'workspace-state.yaml'));
   }
 
-  private get reader(): WorkspaceStore {
-    if (this.format === 'yaml') return this.yamlStore;
-    if (this.format === 'json') return this.jsonStore;
-    // dual: try JSON first, but individual methods will merge
-    return this.jsonStore;
-  }
-
-  private get writer(): WorkspaceStore {
-    return this.writeTarget === 'yaml' ? this.yamlStore : this.jsonStore;
-  }
-
-  // ── Workspace ──────────────────────────────────────────────
-  readWorkspace(): WorkspaceSpec | null {
-    if (this.format === 'dual') {
-      return this.jsonStore.readWorkspace() ?? this.yamlStore.readWorkspace();
-    }
-    return this.reader.readWorkspace();
-  }
-  writeWorkspace(ws: WorkspaceSpec): WorkspaceSpec { return this.writer.writeWorkspace(ws); }
-
-  // ── Agents ─────────────────────────────────────────────────
-  listAgents(): AgentSpec[] {
-    if (this.format === 'dual') {
-      const json = this.jsonStore.listAgents();
-      return json.length > 0 ? json : this.yamlStore.listAgents();
-    }
-    return this.reader.listAgents();
-  }
-  getAgent(id: string): AgentSpec | null { return this.listAgents().find((a) => a.id === id) ?? null; }
-  saveAgents(agents: AgentSpec[]): AgentSpec[] { return this.writer.saveAgents(agents); }
-
-  // ── Flows ──────────────────────────────────────────────────
-  listFlows(): FlowSpec[] {
-    if (this.format === 'dual') {
-      const json = this.jsonStore.listFlows();
-      return json.length > 0 ? json : this.yamlStore.listFlows();
-    }
-    return this.reader.listFlows();
-  }
-  getFlow(id: string): FlowSpec | null { return this.listFlows().find((f) => f.id === id) ?? null; }
-  saveFlows(flows: FlowSpec[]): FlowSpec[] { return this.writer.saveFlows(flows); }
-
-  // ── Skills ─────────────────────────────────────────────────
-  listSkills(): SkillSpec[] {
-    if (this.format === 'dual') {
-      const json = this.jsonStore.listSkills();
-      return json.length > 0 ? json : this.yamlStore.listSkills();
-    }
-    return this.reader.listSkills();
-  }
-  getSkill(id: string): SkillSpec | null { return this.listSkills().find((s) => s.id === id) ?? null; }
-  saveSkills(skills: SkillSpec[]): SkillSpec[] { return this.writer.saveSkills(skills); }
-
-  // ── Policies ───────────────────────────────────────────────
-  listPolicies(): PolicySpec[] {
-    if (this.format === 'dual') {
-      const json = this.jsonStore.listPolicies();
-      return json.length > 0 ? json : this.yamlStore.listPolicies();
-    }
-    return this.reader.listPolicies();
-  }
-  getPolicy(id: string): PolicySpec | null { return this.listPolicies().find((p) => p.id === id) ?? null; }
-  savePolicies(policies: PolicySpec[]): PolicySpec[] { return this.writer.savePolicies(policies); }
-
-  // ── Hooks ──────────────────────────────────────────────────
-  listHooks(): HookSpec[] {
-    if (this.format === 'dual') {
-      const json = this.jsonStore.listHooks();
-      return json.length > 0 ? json : this.yamlStore.listHooks();
-    }
-    return this.reader.listHooks();
-  }
-  getHook(id: string): HookSpec | null { return this.listHooks().find((h) => h.id === id) ?? null; }
-  saveHooks(hooks: HookSpec[]): HookSpec[] { return this.writer.saveHooks(hooks); }
+  // Reads from JSON (primary), writes to both.
+  readWorkspace()                          { return this.json.readWorkspace(); }
+  writeWorkspace(w: WorkspaceSpec)         { this.yaml.writeWorkspace(w); return this.json.writeWorkspace(w); }
+  listAgents()                             { return this.json.listAgents(); }
+  getAgent(id: string)                     { return this.json.getAgent(id); }
+  saveAgents(agents: AgentSpec[])          { this.yaml.saveAgents(agents); return this.json.saveAgents(agents); }
+  listFlows()                              { return this.json.listFlows(); }
+  getFlow(id: string)                      { return this.json.getFlow(id); }
+  saveFlows(flows: FlowSpec[])             { this.yaml.saveFlows(flows); return this.json.saveFlows(flows); }
+  listSkills()                             { return this.json.listSkills(); }
+  getSkill(id: string)                     { return this.json.getSkill(id); }
+  saveSkills(skills: SkillSpec[])          { this.yaml.saveSkills(skills); return this.json.saveSkills(skills); }
+  listPolicies()                           { return this.json.listPolicies(); }
+  getPolicy(id: string)                    { return this.json.getPolicy(id); }
+  savePolicies(policies: PolicySpec[])     { this.yaml.savePolicies(policies); return this.json.savePolicies(policies); }
+  listHooks()                              { return this.json.listHooks(); }
+  getHook(id: string)                      { return this.json.getHook(id); }
+  saveHooks(hooks: HookSpec[])             { this.yaml.saveHooks(hooks); return this.json.saveHooks(hooks); }
 }

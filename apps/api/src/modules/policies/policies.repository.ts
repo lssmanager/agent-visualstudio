@@ -1,5 +1,5 @@
 import { PolicySpec } from '../../../../../packages/core-types/src';
-import { workspaceStore } from '../../config';
+import { workspaceStore } from '../../config'; // @deprecated(F0-08) — migrate to PoliciesRepository (Prisma)
 
 export class PoliciesRepository {
   list() {
