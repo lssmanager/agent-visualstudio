@@ -241,6 +241,23 @@ export class RunRepository {
     return this.prisma.runStep.findUnique({ where: { id: stepId } })
   }
 
+  /**
+   * Alias semántico de getStepById — usado por HierarchyOrchestrator.getStepStatus().
+   * READ-ONLY: no modifica el step.
+   */
+  async findStep(stepId: string) {
+    return this.prisma.runStep.findUnique({ where: { id: stepId } })
+  }
+
+  /**
+   * Exposes the PrismaClient for sub-orchestrators created by delegateTask().
+   * Required by F2a-03: HierarchyOrchestrator needs to pass the same client
+   * to child orchestrators without breaking the repository abstraction.
+   */
+  getPrisma(): PrismaClient {
+    return this.prisma
+  }
+
   // ── Approval helper ─────────────────────────────────────────────────────────────
 
   /**
@@ -290,5 +307,29 @@ export class RunRepository {
       await new Promise((r) => setTimeout(r, POLL_MS))
     }
     return 'timeout'
+  }
+
+  // ── [F2a-04] AgentProfile matching ──────────────────────────────────────────────────────────────
+
+  /**
+   * Carga AgentProfiles para una lista de agentIds en una sola query BD.
+   * Usado por HierarchyOrchestrator.findSpecialistWithCapability().
+   *
+   * Devuelve solo los profiles que existen — agentes sin profile
+   * simplemente no aparecen en el resultado (profileFound: false en el caller).
+   *
+   * El tipo de retorno lo infiere TypeScript desde Prisma para no acoplar al schema.
+   */
+  async findAgentProfiles(agentIds: string[]) {
+    if (agentIds.length === 0) return []
+    return this.prisma.agentProfile.findMany({
+      where: { agentId: { in: agentIds } },
+      select: {
+        agentId:       true,
+        systemPrompt:  true,
+        persona:       true,
+        knowledgeBase: true,
+      },
+    })
   }
 }
