@@ -3,9 +3,13 @@ import {
   Body, HttpCode, HttpStatus, HttpException,
   Req, Res,
 } from '@nestjs/common'
+import { Router } from 'express'
 import type { Request, Response } from 'express'
+import { PrismaService } from '../../lib/prisma.service.js'
 import { ChannelLifecycleService } from './channel-lifecycle.service.js'
 import { ChannelEventEmitter }     from './channel-event-emitter.js'
+import { GatewayService }          from '../gateway/gateway.service.js'
+import { AgentResolverService }    from '../gateway/agent-resolver.service.js'
 import { ProvisionChannelDto }     from './dto/provision-channel.dto.js'
 import {
   ChannelNotFoundError,
@@ -89,6 +93,7 @@ export class ChannelsController {
   }
 
   /** POST /channels/:id/stop */
+  @Post(':id/stop')
   async stop(@Param('id') id: string) {
     return this.wrap(() => this.lifecycle.stop(id))
   }
@@ -118,4 +123,111 @@ export class ChannelsController {
       throw err
     }
   }
+}
+
+export function registerChannelsRoutes(router: Router): void {
+  const db = new PrismaService()
+  const emitter = new ChannelEventEmitter()
+  const lifecycle = new ChannelLifecycleService(
+    db as any,
+    new GatewayService(),
+    new AgentResolverService(),
+    emitter,
+  )
+
+  router.get('/channels', async (_req, res) => {
+    try {
+      res.json(await lifecycle.listAll())
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  router.get('/channels/events', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('Connection', 'keep-alive')
+    res.setHeader('X-Accel-Buffering', 'no')
+    res.flushHeaders()
+
+    const cleanup = emitter.registerSseClient(res)
+    req.on('close', cleanup)
+  })
+
+  router.get('/channels/events/stats', (_req, res) => {
+    res.json(emitter.getSseStats())
+  })
+
+  router.get('/channels/:id/status', async (req, res) => {
+    try {
+      res.json(await lifecycle.status(req.params.id))
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  router.get('/channels/:id/events', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('Connection', 'keep-alive')
+    res.setHeader('X-Accel-Buffering', 'no')
+    res.flushHeaders()
+
+    const cleanup = emitter.registerSseClient(res, req.params.id)
+    req.on('close', cleanup)
+  })
+
+  router.post('/channels', async (req, res) => {
+    try {
+      res.status(HttpStatus.CREATED).json(await lifecycle.provision(req.body as ProvisionChannelDto))
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  router.post('/channels/:id/start', async (req, res) => {
+    try {
+      res.json(await lifecycle.start(req.params.id))
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  router.post('/channels/:id/stop', async (req, res) => {
+    try {
+      res.json(await lifecycle.stop(req.params.id))
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+
+  router.post('/channels/:id/restart', async (req, res) => {
+    try {
+      res.json(await lifecycle.restart(req.params.id))
+    } catch (err) {
+      sendError(res, err)
+    }
+  })
+}
+
+function sendError(res: Response, err: unknown): void {
+  if (err instanceof ChannelNotFoundError) {
+    res.status(HttpStatus.NOT_FOUND).json({ ok: false, error: err.message })
+    return
+  }
+  if (err instanceof ChannelAlreadyInStateError) {
+    res.status(HttpStatus.CONFLICT).json({ ok: false, error: err.message })
+    return
+  }
+  if (err instanceof InvalidTransitionError) {
+    res.status(HttpStatus.UNPROCESSABLE_ENTITY).json({ ok: false, error: err.message })
+    return
+  }
+  if (err instanceof WebhookRegistrationError) {
+    res.status(HttpStatus.BAD_GATEWAY).json({ ok: false, error: err.message })
+    return
+  }
+
+  const message = err instanceof Error ? err.message : 'Internal error'
+  res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ ok: false, error: message })
 }

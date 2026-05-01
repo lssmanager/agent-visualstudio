@@ -1,5 +1,5 @@
 import { Injectable, Logger }    from '@nestjs/common'
-import { PrismaService }         from '../../prisma/prisma.service.js'
+import { PrismaService }         from '../../lib/prisma.service.js'
 import { GatewayService }        from '../gateway/gateway.service.js'
 import { AgentResolverService }  from '../gateway/agent-resolver.service.js'
 import { ChannelEventEmitter }   from './channel-event-emitter.js'
@@ -158,7 +158,7 @@ export class ChannelLifecycleService {
         'channel.status_changed',
         channelConfigId,
         {
-          previousStatus: 'active',
+          previousStatus: channel.status,
           currentStatus: 'stopped',
           isActive: false,
           errorMessage: null,
@@ -177,7 +177,7 @@ export class ChannelLifecycleService {
       this.events.emit(makeChannelEvent<ChannelErrorPayload>(
         'channel.error',
         channelConfigId,
-        { operation: 'stop', errorMessage, previousStatus: 'active' },
+        { operation: 'stop', errorMessage, previousStatus: channel.status },
       ))
       this.logger.error(`[stop] Channel "${channelConfigId}" failed to stop: ${errorMessage}`)
       throw err
@@ -216,20 +216,16 @@ export class ChannelLifecycleService {
     })
 
     return Promise.all(
-      channels.map((ch) => this.buildStatusDto(ch, ch.id))
+      channels.map((ch: any) => this.buildStatusDto(ch, ch.id))
     )
   }
 
   private async callGatewayActivate(id: string): Promise<void> {
-    if (typeof (this.gateway as any).activateChannel === 'function') {
-      await (this.gateway as any).activateChannel(id)
-    }
+    await this.gateway.activateChannel(id)
   }
 
   private async callGatewayDeactivate(id: string): Promise<void> {
-    if (typeof (this.gateway as any).deactivateChannel === 'function') {
-      await (this.gateway as any).deactivateChannel(id)
-    }
+    await this.gateway.deactivateChannel(id)
   }
 
   private assertTransition(
