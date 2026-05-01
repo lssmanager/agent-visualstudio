@@ -10,18 +10,18 @@
  *   findById(id)        → findRunById(id)        (async)
  *   startRun(...)       → createRun + executeRun (async, no-block)
  *   cancelRun(id)       → runRepository.cancelRun(id)
- *   approveStep(...)    → runRepository → update approval status
- *   rejectStep(...)     → runRepository → update approval status
+ *   approveStep(...)    → atomic updateMany (sin race condition)
+ *   rejectStep(...)     → atomic updateMany (sin race condition)
  *   getTrace(id)        → findRunById(id)
  *   getReplayMetadata   → findRunById + metadata
- *   replayRun(id)       → createRun + executeRun
- *   compareRuns(ids)    → findRunById × N
+ *   replayRun(id)       → createRun + executeRun (guarda flowId nulo)
+ *   compareRuns(ids)    → findRunById × N  (usa tokenUsage.input/output)
  *   getRunCost(id)      → findRunById + steps aggregate
- *   getUsage(filters)   → findRunsByWorkspace + aggregate
+ *   getUsage(filters)   → findRunsByWorkspace + aggregate por run
  *   getUsageByAgent()   → findRunsByWorkspace + per-agent aggregate
  */
 
-import { getPrisma } from '../../lib/prisma.js';
+import { getPrisma } from '../core/db/prisma.service';
 import {
   RunRepository,
   FlowExecutor,
@@ -41,8 +41,6 @@ function getRepo(): RunRepository {
 
 /**
  * AgentExecutorFn mínima que usa LLMStepExecutor para ejecutar un RunStep.
- * Se puede sustituir por una implementación más completa (HierarchyOrchestrator)
- * sin cambiar la interfaz del servicio.
  */
 const executeAgent: AgentExecutorFn = async (stepId: string) => {
   const executor = new LLMStepExecutor();
@@ -72,10 +70,6 @@ export class RunsService {
 
   // ── Mutations ──────────────────────────────────────────────────────────────
 
-  /**
-   * Crea un Run en BD y lanza su ejecución en background (fire-and-forget).
-   * Devuelve el Run recién creado (status='pending') sin bloquear.
-   */
   async startRun(params: {
     workspaceId: string;
     flowId:      string;
@@ -93,7 +87,7 @@ export class RunsService {
       metadata:    params.metadata  ?? {},
     });
 
-    // Ejecutar en background — no await para no bloquear la respuesta HTTP
+    // Fire-and-forget — no bloquea la respuesta HTTP
     getFlowExecutor()
       .executeRun(run.id)
       .catch((err) => console.error(`[RunsService] executeRun(${run.id}) failed:`, err));
@@ -106,32 +100,46 @@ export class RunsService {
   }
 
   /**
-   * Aprueba un step HITL: actualiza el Approval en BD y reanuda el Run.
-   * El FlowExecutor detecta el cambio en el próximo poll de waitForApproval().
+   * approveStep — actualización atómica para evitar doble-decisión bajo concurrencia.
+   * updateMany({ where: { runId, stepId, status: 'pending' } }) garantiza
+   * que sólo una llamada simultánea gana la escritura; si count===0, ya fue decidido.
    */
   async approveStep(runId: string, stepId: string) {
     const prisma = getPrisma();
-    const approval = await prisma.approval.findFirst({
-      where: { runId, stepId, status: 'pending' },
-    });
-    if (!approval) throw new Error(`No pending approval for run=${runId} step=${stepId}`);
 
-    return prisma.approval.update({
-      where: { id: approval.id },
+    const { count } = await prisma.approval.updateMany({
+      where: { runId, stepId, status: 'pending' },
       data:  { status: 'approved', decidedAt: new Date() },
+    });
+
+    if (count === 0) {
+      throw new Error(`No pending approval for run=${runId} step=${stepId}`);
+    }
+
+    return prisma.approval.findFirst({
+      where:   { runId, stepId },
+      orderBy: { decidedAt: 'desc' },
     });
   }
 
+  /**
+   * rejectStep — mismo patrón atómico que approveStep.
+   */
   async rejectStep(runId: string, stepId: string, reason?: string) {
     const prisma = getPrisma();
-    const approval = await prisma.approval.findFirst({
-      where: { runId, stepId, status: 'pending' },
-    });
-    if (!approval) throw new Error(`No pending approval for run=${runId} step=${stepId}`);
 
-    return prisma.approval.update({
-      where: { id: approval.id },
+    const { count } = await prisma.approval.updateMany({
+      where: { runId, stepId, status: 'pending' },
       data:  { status: 'rejected', decidedAt: new Date(), reason: reason ?? null },
+    });
+
+    if (count === 0) {
+      throw new Error(`No pending approval for run=${runId} step=${stepId}`);
+    }
+
+    return prisma.approval.findFirst({
+      where:   { runId, stepId },
+      orderBy: { decidedAt: 'desc' },
     });
   }
 
@@ -172,9 +180,17 @@ export class RunsService {
       throw new Error('Can only replay completed or failed runs');
     }
 
+    // Guard: flowId es requerido para crear un run válido
+    if (!original.flowId) {
+      throw new Error(
+        `Cannot replay run ${id}: original run has no flowId. ` +
+        'The flow may have been deleted.',
+      );
+    }
+
     return this.startRun({
       workspaceId: original.workspaceId,
-      flowId:      original.flowId ?? '',
+      flowId:      original.flowId,
       agentId:     original.agentId ?? undefined,
       inputData:   (original.inputData as Record<string, unknown>) ?? {},
       metadata: {
@@ -187,18 +203,22 @@ export class RunsService {
 
   // ── Analytics ──────────────────────────────────────────────────────────────
 
+  /**
+   * compareRuns — usa tokenUsage.input/output (contrato de stepPrismaToSpec).
+   * promptTokens/completionTokens no existen en el objeto mapeado.
+   */
   async compareRuns(ids: string[]) {
     const repo = getRepo();
     const runs = await Promise.all(ids.map((id) => repo.findRunById(id)));
 
     const summaries = runs.map((run) => {
       if (!run) throw new Error(`Run not found`);
-      const steps   = run.steps ?? [];
-      const totalCost   = steps.reduce((s, st) => s + ((st as any).costUsd ?? 0), 0);
+      const steps = run.steps ?? [];
+      const totalCost = steps.reduce((s, st) => s + ((st as any).costUsd ?? 0), 0);
       const totalTokens = steps.reduce(
         (acc, st) => ({
-          input:  acc.input  + ((st as any).promptTokens     ?? 0),
-          output: acc.output + ((st as any).completionTokens ?? 0),
+          input:  acc.input  + ((st as any).tokenUsage?.input  ?? 0),
+          output: acc.output + ((st as any).tokenUsage?.output ?? 0),
         }),
         { input: 0, output: 0 },
       );
@@ -234,10 +254,10 @@ export class RunsService {
       nodeId:     s.nodeId,
       nodeType:   s.nodeType,
       agentId:    s.agentId,
-      costUsd:    s.costUsd     ?? 0,
+      costUsd:    s.costUsd ?? 0,
       tokenUsage: {
-        input:  s.promptTokens     ?? 0,
-        output: s.completionTokens ?? 0,
+        input:  s.tokenUsage?.input  ?? 0,
+        output: s.tokenUsage?.output ?? 0,
       },
     }));
 
@@ -250,6 +270,11 @@ export class RunsService {
     return { runId: run.id, totalCost, totalTokens, steps };
   }
 
+  /**
+   * getUsage — acumula cost+tokens por run individualmente.
+   * findRunsByWorkspace no incluye steps; usamos findRunById por run
+   * para obtener step-level cost/tokens.
+   */
   async getUsage(workspaceId: string, filters?: { from?: string; to?: string; groupBy?: string }) {
     let runs = await getRepo().findRunsByWorkspace(workspaceId, { limit: 1000 });
 
@@ -265,7 +290,13 @@ export class RunsService {
     const groupBy = filters?.groupBy ?? 'flow';
     const groupMap = new Map<string, { cost: number; tokens: { input: number; output: number }; runs: number }>();
 
-    for (const run of runs) {
+    // Cargamos steps por run para acumular cost/tokens reales
+    const fullRuns = await Promise.all(
+      runs.map((r) => getRepo().findRunById(r.id)),
+    );
+
+    for (const run of fullRuns) {
+      if (!run) continue;
       const key = groupBy === 'agent'
         ? (run.agentId ?? 'unassigned')
         : groupBy === 'model' ? 'by-model'
@@ -274,8 +305,13 @@ export class RunsService {
       if (!groupMap.has(key)) groupMap.set(key, { cost: 0, tokens: { input: 0, output: 0 }, runs: 0 });
       const entry = groupMap.get(key)!;
       entry.runs += 1;
-      // Steps no están incluidos en findRunsByWorkspace(include: { steps: false })
-      // Para analytics detallado usar findRunById individualmente
+
+      const steps = run.steps ?? [];
+      for (const st of steps as any[]) {
+        entry.cost              += st.costUsd              ?? 0;
+        entry.tokens.input      += st.tokenUsage?.input    ?? 0;
+        entry.tokens.output     += st.tokenUsage?.output   ?? 0;
+      }
     }
 
     const groups = Array.from(groupMap.entries())
@@ -291,15 +327,31 @@ export class RunsService {
     return { totalCost, totalTokens, totalRuns: runs.length, groups };
   }
 
+  /**
+   * getUsageByAgent — cuenta runs (no steps) por agente y acumula cost/tokens.
+   */
   async getUsageByAgent(workspaceId: string) {
     const runs = await getRepo().findRunsByWorkspace(workspaceId, { limit: 1000 });
-    const agentMap = new Map<string, { cost: number; tokens: { input: number; output: number }; steps: number }>();
+    const agentMap = new Map<string, { cost: number; tokens: { input: number; output: number }; runs: number }>();
 
-    for (const run of runs) {
+    // Cargamos steps para cost/tokens reales por agente
+    const fullRuns = await Promise.all(
+      runs.map((r) => getRepo().findRunById(r.id)),
+    );
+
+    for (const run of fullRuns) {
+      if (!run) continue;
       const agentId = run.agentId ?? 'unassigned';
-      if (!agentMap.has(agentId)) agentMap.set(agentId, { cost: 0, tokens: { input: 0, output: 0 }, steps: 0 });
+      if (!agentMap.has(agentId)) agentMap.set(agentId, { cost: 0, tokens: { input: 0, output: 0 }, runs: 0 });
       const entry = agentMap.get(agentId)!;
-      entry.steps += 1;
+      entry.runs += 1;
+
+      const steps = run.steps ?? [];
+      for (const st of steps as any[]) {
+        entry.cost              += st.costUsd              ?? 0;
+        entry.tokens.input      += st.tokenUsage?.input    ?? 0;
+        entry.tokens.output     += st.tokenUsage?.output   ?? 0;
+      }
     }
 
     return Array.from(agentMap.entries())

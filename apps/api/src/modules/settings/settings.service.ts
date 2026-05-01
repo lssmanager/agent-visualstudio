@@ -2,8 +2,8 @@
  * settings.service.ts
  *
  * Acepta PrismaClient como dependencia inyectada (patrón global del repo).
- * Si no se pasa, crea su propio singleton lazy — retrocompatible con
- * cualquier caller que construya SettingsService() sin argumentos.
+ * Si no se pasa, usa el singleton `prisma` exportado por prisma.service
+ * (ruta canónica del repo: modules/core/db/prisma.service).
  */
 import type { PrismaClient } from '@prisma/client'
 import { PROVIDER_MODELS } from '../../lib/provider-models'
@@ -23,8 +23,8 @@ export class SettingsService {
   private readonly prisma: PrismaClient
 
   /**
-   * @param prisma PrismaClient inyectado desde el caller.
-   *   Si se omite, importa getPrisma() del singleton global del API.
+   * @param prisma PrismaClient inyectado desde el caller (preferido).
+   *   Si se omite, importa el singleton `prisma` de modules/core/db/prisma.service.
    *   Esto permite usar SettingsService() sin args (retrocompatible)
    *   y SettingsService(prisma) con inyección explícita.
    */
@@ -32,9 +32,9 @@ export class SettingsService {
     if (prisma) {
       this.prisma = prisma
     } else {
-      // Lazy import para evitar ciclos — sólo se resuelve si no se inyecta
+      // Lazy require para evitar ciclos — usa la ruta canónica del repo
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { getPrisma } = require('../../lib/prisma.js') as { getPrisma: () => PrismaClient }
+      const { getPrisma } = require('../core/db/prisma.service') as { getPrisma: () => PrismaClient }
       this.prisma = getPrisma()
     }
   }
