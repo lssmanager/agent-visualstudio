@@ -192,6 +192,14 @@ export interface SpecialistMatch {
   allScores:  CapabilityScore[]
 }
 
+/** Bloque ---DELEGATE--- parseado desde la salida del supervisor LLM */
+export interface DelegateBlock {
+  to:       string
+  task:     string
+  context:  Record<string, unknown>
+  priority: 'high' | 'medium' | 'low'
+}
+
 /**
  * Resultado de isBlocked().
  * Siempre se devuelve — nunca null, nunca lanza.
@@ -281,6 +289,50 @@ export function jaccardScore(a: Set<string>, b: Set<string>): number {
   const intersection = [...a].filter((t) => b.has(t)).length
   const union = new Set([...a, ...b]).size
   return intersection / union
+}
+
+/**
+ * Extrae bloques ---DELEGATE--- ... ---END--- del texto del LLM.
+ * Función pura, sin efectos secundarios, nunca lanza.
+ */
+export function parseDelegateBlocks(raw: string): DelegateBlock[] {
+  const BLOCK_RE = /---DELEGATE---([\s\S]*?)---END---/g
+  const blocks: DelegateBlock[] = []
+  let match: RegExpExecArray | null
+
+  while ((match = BLOCK_RE.exec(raw)) !== null) {
+    const body = match[1]
+
+    const field = (key: string): string | undefined => {
+      const re = new RegExp(`^\\s*${key}\\s*:\\s*(.+)$`, 'im')
+      return re.exec(body)?.[1]?.trim()
+    }
+
+    const to = field('TO')
+    const task = field('TASK')
+    if (!to || !task) continue
+
+    let context: Record<string, unknown> = {}
+    const rawCtx = field('CONTEXT')
+    if (rawCtx) {
+      try {
+        const parsed = JSON.parse(rawCtx)
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          context = parsed as Record<string, unknown>
+        }
+      } catch {
+        // Ignorar CONTEXT malformado y seguir con {}
+      }
+    }
+
+    const rawPri = field('PRIORITY')?.toLowerCase()
+    const priority: DelegateBlock['priority'] =
+      rawPri === 'high' || rawPri === 'low' ? rawPri : 'medium'
+
+    blocks.push({ to, task, context, priority })
+  }
+
+  return blocks
 }
 
 // ── HierarchyOrchestrator ─────────────────────────────────────────────────────────────────
@@ -518,21 +570,8 @@ export class HierarchyOrchestrator {
   /**
    * Descompone un task en subtareas usando el supervisor LLM.
    *
-   * Formato objetivo de salida del LLM (target): el supervisor debe emitir bloques
-   *   ---DELEGATE---
-   *   agentId: <id>
-   *   task: <descripción>
-   *   ---END---
-   * que serán parseados por parseDelegateBlocks() una vez integrada (ver F2a-05c).
-   *
-   * Estado actual: el parser JSON permanece en uso hasta que parseDelegateBlocks() esté integrado.
-   *
-   * TODO: Eliminar el parseo JSON y reemplazarlo con parseDelegateBlocks() una vez
-   *       que dicha función esté disponible. Ver el símbolo parseDelegateBlocks()
-   *       para localizar el punto exacto de migración en este archivo.
-   *
-   * TODO F2a-05b: migrar prompt a formato ---DELEGATE---.
-   * TODO F2a-05c: reemplazar parser JSON por parseDelegateBlocks().
+   * Formato de salida del LLM: bloques ---DELEGATE---/---END---.
+   * Si el LLM falla o no produce bloques válidos, se usa fallbackToCapabilityMatch().
    */
   private async decomposeTask(
     rootTask: string,
@@ -546,8 +585,14 @@ export class HierarchyOrchestrator {
     const prompt = [
       'You are a supervisor orchestrator. Decompose the following task into subtasks.',
       'Assign each subtask to exactly one agent from the list below.',
-      'Respond ONLY with a valid JSON array. No prose, no markdown fences.',
-      'Format: [{ "agentId": "<id>", "task": "<description>" }, ...]',
+      'Respond ONLY with ---DELEGATE--- blocks. No prose, no markdown fences.',
+      'Format:',
+      '---DELEGATE---',
+      'TO: <agent-id>',
+      'TASK: <description>',
+      'CONTEXT: {"key":"value"}',
+      'PRIORITY: high|medium|low',
+      '---END---',
       '',
       `Task: ${rootTask}`,
       input ? `Context: ${JSON.stringify(input)}` : '',
@@ -556,29 +601,54 @@ export class HierarchyOrchestrator {
       agentList,
     ].join('\n')
 
-    const raw = await this.supervisorFn!(prompt)
+    let raw = ''
+    try {
+      raw = await this.supervisorFn!(prompt)
+    } catch {
+      return this.fallbackToCapabilityMatch(rootTask, agents, input)
+    }
 
-    const jsonMatch = raw.match(/\[\s*\{[\s\S]*?\}\s*\]/)
-    if (!jsonMatch) throw new Error('Supervisor did not return a valid JSON array')
-
-    const parsed = JSON.parse(jsonMatch[0]) as Array<{ agentId: string; task: string }>
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      throw new Error('Supervisor returned empty task list')
+    const blocks = parseDelegateBlocks(raw)
+    if (blocks.length === 0) {
+      return this.fallbackToCapabilityMatch(rootTask, agents, input)
     }
 
     const agentIds = new Set(agents.map((a) => a.id))
-    return parsed
-      .filter((p) => agentIds.has(p.agentId))
-      .map((p, idx) => {
-        const agent = agents.find((a) => a.id === p.agentId)!
-        return {
-          id:             `subtask-${p.agentId}-${idx}`,
-          description:    p.task,
-          assignedNodeId: p.agentId,
-          level:          agent.level,
-          input,
-        }
-      })
+    const validBlocks = blocks.filter((b) => agentIds.has(b.to))
+    if (validBlocks.length === 0) {
+      return this.fallbackToCapabilityMatch(rootTask, agents, input)
+    }
+
+    return validBlocks.map((block, idx) => {
+      const agent = agents.find((a) => a.id === block.to)!
+      return {
+        id:             `subtask-${block.to}-${idx}`,
+        description:    block.task,
+        assignedNodeId: block.to,
+        level:          agent.level,
+        input:          { ...input, ...block.context },
+      }
+    })
+  }
+
+  /**
+   * Fallback cuando el supervisor no produce bloques válidos.
+   * Usa findSpecialistWithCapability() para asignación por Jaccard score.
+   * Nunca lanza. Siempre retorna al menos 1 HierarchyTask.
+   */
+  private async fallbackToCapabilityMatch(
+    rootTask: string,
+    agents:   HierarchyNode[],
+    input?:   Record<string, unknown>,
+  ): Promise<HierarchyTask[]> {
+    const match = await this.findSpecialistWithCapability(rootTask, agents)
+    return [{
+      id:             `subtask-${match.node.id}-0`,
+      description:    rootTask,
+      assignedNodeId: match.node.id,
+      level:          match.node.level,
+      input,
+    }]
   }
 
   // ── Ejecución ──────────────────────────────────────────────────────────────────────────────
