@@ -1,5 +1,5 @@
 /**
- * [F3a-02] channel-adapter.interface.ts
+ * channel-adapter.interface.ts — [F3a-02]
  *
  * Contrato base de todos los adaptadores de canal del Gateway.
  * Todo canal (WebChat, Telegram, WhatsApp, Discord, Slack, n8n webhook)
@@ -10,7 +10,7 @@
  *        debe ir en el adapter concreto, inyectado por constructor.
  */
 
-// ── Tipos de canal ──────────────────────────────────────────────────────────────────────────────────
+// ── Tipos de canal ───────────────────────────────────────────────────────────
 
 /**
  * Nombres canónicos de canal — deben coincidir con
@@ -24,7 +24,15 @@ export type ChannelType =
   | 'slack'
   | 'webhook'
 
-// ── IncomingMessage ───────────────────────────────────────────────────────────────────────────
+// ── AdapterMode ──────────────────────────────────────────────────────────────
+
+/**
+ * 'gateway'  → el adaptador abre conexión activa (WebSocket, polling, bot login)
+ * 'http'     → el adaptador solo procesa webhooks HTTP entrantes
+ */
+export type AdapterMode = 'gateway' | 'http'
+
+// ── IncomingMessage ──────────────────────────────────────────────────────────
 
 /**
  * Mensaje normalizado que llega de cualquier canal externo.
@@ -41,10 +49,13 @@ export interface IncomingMessage {
    * Tipo de canal — necesario para que AgentResolver filtre
    * ChannelBinding por canal.
    */
-  channelType: ChannelType
+  channelType: ChannelType | string
 
   /** ID de la conversación/thread en el canal externo */
   externalId: string
+
+  /** ID del thread cuando exista; fallback al canal/conversación */
+  threadId?: string
 
   /** ID de quien envía (user ID del canal) */
   senderId: string
@@ -58,17 +69,29 @@ export interface IncomingMessage {
   /** Adjuntos opcionales */
   attachments?: Array<{ type: string; url?: string; data?: unknown }>
 
+  /** URL del adjunto legacy (cuando aplica) */
+  attachmentUrl?: string
+
+  /** Nombre de archivo del adjunto legacy (cuando aplica) */
+  attachmentName?: string
+
+  /** ID del mensaje en el canal externo */
+  msgId?: string
+
   /**
    * Payload raw del canal externo.
    * Telegram: Update object. WebChat: req.body. Slack: payload completo.
    */
   metadata?: Record<string, unknown>
 
+  /** Payload original sin normalizar (para debugging / fallback) */
+  rawPayload?: unknown
+
   /** Timestamp ISO 8601 de recepción */
-  receivedAt: string
+  receivedAt?: string
 }
 
-// ── RichContent ────────────────────────────────────────────────────────────────────────────
+// ── RichContent ──────────────────────────────────────────────────────────────
 
 export interface QuickReply {
   label: string
@@ -87,8 +110,10 @@ export type RichContent =
   | { type: 'card';          card:    CardContent   }
   | { type: 'image';         url:     string; altText?: string }
   | { type: 'file';          url:     string; filename: string }
+  // Legacy flat shape (discord, older adapters)
+  | { title?: string; description?: string; imageUrl?: string; buttons?: Array<{ label: string; value: string }>; footer?: string }
 
-// ── OutgoingMessage ──────────────────────────────────────────────────────────────────────────
+// ── OutgoingMessage ──────────────────────────────────────────────────────────
 
 export interface OutgoingMessage {
   /** ID de la conversación de destino en el canal externo */
@@ -110,7 +135,7 @@ export interface OutgoingMessage {
   metadata?: Record<string, unknown>
 }
 
-// ── IChannelAdapter ─────────────────────────────────────────────────────────────────────────────
+// ── IChannelAdapter ──────────────────────────────────────────────────────────
 
 export interface IChannelAdapter {
   readonly channel: ChannelType
@@ -121,7 +146,7 @@ export interface IChannelAdapter {
   dispose(): Promise<void>
 }
 
-// ── IHttpChannelAdapter ─────────────────────────────────────────────────────────────────────────
+// ── IHttpChannelAdapter ──────────────────────────────────────────────────────
 
 /**
  * Extensión para canales que exponen rutas HTTP.
@@ -132,7 +157,26 @@ export interface IHttpChannelAdapter extends IChannelAdapter {
   getRouter(): import('express').Router
 }
 
-// ── BaseChannelAdapter ────────────────────────────────────────────────────────────────────────────────
+// ── ChannelAdapter (legacy alias) ────────────────────────────────────────────
+
+/**
+ * Alias de IChannelAdapter para compatibilidad con adaptadores del PR#161
+ * que usan la firma sync initialize() + setup() separado.
+ */
+export interface ChannelAdapter {
+  initialize(channelConfigId: string): void
+  setup(
+    config:  Record<string, unknown>,
+    secrets: Record<string, unknown>,
+    mode?:   AdapterMode,
+  ): Promise<void>
+  send(message: OutgoingMessage): Promise<void>
+  dispose(): Promise<void>
+  onMessage(handler: (msg: IncomingMessage) => void): void
+  onError(handler: (err: Error) => void): void
+}
+
+// ── BaseChannelAdapter ────────────────────────────────────────────────────────
 
 export abstract class BaseChannelAdapter implements IChannelAdapter {
   abstract readonly channel: ChannelType
