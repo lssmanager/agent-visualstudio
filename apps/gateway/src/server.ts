@@ -21,6 +21,15 @@
  *   POST /gateway/webhook/:channelId
  *   GET  /gateway/webhook/:channelId/health
  *
+ *   — WhatsApp Baileys —
+ *   GET  /gateway/whatsapp/:configId/qr         (SSE — PÚBLICO)
+ *   GET  /gateway/whatsapp/:configId/status
+ *   POST /gateway/whatsapp/:configId/connect
+ *   POST /gateway/whatsapp/:configId/disconnect
+ *
+ *   — Discord (HTTP interactions) —
+ *   POST /gateway/discord/:configId             (webhook — PÚBLICO)
+ *
  *   — API interna (JWT requerida) —
  *   POST /api/webchat/:channelId/reply
  *   *    /api/channels/...
@@ -38,6 +47,7 @@ import { telegramRouter }             from './routes/telegram.js';
 import { slackRouter }                from './routes/slack.js';
 import { webhookRouter }              from './routes/webhook.js';
 import { channelsApiRouter }          from './routes/channels.js';
+import { whatsappBaileysRouter }      from './routes/whatsapp-baileys.js';
 
 // ---------------------------------------------------------------------------
 // AppOptions — permite inyectar mocks en tests
@@ -69,8 +79,7 @@ export function createApp(opts: AppOptions = {}): Application {
   app.use(express.urlencoded({ extended: true }));
 
   // -------------------------------------------------------------------------
-  // 1. Security headers — van ANTES de montar rutas para cubrir todas las
-  //    respuestas, incluidas las de los channel adapters y la API interna.
+  // 1. Security headers
   // -------------------------------------------------------------------------
   app.use((_req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -84,14 +93,41 @@ export function createApp(opts: AppOptions = {}): Application {
   app.get('/healthz', (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 
   // -------------------------------------------------------------------------
-  // 3. Gateway public routes — cada canal tiene su router dedicado.
-  //    Los adaptadores son singletons gestionados por gateway-sdk registry;
-  //    no se instancian ni registran manualmente aquí.
+  // 3. Gateway public routes
   // -------------------------------------------------------------------------
   app.use('/gateway/webchat',  webchatGatewayRouter(gatewayService));
   app.use('/gateway/telegram', telegramRouter(gatewayService));
   app.use('/gateway/slack',    slackRouter(gatewayService));
   app.use('/gateway/webhook',  webhookRouter(gatewayService));
+
+  // NOTE: /gateway/whatsapp routes are intentionally PUBLIC — no JWT required.
+  // applySecurityMiddleware() only secures /api/* routes. WhatsApp QR/connect/
+  // disconnect callbacks must be reachable without auth headers from mobile
+  // devices and Meta webhooks. Protect at network/firewall level if needed.
+  app.use('/gateway/whatsapp', whatsappBaileysRouter);
+
+  // NOTE: /gateway/discord is intentionally PUBLIC — Discord verifies each
+  // request via Ed25519 signature (DiscordAdapter._verifySignature).
+  // No additional auth middleware needed here.
+  app.use('/gateway/discord', (() => {
+    // Lazy-mount DiscordAdapter HTTP router. The adapter instance is managed
+    // by the channel registry; here we mount it by convention.
+    // ChannelRouter duck-types: if ('getRouter' in adapter) app.use(...)
+    const router = express.Router();
+    router.use('/:configId', async (req, res, next) => {
+      try {
+        const { DiscordAdapter } = await import('./channels/discord.adapter.js') as any;
+        const adapter = new DiscordAdapter();
+        adapter.initialize(req.params['configId']);
+        // Setup with empty config — adapter reads publicKey from secrets at runtime
+        const channelRouter = adapter.buildHttpRouter();
+        channelRouter(req, res, next);
+      } catch (err) {
+        next(err);
+      }
+    });
+    return router;
+  })());
 
   // -------------------------------------------------------------------------
   // 4. Internal API routes (JWT middleware a aplicar aquí si se requiere)
