@@ -23,3 +23,7 @@ export {
   buildAdaptiveTextCard,
   buildAdaptiveRichCard,
 } from './teams-mode.strategy.js'
+
+// Re-export del adapter (F3a-32)
+export { TeamsAdapter } from './teams-bot.adapter.js'
+export type { TeamsAdapterConfig } from './teams-bot.adapter.js'
