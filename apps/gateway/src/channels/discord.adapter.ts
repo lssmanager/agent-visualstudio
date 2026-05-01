@@ -6,10 +6,17 @@
  * - mode='http':    procesa webhooks de interacciones (slash commands, buttons).
  *
  * Características:
- * - Chunking de mensajes > 2000 chars (gateway y REST)
- * - Reconexión exponencial: 5s → 15s → 45s → 120s
+ * - Chunking de mensajes > 2000 chars (gateway y REST) — delegado a discord.reply.ts
+ * - Reconexion exponencial: 5s → 15s → 45s → 120s
  * - Verificación Ed25519 via node:crypto nativo (SPKI DER)
- * - send() con interaction token usa PATCH al followup
+ * - send() con interaction token usa PATCH al followup — delegado a discord.reply.ts
+ *
+ * Refactor F3a-29:
+ *   - richContentToEmbed() → buildEmbed() de discord.reply.ts
+ *   - splitMessage() local → splitMessage() de discord.reply.ts
+ *   - _sendViaRestApi() → sendToChannel() de discord.reply.ts
+ *   - _sendViaFollowup() → sendFollowup() de discord.reply.ts
+ *   - _sendViaClient() usa buildEmbed() de discord.reply.ts
  */
 
 import { EventEmitter }                                    from 'node:events'
@@ -30,14 +37,20 @@ import {
   buttonInteractionToIncoming,
   selectMenuToIncoming,
 } from './discord-message.mapper.js'
+import {
+  sendToChannel,
+  sendFollowup,
+  buildEmbed,
+  splitMessage,
+  type RichContent,
+} from './discord.reply.js'
 
-// ── Constantes ────────────────────────────────────────────────────────────────
+// ── Constantes ─────────────────────────────────────────────────────────────────────
 
-const DISCORD_API        = 'https://discord.com/api/v10'
 const MAX_MESSAGE_LENGTH = 2000
 const RECONNECT_DELAYS   = [5_000, 15_000, 45_000, 120_000] as const
 
-// ── Tipos internos ────────────────────────────────────────────────────────────
+// ── Tipos internos ────────────────────────────────────────────────────────────────
 
 export interface DiscordSecrets {
   botToken?:  string
@@ -49,49 +62,7 @@ export interface DiscordConfig {
   guildId?:       string
 }
 
-// ── Helper: split message en chunks ──────────────────────────────────────────
-
-function splitMessage(text: string, maxLen: number): string[] {
-  if (text.length <= maxLen) return [text]
-  const chunks: string[] = []
-  let remaining = text
-  while (remaining.length > maxLen) {
-    let idx = remaining.lastIndexOf(' ', maxLen)
-    if (idx <= 0) idx = maxLen
-    chunks.push(remaining.slice(0, idx))
-    remaining = remaining.slice(idx).trimStart()
-  }
-  if (remaining.length > 0) chunks.push(remaining)
-  return chunks
-}
-
-// ── Helper: richContent → Discord embed ──────────────────────────────────────
-
-function richContentToEmbed(rc: OutgoingMessage['richContent']): Record<string, unknown> {
-  if (!rc) return {}
-  // Handle legacy flat shape
-  const flat = rc as Record<string, unknown>
-  const embed: Record<string, unknown> = {}
-  if (flat['title'])       embed['title']       = flat['title']
-  if (flat['description']) embed['description'] = flat['description']
-  if (flat['imageUrl'])    embed['image']        = { url: flat['imageUrl'] }
-  if (flat['footer'])      embed['footer']       = { text: flat['footer'] }
-  const buttons = flat['buttons'] as Array<{ label: string; value: string }> | undefined
-  if (buttons?.length) {
-    embed['components'] = [{
-      type:       1,
-      components: buttons.map(b => ({
-        type:      2,
-        style:     1,
-        label:     b.label,
-        custom_id: b.value,
-      })),
-    }]
-  }
-  return embed
-}
-
-// ── Adaptador ─────────────────────────────────────────────────────────────────
+// ── Adaptador ───────────────────────────────────────────────────────────────────
 
 export class DiscordAdapter implements ChannelAdapter {
 
@@ -106,7 +77,7 @@ export class DiscordAdapter implements ChannelAdapter {
 
   private readonly emitter = new EventEmitter()
 
-  // ── ChannelAdapter: initialize ─────────────────────────────────────────────
+  // ── ChannelAdapter: initialize ───────────────────────────────────────────────
 
   initialize(channelConfigId: string): void {
     this.channelConfigId = channelConfigId
@@ -128,22 +99,41 @@ export class DiscordAdapter implements ChannelAdapter {
     }
   }
 
-  // ── ChannelAdapter: send ───────────────────────────────────────────────────
+  // ── ChannelAdapter: send ──────────────────────────────────────────────────────
 
   async send(message: OutgoingMessage): Promise<void> {
     const interactionToken = message.metadata?.['interactionToken'] as string | undefined
     const channelId        = message.externalId
     const text             = message.text ?? ''
 
+    // Respuesta a slash command via PATCH followup
     if (interactionToken && this.config.applicationId) {
-      await this._sendViaFollowup(interactionToken, text, message)
+      const result = await sendFollowup({
+        botToken:         this.secrets.botToken!,
+        applicationId:    this.config.applicationId,
+        interactionToken,
+        text,
+        richContent: message.richContent as RichContent | undefined,
+      })
+      if (!result.ok) {
+        throw new Error(`[discord] sendFollowup failed: ${result.error}`)
+      }
       return
     }
 
+    // Respuesta proactiva: gateway (discord.js) o REST puro
     if (this.client) {
       await this._sendViaClient(channelId, text, message)
     } else {
-      await this._sendViaRestApi(channelId, text, message)
+      const result = await sendToChannel({
+        botToken:    this.secrets.botToken!,
+        channelId,
+        text,
+        richContent: message.richContent as RichContent | undefined,
+      })
+      if (!result.ok) {
+        throw new Error(`[discord] sendToChannel failed: ${result.error}`)
+      }
     }
   }
 
@@ -170,7 +160,7 @@ export class DiscordAdapter implements ChannelAdapter {
     this.emitter.on('error', handler)
   }
 
-  // ── HTTP webhook router ────────────────────────────────────────────────────
+  // ── HTTP webhook router ────────────────────────────────────────────────────────
 
   buildHttpRouter(): Router {
     const router = Router()
@@ -285,7 +275,7 @@ export class DiscordAdapter implements ChannelAdapter {
     await this.client.login(this.secrets.botToken)
   }
 
-  // ── Gateway: reconexión exponencial ───────────────────────────────────────
+  // ── Gateway: reconexion exponencial ──────────────────────────────────────────
 
   private _scheduleReconnect(): void {
     if (this.reconnectTimer) return
@@ -309,7 +299,9 @@ export class DiscordAdapter implements ChannelAdapter {
     }, delay)
   }
 
-  // ── Send helpers ──────────────────────────────────────────────────────────
+  // ── Send via discord.js Client (gateway mode) ────────────────────────────────
+  // Mantenido aquí porque necesita this.client (discord.js).
+  // Usa buildEmbed() de discord.reply.ts en lugar de richContentToEmbed() local.
 
   private async _sendViaClient(
     channelId: string,
@@ -325,9 +317,11 @@ export class DiscordAdapter implements ChannelAdapter {
     for (let i = 0; i < chunks.length; i++) {
       const isLast = i === chunks.length - 1
       if (isLast && message.richContent) {
+        const { _components, ...cleanEmbed } = buildEmbed(message.richContent as RichContent)
         await (channel as any).send({
-          content: chunks[i],
-          embeds:  [richContentToEmbed(message.richContent)],
+          content:    chunks[i],
+          embeds:     [cleanEmbed],
+          ...((_components) ? { components: _components } : {}),
         })
       } else {
         await (channel as any).send({ content: chunks[i] })
@@ -335,69 +329,11 @@ export class DiscordAdapter implements ChannelAdapter {
     }
   }
 
-  private async _sendViaRestApi(
-    channelId: string,
-    text:      string,
-    message:   OutgoingMessage,
-  ): Promise<void> {
-    const chunks = splitMessage(text, MAX_MESSAGE_LENGTH)
-    for (let i = 0; i < chunks.length; i++) {
-      const isLast = i === chunks.length - 1
-      const body: Record<string, unknown> = { content: chunks[i] }
-      if (isLast && message.richContent) {
-        body['embeds'] = [richContentToEmbed(message.richContent)]
-      }
-
-      const res = await fetch(`${DISCORD_API}/channels/${channelId}/messages`, {
-        method:  'POST',
-        headers: {
-          Authorization:  `Bot ${this.secrets.botToken}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      })
-
-      if (!res.ok) {
-        const err = await res.text()
-        throw new Error(`[discord] REST send failed (${res.status}): ${err}`)
-      }
-    }
-  }
-
-  private async _sendViaFollowup(
-    interactionToken: string,
-    text:             string,
-    message:          OutgoingMessage,
-  ): Promise<void> {
-    const body: Record<string, unknown> = { content: text.slice(0, MAX_MESSAGE_LENGTH) }
-    if (message.richContent) body['embeds'] = [richContentToEmbed(message.richContent)]
-
-    const res = await fetch(
-      `${DISCORD_API}/webhooks/${this.config.applicationId}/${interactionToken}/messages/@original`,
-      {
-        method:  'PATCH',
-        headers: {
-          Authorization:  `Bot ${this.secrets.botToken}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      },
-    )
-
-    if (!res.ok) {
-      const err = await res.text()
-      throw new Error(`[discord] Followup PATCH failed (${res.status}): ${err}`)
-    }
-  }
-
-  // ── Signature verification (Ed25519) ──────────────────────────────────────
+  // ── Signature verification (Ed25519) ───────────────────────────────────────
 
   /**
    * Verifica la firma Ed25519 de Discord usando node:crypto nativo.
    * Discord provee la clave pública como hex (32 bytes) — se envuelve en SPKI DER.
-   *
-   * Fix: createVerify('ed25519') es incorrecto para Ed25519 raw keys.
-   * Usar createPublicKey con SPKI DER header + cryptoVerify(null, ...).
    */
   private _verifySignature(body: string, timestamp: string, signature: string): boolean {
     if (!timestamp || !signature || !this.secrets.publicKey) return false
@@ -418,7 +354,7 @@ export class DiscordAdapter implements ChannelAdapter {
     }
   }
 
-  // ── Interaction body → IncomingMessage ────────────────────────────────────
+  // ── Interaction body → IncomingMessage ─────────────────────────────────────────
 
   private _interactionBodyToIncoming(
     body: Record<string, unknown>,
