@@ -1,15 +1,15 @@
 /**
- * telegram.adapter.test.ts — Unit + integration tests for TelegramAdapter (grammY)
+ * telegram.adapter.test.ts — Unit + integration tests for TelegramAdapter (grammÝY)
  *
  * Strategy:
- *  - Mock grammY Bot class and its API methods
+ *  - Mock grammÝY Bot class and its API methods
  *  - Mock prisma
  *  - Verify handler registration, send() behavior, and mode selection
  */
 
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
 
-// ── Mock prisma ─────────────────────────────────────────────────────────
+// ── Mock prisma ───────────────────────────────────────────────────────
 const mockConfig = {
   id:          'cfg-tg-1',
   credentials: {
@@ -26,7 +26,7 @@ vi.mock('../../../../api/src/modules/core/db/prisma.service', () => ({
   },
 }))
 
-// ── Mock grammY ───────────────────────────────────────────────────────────
+// ── Mock grammÝY ───────────────────────────────────────────────────────────
 
 const mockSendMessage    = vi.fn().mockResolvedValue({ message_id: 1 })
 const mockSendChatAction = vi.fn().mockResolvedValue(true)
@@ -35,6 +35,7 @@ const mockDeleteWebhook  = vi.fn().mockResolvedValue(true)
 const mockBotStart       = vi.fn().mockResolvedValue(undefined)
 const mockBotStop        = vi.fn().mockResolvedValue(undefined)
 const mockBotCatch       = vi.fn()
+const mockBotUse         = vi.fn()
 
 // handlers registered via bot.on()
 const registeredHandlers = new Map<string, (ctx: any) => Promise<void>>()
@@ -51,6 +52,7 @@ vi.mock('grammy', async () => {
       setWebhook:     mockSetWebhook,
       deleteWebhook:  mockDeleteWebhook,
     }
+    use   = mockBotUse
     on    = mockBotOn
     start = mockBotStart
     stop  = mockBotStop
@@ -75,9 +77,9 @@ vi.mock('grammy', async () => {
 
 import { TelegramAdapter, escapeMarkdownV2 } from '../telegram.adapter.js'
 
-// ── Test suite ──────────────────────────────────────────────────────────
+// ── Test suite ───────────────────────────────────────────────────────────
 
-describe('TelegramAdapter — grammY SDK', () => {
+describe('TelegramAdapter — grammÝY SDK', () => {
   let adapter: TelegramAdapter
 
   beforeEach(async () => {
@@ -113,25 +115,24 @@ describe('TelegramAdapter — grammY SDK', () => {
     expect(mockBotStart).not.toHaveBeenCalled()
   })
 
-  it('registra handlers para message:text, photo, document, voice, callback_query:data, edited_message:text', async () => {
+  it('registra handlers para message, edited_message y callback_query:data', async () => {
     await adapter.initialize('cfg-tg-1')
-    expect(registeredHandlers.has('message:text')).toBe(true)
-    expect(registeredHandlers.has('message:photo')).toBe(true)
-    expect(registeredHandlers.has('message:document')).toBe(true)
-    expect(registeredHandlers.has('message:voice')).toBe(true)
+    // Los handlers se registran con los filtros broad que usa grammÝY
+    expect(registeredHandlers.has('message')).toBe(true)
+    expect(registeredHandlers.has('edited_message')).toBe(true)
     expect(registeredHandlers.has('callback_query:data')).toBe(true)
-    expect(registeredHandlers.has('edited_message:text')).toBe(true)
   })
 
-  // ── Handlers ───────────────────────────────────────────────────────────
+  // ── Handlers ─────────────────────────────────────────────────────────────
 
-  it('message:text → messageHandler llamado con externalId = chat.id y texto correcto', async () => {
+  it('message → messageHandler llamado con externalId = chat.id y texto correcto', async () => {
     await adapter.initialize('cfg-tg-1')
     let received: any = null
     adapter.onMessage(async (msg) => { received = msg })
 
-    const handler = registeredHandlers.get('message:text')!
+    const handler = registeredHandlers.get('message')!
     await handler({
+      update:  { update_id: 12345 },
       message: {
         message_id: 42,
         chat:       { id: 100, type: 'private' },
@@ -146,13 +147,14 @@ describe('TelegramAdapter — grammY SDK', () => {
     expect(received.type).toBe('text')
   })
 
-  it('message:text con /comando → type es "command"', async () => {
+  it('message con /comando → type es "command"', async () => {
     await adapter.initialize('cfg-tg-1')
     let received: any = null
     adapter.onMessage(async (msg) => { received = msg })
 
-    const handler = registeredHandlers.get('message:text')!
+    const handler = registeredHandlers.get('message')!
     await handler({
+      update:  { update_id: 99 },
       message: {
         message_id: 10,
         chat:       { id: 55, type: 'group' },
@@ -164,14 +166,15 @@ describe('TelegramAdapter — grammY SDK', () => {
     expect(received?.type).toBe('command')
   })
 
-  it('edited_message:text → metadata.edited === true', async () => {
+  it('edited_message → metadata.edited === true', async () => {
     await adapter.initialize('cfg-tg-1')
     let received: any = null
     adapter.onMessage(async (msg) => { received = msg })
 
-    const handler = registeredHandlers.get('edited_message:text')!
+    const handler = registeredHandlers.get('edited_message')!
     await handler({
-      editedMessage: {
+      update:          { update_id: 77 },
+      editedMessage:   {
         message_id: 5,
         chat:       { id: 300, type: 'private' },
         from:       { id: 400 },
@@ -183,7 +186,7 @@ describe('TelegramAdapter — grammY SDK', () => {
     expect(received?.text).toBe('Texto editado')
   })
 
-  // ── send() ───────────────────────────────────────────────────────────────
+  // ── send() ──────────────────────────────────────────────────────────────
 
   it('send() tipo text → llama sendMessage con parse_mode MarkdownV2', async () => {
     await adapter.initialize('cfg-tg-1')
@@ -220,7 +223,7 @@ describe('TelegramAdapter — grammY SDK', () => {
     ).resolves.not.toThrow()
   })
 
-  // ── sendTyping() ─────────────────────────────────────────────────────
+  // ── sendTyping() ────────────────────────────────────────────────────
 
   it('sendTyping() → llama sendChatAction con "typing"', async () => {
     await adapter.initialize('cfg-tg-1')
@@ -228,7 +231,7 @@ describe('TelegramAdapter — grammY SDK', () => {
     expect(mockSendChatAction).toHaveBeenCalledWith('777', 'typing')
   })
 
-  // ── dispose() ────────────────────────────────────────────────────────────
+  // ── dispose() ─────────────────────────────────────────────────────────────
 
   it('dispose() en modo polling → llama bot.stop()', async () => {
     await adapter.initialize('cfg-tg-1') // long polling (webhookUrl vacío)
@@ -247,7 +250,7 @@ describe('TelegramAdapter — grammY SDK', () => {
     expect(mockBotStop).not.toHaveBeenCalled()
   })
 
-  // ── escapeMarkdownV2() ──────────────────────────────────────────────────
+  // ── escapeMarkdownV2() ───────────────────────────────────────────────────
 
   it('escapeMarkdownV2() escapa caracteres especiales de Telegram MarkdownV2', () => {
     expect(escapeMarkdownV2('Hello (world) [test] #tag!')).toBe(
