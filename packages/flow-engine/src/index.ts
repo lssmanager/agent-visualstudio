@@ -32,7 +32,11 @@ export { LLMStepExecutor } from './llm-step-executor.js'
 
 // Flow execution
 export { FlowExecutor } from './flow-executor.js'
-export { FlowCompiler } from './flow-compiler.js'
+
+// Flow compiler — exports functions (not a class); FlowCompiler alias kept for
+// backwards-compat with any code that imported it as a namespace.
+export type { CompiledFlow } from './flow-compiler.js'
+export { compileFlow, compileFlows } from './flow-compiler.js'
 
 // Tool call loop
 export { runToolCallLoop } from './tool-call-loop.js'
