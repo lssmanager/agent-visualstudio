@@ -8,81 +8,76 @@
  *
  * Formato del payload entrante (flexible):
  *   {
- *     userId:  string,          // ID del usuario/origen (requerido)
- *     text?:   string,          // Mensaje de texto
- *     data?:   Record<string, unknown>, // Payload arbitrario (se serializa como texto si no hay text)
- *     source?: string           // Identificador del sistema origen (ej. "n8n", "zapier")
+ *     userId:  string,                       // ID del usuario/origen (requerido)
+ *     text?:   string,                       // Mensaje de texto
+ *     data?:   Record<string, unknown>,      // Payload arbitrario
+ *     source?: string                        // Identificador del sistema origen
  *   }
  *
- * Autenticación del webhook:
- *   Opcional: si ChannelConfig tiene secrets.webhookSecret, se valida
- *   el header Authorization: Bearer <webhookSecret> o X-Webhook-Secret: <webhookSecret>.
- *   Si no está configurado, solo la URL actua como factor de seguridad.
+ * Autenticación:
+ *   Opcional — si credentials.webhookSecret está configurado, se valida
+ *   el header Authorization: Bearer <secret> o X-Webhook-Secret: <secret>.
  *
  * Respuesta:
  *   El adapter envía la respuesta del agente como JSON en el reply del mismo POST:
  *   { ok: true, reply: "..." }
- *   (a diferencia de Telegram/Slack que son async — aquí el caller espera la respuesta)
  *
  * Outbound (send):
- *   Si ChannelConfig.config.replyWebhookUrl está configurado, el adapter
- *   hace POST a esa URL con la respuesta del agente (push mode).
- *   Si no, la respuesta ya fue enviada en el body del request original.
+ *   Si credentials.replyWebhookUrl está configurado, hace POST a esa URL
+ *   con la respuesta del agente (push mode).
  */
 
-import type { IChannelAdapter, IncomingMessage, OutgoingMessage } from './channel-adapter.interface';
+import { getPrisma } from '../../lib/prisma.js';
+import {
+  BaseChannelAdapter,
+  type IncomingMessage,
+  type OutgoingMessage,
+} from './channel-adapter.interface';
 
-type WebhookConfig = {
-  replyWebhookUrl?: string;   // URL a la que enviar la respuesta del agente (push mode)
-  source?: string;             // Identificador de origen para logging
-};
-
-type WebhookSecrets = {
-  webhookSecret?: string;      // Opcional: valida Authorization header
+type WebhookCredentials = {
+  webhookSecret?:   string;   // Opcional: valida Authorization header
+  replyWebhookUrl?: string;   // URL a la que enviar la respuesta (push mode)
+  source?:          string;   // Identificador de origen para logging
 };
 
 type WebhookPayload = {
-  userId: string;
-  text?: string;
-  data?: Record<string, unknown>;
+  userId:  string;
+  text?:   string;
+  data?:   Record<string, unknown>;
   source?: string;
 };
 
-export class WebhookAdapter implements IChannelAdapter {
-  readonly channelType = 'webhook';
-
-  private messageHandler: ((msg: IncomingMessage) => Promise<void>) | null = null;
+export class WebhookAdapter extends BaseChannelAdapter {
+  readonly channel = 'webhook';
 
   // ---------------------------------------------------------------------------
-  // IChannelAdapter — setup / teardown
+  // IChannelAdapter — initialize / dispose
   // ---------------------------------------------------------------------------
 
-  async setup(
-    _config: Record<string, unknown>,
-    _secrets: Record<string, unknown>,
-  ): Promise<void> {
-    // No hay conexión persistente que establecer — el canal es HTTP stateless
-    console.info('[WebhookAdapter] ready (HTTP POST mode)');
+  async initialize(channelConfigId: string): Promise<void> {
+    this.channelConfigId = channelConfigId;
+
+    // Carga credenciales desde DB — mismo patrón que discord/telegram/whatsapp adapters
+    const db     = getPrisma();
+    const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } });
+    if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
+
+    this.credentials = config.credentials as Record<string, unknown>;
+
+    // Canal HTTP stateless — no hay conexión persistente que iniciar
+    console.info(`[WebhookAdapter] ready (channelConfigId=${channelConfigId})`);
   }
 
-  async teardown(
-    _config: Record<string, unknown>,
-    _secrets: Record<string, unknown>,
-  ): Promise<void> {
-    // Nada que cerrar
+  async dispose(): Promise<void> {
+    // Nada que cerrar — canal HTTP stateless
   }
 
   // ---------------------------------------------------------------------------
-  // IChannelAdapter — onMessage / receive / send
+  // Receive — parsea payload entrante
   // ---------------------------------------------------------------------------
-
-  onMessage(handler: (msg: IncomingMessage) => Promise<void>): void {
-    this.messageHandler = handler;
-  }
 
   async receive(
     rawPayload: Record<string, unknown>,
-    _secrets: Record<string, unknown>,
   ): Promise<IncomingMessage | null> {
     const payload = rawPayload as WebhookPayload;
 
@@ -91,7 +86,6 @@ export class WebhookAdapter implements IChannelAdapter {
       return null;
     }
 
-    // Si no hay texto, serializar data como JSON string
     let text = payload.text ?? '';
     if (!text && payload.data) {
       text = JSON.stringify(payload.data);
@@ -102,57 +96,59 @@ export class WebhookAdapter implements IChannelAdapter {
     }
 
     return {
-      channelType: 'webhook',
-      externalUserId: payload.userId,
+      externalId:  payload.userId,
+      senderId:    payload.userId,
       text,
-      rawPayload,
+      type:       'text',
+      receivedAt: this.makeTimestamp(),
+      metadata:   rawPayload,
     };
   }
 
-  async send(
-    outbound: OutgoingMessage,
-    config: Record<string, unknown>,
-    _secrets: Record<string, unknown>,
-  ): Promise<void> {
-    const cfg = config as WebhookConfig;
+  // ---------------------------------------------------------------------------
+  // IChannelAdapter — send
+  // ---------------------------------------------------------------------------
 
-    // Push mode: si hay replyWebhookUrl, enviamos la respuesta ahí
-    if (cfg.replyWebhookUrl) {
-      const response = await fetch(cfg.replyWebhookUrl, {
-        method: 'POST',
+  async send(message: OutgoingMessage): Promise<void> {
+    const creds = this.credentials as WebhookCredentials;
+
+    if (creds.replyWebhookUrl) {
+      const response = await fetch(creds.replyWebhookUrl, {
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: outbound.externalUserId,
-          reply: outbound.text,
-          ts: new Date().toISOString(),
+          userId: message.externalId,
+          reply:  message.text,
+          ts:     new Date().toISOString(),
         }),
       });
 
       if (!response.ok) {
         console.error(
-          `[WebhookAdapter] push reply failed: HTTP ${response.status} → ${cfg.replyWebhookUrl}`,
+          `[WebhookAdapter] push reply failed: HTTP ${response.status} → ${creds.replyWebhookUrl}`,
         );
       }
     }
-    // Si no hay replyWebhookUrl, la respuesta se retorna directamente
-    // en el body del POST original (manejado por el router webhook.ts)
+    // Sin replyWebhookUrl: la respuesta se retorna en el body del POST original
+    // (manejado por el router webhook.ts)
   }
 
   // ---------------------------------------------------------------------------
-  // Verificación de secreto (llamar desde el router)
+  // Verificación de secreto (llamar desde el router antes de dispatch)
   // ---------------------------------------------------------------------------
 
   /**
-   * Valida el header Authorization o X-Webhook-Secret contra secrets.webhookSecret.
+   * Valida Authorization: Bearer <secret> o X-Webhook-Secret contra
+   * credentials.webhookSecret.
    * Retorna true si la validación pasa o si no hay secreto configurado.
    */
   static verifySecret(
-    secrets: Record<string, unknown>,
-    authHeader?: string,
-    xSecret?: string,
+    credentials:  Record<string, unknown>,
+    authHeader?:  string,
+    xSecret?:     string,
   ): boolean {
-    const expected = (secrets as WebhookSecrets).webhookSecret;
-    if (!expected) return true; // Sin secreto configurado — pass
+    const expected = (credentials as WebhookCredentials).webhookSecret;
+    if (!expected) return true;
 
     const provided =
       authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : xSecret;
