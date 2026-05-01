@@ -110,7 +110,8 @@ export function channelsApiRouter(
       return;
     }
 
-    const allowedTypes = ['webchat', 'telegram', 'whatsapp', 'slack', 'discord', 'webhook'];
+    // teams agregado como tipo permitido (F3a-27)
+    const allowedTypes = ['webchat', 'telegram', 'whatsapp', 'slack', 'discord', 'webhook', 'teams'];
     if (!allowedTypes.includes(body.type)) {
       res.status(400).json({
         ok:    false,
