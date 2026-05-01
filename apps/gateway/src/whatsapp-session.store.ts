@@ -1,5 +1,8 @@
 /**
  * whatsapp-session.store.ts — [F3a-22]
+ *
+ * Store en memoria para sesiones WhatsApp Baileys.
+ * Exporta la clase (para typing en DI) y el singleton whatsappSessionStore.
  */
 
 import type { Response } from 'express'
@@ -21,7 +24,7 @@ export interface IWhatsAppAdapter {
   dispose(): Promise<void>
 }
 
-interface SessionEntry {
+export interface SessionEntry {
   adapter: IWhatsAppAdapter
   qrBuffer: string | null
   status: WhatsAppSessionStatus
@@ -84,6 +87,15 @@ export class WhatsAppSessionStore {
     this.sessions.delete(configId)
   }
 
+  /**
+   * Alias semántico de remove() para el flujo de deprovision.
+   * destroy() = remove() + logging explícito.
+   */
+  destroy(configId: string): void {
+    console.info(`[wa-session-store] Destroying session: ${configId}`)
+    this.remove(configId)
+  }
+
   addSseClient(configId: string, res: Response): void {
     const entry = this.getOrCreate(configId)
     entry.sseClients.add(res)
@@ -112,5 +124,8 @@ export class WhatsAppSessionStore {
     return [...this.sessions.keys()]
   }
 }
+
+/** Tipo exportado para inyección en WhatsAppDeprovisionService y tests */
+export type WhatsAppSessionStore_t = WhatsAppSessionStore
 
 export const whatsappSessionStore = new WhatsAppSessionStore()
