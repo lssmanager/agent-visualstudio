@@ -15,6 +15,7 @@
  *     [12 bytes IV][16 bytes auth tag][N bytes ciphertext]
  */
 
+import { Injectable }      from '@nestjs/common';
 import { createDecipheriv } from 'crypto';
 import type { PrismaClient }  from '@prisma/client';
 import {
@@ -25,6 +26,7 @@ import {
 } from '@agent-vs/gateway-sdk';
 import { AgentRunner }        from '@agent-vs/flow-engine';
 import type { IChannelAdapter } from './channels/channel-adapter.interface';
+import { PrismaService }       from './prisma/prisma.service';
 
 // ---------------------------------------------------------------------------
 // Tipos internos
@@ -42,6 +44,7 @@ interface DecryptedChannelConfig {
 // GatewayService
 // ---------------------------------------------------------------------------
 
+@Injectable()
 export class GatewayService {
   /** Exposed for webchat reply route (needs findSession) */
   readonly sessions:    SessionManager;
@@ -49,7 +52,7 @@ export class GatewayService {
   private readonly configCache  = new Map<string, DecryptedChannelConfig>();
   private readonly encKey:       Buffer;
 
-  constructor(private readonly db: PrismaClient) {
+  constructor(private readonly db: PrismaService) {
     this.sessions    = new SessionManager(db);
     this.agentRunner = new AgentRunner({ db });
 
