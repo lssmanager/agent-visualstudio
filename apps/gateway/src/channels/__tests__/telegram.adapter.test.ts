@@ -321,6 +321,27 @@ describe('replyFn — callback_query', () => {
     const secondBody = JSON.parse(secondInit.body as string)
     expect(secondBody.text).toBe('button pressed!')
   })
+
+  it('replyFn stops when answerCallbackQuery fails', async () => {
+    mockFetch.mockResolvedValueOnce(makeFetchResponse({ ok: false, description: 'expired' }, 400))
+
+    const update = {
+      update_id:      22,
+      callback_query: {
+        id:      'cq-expired',
+        from:    { id: 6000 },
+        data:    'press',
+        message: { message_id: 220, chat: { id: 7000, type: 'private' } },
+      },
+    }
+
+    const result = await adapter.receive(update, { botToken: 'my-token' })
+    await result!.replyFn('should not send')
+
+    expect(mockFetch).toHaveBeenCalledOnce()
+    const [url] = mockFetch.mock.calls[0]!
+    expect(url).toContain('answerCallbackQuery')
+  })
 })
 
 // ── describe('send()') ────────────────────────────────────────────────────

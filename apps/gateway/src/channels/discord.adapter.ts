@@ -44,7 +44,10 @@ export class DiscordAdapter extends BaseChannelAdapter {
     const eventType = String(rawPayload['type'] ?? rawPayload['t'] ?? '')
     const data      = (rawPayload['d'] ?? rawPayload) as Record<string, unknown>
 
-    if (eventType === 'INTERACTION_CREATE' || (rawPayload['type'] !== undefined && Number(rawPayload['type']) >= 1)) {
+    if (
+      eventType === 'INTERACTION_CREATE'
+      || typeof (data as { token?: unknown }).token === 'string'
+    ) {
       return this.receiveInteraction(rawPayload, data as unknown as DiscordInteraction, botToken)
     }
 

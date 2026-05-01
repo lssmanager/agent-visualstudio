@@ -256,25 +256,16 @@ export class ChannelLifecycleService {
 
   /**
    * Llama gateway.activateChannel() si el método existe.
-   * Si aún no está implementado en GatewayService, actúa como no-op
-   * para que el build no rompa.
    */
   private async callGatewayActivate(id: string): Promise<void> {
-    if (typeof (this.gateway as any).activateChannel === 'function') {
-      await (this.gateway as any).activateChannel(id)
-    }
-    // else: no-op hasta que GatewayService implemente el método
+    await this.gateway.activateChannel(id)
   }
 
   /**
    * Llama gateway.deactivateChannel() si el método existe.
-   * Si aún no está implementado en GatewayService, actúa como no-op.
    */
   private async callGatewayDeactivate(id: string): Promise<void> {
-    if (typeof (this.gateway as any).deactivateChannel === 'function') {
-      await (this.gateway as any).deactivateChannel(id)
-    }
-    // else: no-op hasta que GatewayService implemente el método
+    await this.gateway.deactivateChannel(id)
   }
 
   // ────────────────────────────────────────────────────────────────────

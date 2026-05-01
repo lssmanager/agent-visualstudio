@@ -274,7 +274,13 @@ export class SessionManager {
     })
 
     // Invertir para orden cronológico asc (más antiguo primero)
-    return rows.reverse().map((r) => ({
+    return rows.reverse().map((r: {
+      role: string
+      contentText: string | null
+      toolName: string | null
+      toolCallId: string | null
+      createdAt: Date
+    }) => ({
       role:       r.role as SessionHistoryEntry['role'],
       content:    r.contentText ?? '',
       ts:         r.createdAt.toISOString(),

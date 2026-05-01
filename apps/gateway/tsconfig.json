@@ -4,10 +4,11 @@
     "experimentalDecorators":  true,
     "emitDecoratorMetadata":   true,
     "outDir":                  "dist",
-    "rootDir":                 "src",
+    "rootDir":                 "../..",
     "baseUrl":                 ".",
     "paths": {
-      "@gateway/*": ["src/*"]
+      "@gateway/*": ["src/*"],
+      "@agent-vs/gateway-sdk": ["../../packages/gateway-sdk/src/index.ts"]
     }
   },
   "include": ["src/**/*"],

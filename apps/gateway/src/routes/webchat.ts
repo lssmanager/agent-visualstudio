@@ -222,10 +222,10 @@ export function webchatApiRouter(gatewayService: GatewayService): Router {
         return;
       }
 
-      await gatewayService.recordReply(channelId, session.id, {
-        externalUserId: body.sessionId,
+      await gatewayService.recordReply(channelId, session.sessionId, {
+        externalId: body.sessionId,
         text:           body.text,
-        buttons:        body.buttons,
+        richContent:    body.buttons ? { buttons: body.buttons } : undefined,
       });
 
       res.json({ ok: true });

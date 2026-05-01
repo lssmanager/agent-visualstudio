@@ -48,6 +48,40 @@ export class GatewayService {
     return response.json();
   }
 
+  async activateChannel(channelConfigId: string): Promise<unknown> {
+    let response: Response | null = null;
+    try {
+      response = await fetch(`${studioConfig.gatewayBaseUrl}/api/channels/${channelConfigId}/activate`, {
+        method: 'POST',
+      });
+    } catch {
+      throw new Error(`Unable to activate channel ${channelConfigId}`);
+    }
+
+    if (!response.ok) {
+      throw new Error(`Unable to activate channel ${channelConfigId}: HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  async deactivateChannel(channelConfigId: string): Promise<unknown> {
+    let response: Response | null = null;
+    try {
+      response = await fetch(`${studioConfig.gatewayBaseUrl}/api/channels/${channelConfigId}/deactivate`, {
+        method: 'POST',
+      });
+    } catch {
+      throw new Error(`Unable to deactivate channel ${channelConfigId}`);
+    }
+
+    if (!response.ok) {
+      throw new Error(`Unable to deactivate channel ${channelConfigId}: HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
   async dashboardState(): Promise<{ ok: boolean; agents: unknown[]; sessions: unknown[] }> {
     let response: Response | null = null;
     try {

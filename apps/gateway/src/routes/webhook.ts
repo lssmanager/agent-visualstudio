@@ -111,7 +111,7 @@ export function webhookRouter(gatewayService: GatewayService): Router {
       res.status(200).json({
         ok: true,
         reply: lastAssistant?.content ?? '',
-        sessionId: session?.id ?? null,
+        sessionId: session?.sessionId ?? null,
       });
     } catch (err) {
       console.error(`[webhook] dispatch error for channel ${channelId}:`, err);

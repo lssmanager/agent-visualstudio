@@ -21,10 +21,14 @@ export class WebChatAdapter extends BaseChannelAdapter {
   readonly channel = 'webchat'
 
   /** Conexiones WebSocket/SSE activas, por sessionId */
-  protected readonly activeConnections = new Map<string, WebChatConnection>()
+  protected readonly activeConnections = new Map<string, Set<WebChatConnection>>()
 
   /** Replies pendientes para sesiones desconectadas, por sessionId */
-  protected readonly pendingReplies = new Map<string, string[]>()
+  protected readonly pendingReplies = new Map<string, { messages: string[]; lastTouchedAt: number }>()
+
+  private static readonly MAX_PENDING_SESSIONS = 500
+  private static readonly MAX_PENDING_MESSAGES_PER_SESSION = 50
+  private static readonly PENDING_TTL_MS = 60 * 60 * 1000
 
   async initialize(channelConfigId: string): Promise<void> {
     this.channelConfigId = channelConfigId
@@ -35,11 +39,17 @@ export class WebChatAdapter extends BaseChannelAdapter {
    * Llamado por el WebChat controller cuando el cliente conecta.
    */
   registerConnection(sessionId: string, connection: WebChatConnection): void {
-    this.activeConnections.set(sessionId, connection)
+    let connections = this.activeConnections.get(sessionId)
+    if (!connections) {
+      connections = new Set<WebChatConnection>()
+      this.activeConnections.set(sessionId, connections)
+    }
+    connections.add(connection)
+
     // Vaciar replies pendientes que se acumularon mientras estaba desconectado
     const pending = this.pendingReplies.get(sessionId)
-    if (pending?.length) {
-      for (const text of pending) {
+    if (pending?.messages.length) {
+      for (const text of pending.messages) {
         connection.send(JSON.stringify({ type: 'message', text }))
       }
       this.pendingReplies.delete(sessionId)
@@ -49,8 +59,18 @@ export class WebChatAdapter extends BaseChannelAdapter {
   /**
    * Elimina la conexión cuando el cliente desconecta.
    */
-  unregisterConnection(sessionId: string): void {
-    this.activeConnections.delete(sessionId)
+  unregisterConnection(sessionId: string, connection?: WebChatConnection): void {
+    if (!connection) {
+      this.activeConnections.delete(sessionId)
+      return
+    }
+
+    const connections = this.activeConnections.get(sessionId)
+    if (!connections) return
+    connections.delete(connection)
+    if (connections.size === 0) {
+      this.activeConnections.delete(sessionId)
+    }
   }
 
   async receive(
@@ -73,17 +93,13 @@ export class WebChatAdapter extends BaseChannelAdapter {
       if (replied) return
       replied = true
 
-      const connection = this.activeConnections.get(sessionId)
-      if (connection) {
-        connection.send(JSON.stringify({ type: 'message', text: replyText }))
-      } else {
-        // Sesión desconectada → encolar para cuando reconecte
-        const queue = this.pendingReplies.get(sessionId)
-        if (queue) {
-          queue.push(replyText)
-        } else {
-          this.pendingReplies.set(sessionId, [replyText])
+      const connections = this.activeConnections.get(sessionId)
+      if (connections && connections.size > 0) {
+        for (const connection of connections) {
+          connection.send(JSON.stringify({ type: 'message', text: replyText }))
         }
+      } else {
+        this.enqueuePendingReply(sessionId, replyText)
       }
     }
 
@@ -102,24 +118,61 @@ export class WebChatAdapter extends BaseChannelAdapter {
   }
 
   async send(message: OutgoingMessage): Promise<void> {
-    const connection = this.activeConnections.get(message.externalId)
-    if (connection) {
-      connection.send(JSON.stringify({ type: 'message', text: message.text }))
-    } else {
-      const queue = this.pendingReplies.get(message.externalId)
-      if (queue) {
-        queue.push(message.text)
-      } else {
-        this.pendingReplies.set(message.externalId, [message.text])
+    const connections = this.activeConnections.get(message.externalId)
+    if (connections && connections.size > 0) {
+      for (const connection of connections) {
+        connection.send(JSON.stringify({ type: 'message', text: message.text }))
       }
+    } else {
+      this.enqueuePendingReply(message.externalId, message.text)
     }
   }
 
   async dispose(): Promise<void> {
     for (const conn of this.activeConnections.values()) {
-      conn.close()
+      for (const connection of conn) {
+        connection.close()
+      }
     }
     this.activeConnections.clear()
     this.pendingReplies.clear()
+  }
+
+  private enqueuePendingReply(sessionId: string, replyText: string): void {
+    this.prunePendingReplies()
+
+    const now = Date.now()
+    const queue = this.pendingReplies.get(sessionId) ?? { messages: [], lastTouchedAt: now }
+    queue.messages.push(replyText)
+    queue.lastTouchedAt = now
+
+    if (queue.messages.length > WebChatAdapter.MAX_PENDING_MESSAGES_PER_SESSION) {
+      queue.messages.splice(
+        0,
+        queue.messages.length - WebChatAdapter.MAX_PENDING_MESSAGES_PER_SESSION,
+      )
+    }
+
+    this.pendingReplies.set(sessionId, queue)
+  }
+
+  private prunePendingReplies(now = Date.now()): void {
+    for (const [sessionId, queue] of this.pendingReplies.entries()) {
+      if (now - queue.lastTouchedAt > WebChatAdapter.PENDING_TTL_MS) {
+        this.pendingReplies.delete(sessionId)
+      }
+    }
+
+    if (this.pendingReplies.size <= WebChatAdapter.MAX_PENDING_SESSIONS) {
+      return
+    }
+
+    const oldest = [...this.pendingReplies.entries()]
+      .sort((a, b) => a[1].lastTouchedAt - b[1].lastTouchedAt)
+      .slice(0, this.pendingReplies.size - WebChatAdapter.MAX_PENDING_SESSIONS)
+
+    for (const [sessionId] of oldest) {
+      this.pendingReplies.delete(sessionId)
+    }
   }
 }

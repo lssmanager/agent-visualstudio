@@ -45,6 +45,7 @@ import { randomBytes, createCipheriv } from 'crypto';
 import { Router, type Request, type Response } from 'express';
 import type { PrismaClient } from '@prisma/client';
 import type { GatewayService } from '../gateway.service';
+import { registry } from '@agent-vs/gateway-sdk';
 
 // ---------------------------------------------------------------------------
 // Encrypt helper (mirrors GatewayService.decrypt)
@@ -133,7 +134,7 @@ export function channelsApiRouter(
       );
 
       // Create ChannelConfig + ChannelBinding in a transaction
-      const result = await db.$transaction(async (tx) => {
+      const result = await db.$transaction(async (tx: PrismaClient) => {
         const channel = await tx.channelConfig.create({
           data: {
             type:             body.type,
@@ -155,6 +156,14 @@ export function channelsApiRouter(
         });
 
         return { channel, binding };
+      });
+
+      registry.setChannelConfig({
+        id:     result.channel.id,
+        type:   result.channel.type,
+        config: result.channel.config as Record<string, unknown>,
+        secrets: body.secrets ?? {},
+        agentId: body.agentId,
       });
 
       res.status(201).json({
@@ -237,6 +246,7 @@ export function channelsApiRouter(
     try {
       const existing = await db.channelConfig.findUnique({
         where: { id: req.params.id },
+        include: { bindings: true },
       });
       if (!existing) {
         res.status(404).json({ ok: false, error: 'ChannelConfig not found' });
@@ -253,6 +263,14 @@ export function channelsApiRouter(
       const updated = await db.channelConfig.update({
         where: { id: req.params.id },
         data:  updateData,
+      });
+
+      registry.setChannelConfig({
+        id:     updated.id,
+        type:   updated.type,
+        config: updated.config as Record<string, unknown>,
+        secrets: body.secrets ?? registry.getChannelConfig(updated.id)?.secrets ?? {},
+        agentId: existing.bindings[0]?.agentId,
       });
 
       res.json({ ok: true, data: sanitizeChannel(updated) });
@@ -280,6 +298,7 @@ export function channelsApiRouter(
         await gatewayService.deactivateChannel(req.params.id).catch(() => {});
       }
 
+      registry.deleteChannelConfig(req.params.id);
       await db.channelConfig.delete({ where: { id: req.params.id } });
       res.json({ ok: true });
     } catch (err) {

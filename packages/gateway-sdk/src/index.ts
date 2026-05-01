@@ -17,6 +17,8 @@ export type {
 } from './session-manager.js'
 
 export { SessionManager } from './session-manager.js'
+export { TelegramAdapter } from './adapters/telegram.js'
+export { WebChatAdapter } from './adapters/webchat.js'
 
 // Gateway methods — exported here so consumers can import from '@agent-vs/gateway-sdk'
 // instead of reaching into the internal methods.ts file directly.

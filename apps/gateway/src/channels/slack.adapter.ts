@@ -3,6 +3,7 @@ import {
   type IncomingMessage,
   type OutgoingMessage,
 } from './channel-adapter.interface.js'
+import { createHmac, timingSafeEqual } from 'crypto'
 
 interface SlackEvent {
   type:       string
@@ -29,6 +30,24 @@ interface SlackWebhookPayload {
  */
 export class SlackAdapter extends BaseChannelAdapter {
   readonly channel = 'slack'
+
+  static async verifySignature(
+    signingSecret: string,
+    timestamp: string,
+    signature: string,
+    rawBody: string,
+  ): Promise<boolean> {
+    if (!signingSecret || !timestamp || !signature) return false
+
+    const baseString = `v0:${timestamp}:${rawBody}`
+    const expected = `v0=${createHmac('sha256', signingSecret).update(baseString).digest('hex')}`
+
+    try {
+      return timingSafeEqual(Buffer.from(expected), Buffer.from(signature))
+    } catch {
+      return false
+    }
+  }
 
   async initialize(channelConfigId: string): Promise<void> {
     this.channelConfigId = channelConfigId

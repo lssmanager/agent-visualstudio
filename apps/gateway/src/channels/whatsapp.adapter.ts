@@ -60,7 +60,7 @@ export class WhatsAppAdapter extends BaseChannelAdapter {
       if (replied) return
       replied = true
 
-      const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`
+      const url = `https://graph.facebook.com/v23.0/${phoneNumberId}/messages`
       await fetch(url, {
         method:  'POST',
         headers: {
@@ -95,7 +95,7 @@ export class WhatsAppAdapter extends BaseChannelAdapter {
   async send(message: OutgoingMessage, _config?: Record<string, unknown>, secrets?: Record<string, unknown>): Promise<void> {
     const accessToken   = String(secrets?.['accessToken'] ?? secrets?.['access_token'] ?? '')
     const phoneNumberId = String(secrets?.['phoneNumberId'] ?? '')
-    const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`
+    const url = `https://graph.facebook.com/v23.0/${phoneNumberId}/messages`
     await fetch(url, {
       method:  'POST',
       headers: {

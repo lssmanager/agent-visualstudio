@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common'
-import { registry, SessionManager } from '@agent-vs/gateway-sdk'
+import { PrismaClient } from '@prisma/client'
+import {
+  registry,
+  SessionManager,
+  type IncomingMessage as SessionIncomingMessage,
+  type OutboundMessage as SessionOutboundMessage,
+} from '@agent-vs/gateway-sdk'
 import type {
   IncomingMessage,
   OutgoingMessage,
@@ -11,10 +17,22 @@ import type {
  */
 @Injectable()
 export class GatewayService {
+  public readonly sessions: SessionManager
+  private readonly agentRunner: { run(agentId: string, history: unknown[]): Promise<{ reply?: string }> }
+
   constructor(
-    private readonly sessions:    SessionManager,
-    private readonly agentRunner: { run(agentId: string, history: unknown[]): Promise<{ reply?: string }> },
-  ) {}
+    dbOrSessions: PrismaClient | SessionManager,
+    agentRunner?: { run(agentId: string, history: unknown[]): Promise<{ reply?: string }> },
+  ) {
+    this.sessions = dbOrSessions instanceof SessionManager
+      ? dbOrSessions
+      : new SessionManager(dbOrSessions)
+    this.agentRunner = agentRunner ?? {
+      async run() {
+        return { reply: '(sin respuesta)' }
+      },
+    }
+  }
 
   // ── Helpers privados ────────────────────────────────────────────────────
 
@@ -25,9 +43,49 @@ export class GatewayService {
   }
 
   private resolveAdapter(channelType: string) {
-    const adapter = registry.getAdapter(channelType)
+    const adapter = registry.get(channelType)
     if (!adapter) throw new Error(`No adapter registered for channel type: ${channelType}`)
     return adapter
+  }
+
+  async activateChannel(channelConfigId: string): Promise<void> {
+    const cfg = await this.loadChannelConfig(channelConfigId)
+    const adapter = this.resolveAdapter(cfg.type) as unknown as {
+      setup?: (config: Record<string, unknown>, secrets: Record<string, unknown>) => Promise<void>
+      initialize?: (channelConfigId: string) => Promise<void>
+    }
+
+    if (typeof adapter.setup === 'function') {
+      await adapter.setup(cfg.config, cfg.secrets)
+      return
+    }
+
+    if (typeof adapter.initialize === 'function') {
+      await adapter.initialize(channelConfigId)
+      return
+    }
+
+    throw new Error(`Adapter for channel type "${cfg.type}" does not support activation`)
+  }
+
+  async deactivateChannel(channelConfigId: string): Promise<void> {
+    const cfg = await this.loadChannelConfig(channelConfigId)
+    const adapter = this.resolveAdapter(cfg.type) as unknown as {
+      teardown?: () => Promise<void>
+      dispose?: () => Promise<void>
+    }
+
+    if (typeof adapter.teardown === 'function') {
+      await adapter.teardown()
+      return
+    }
+
+    if (typeof adapter.dispose === 'function') {
+      await adapter.dispose()
+      return
+    }
+
+    throw new Error(`Adapter for channel type "${cfg.type}" does not support deactivation`)
   }
 
   // ── dispatch() ──────────────────────────────────────────────────────────
@@ -58,10 +116,34 @@ export class GatewayService {
     if (!incoming) return
 
     // 2. Persist user turn + upsert session
+    if (!cfg.agentId) {
+      throw new Error(`ChannelConfig missing agentId in registry cache: ${channelConfigId}`)
+    }
+
+    const sessionAttachments = (incoming.attachments ?? [])
+      .flatMap((attachment) => {
+        const url = attachment.url ?? (typeof attachment.data === 'string' ? attachment.data : '')
+        if (!url) return []
+        return [{
+          mimeType: attachment.type,
+          url,
+          name:    undefined,
+          size:    undefined,
+        }]
+      })
+
+    const sessionIncoming: SessionIncomingMessage = {
+      externalUserId: incoming.externalId,
+      text:           incoming.text,
+      attachments:    sessionAttachments,
+      metadata:       incoming.metadata ?? {},
+      ts:             incoming.receivedAt,
+    }
+
     const session = await this.sessions.receiveUserMessage(
       channelConfigId,
       cfg.agentId,
-      incoming,
+      sessionIncoming,
     )
 
     // 3. Run agent via FlowExecutor
@@ -95,12 +177,18 @@ export class GatewayService {
         quoteOriginal: false,
       })
       // Persistir solo el texto (el envío ya ocurrió)
-      await this.sessions.recordAssistantReply(session.id, outgoing)
+      await this.sessions.recordAssistantReply(session.sessionId, {
+        externalUserId: outgoing.externalId,
+        text:           outgoing.text,
+        attachments:    [],
+        options:        outgoing.richContent ? { richContent: outgoing.richContent } : undefined,
+        buttons:        undefined,
+      } satisfies SessionOutboundMessage)
       return
     }
 
     // 5b. PATH LEGACY: sin replyFn → ruta antigua (adapter.send() en recordReply)
-    await this.recordReply(channelConfigId, session.id, outgoing)
+    await this.recordReply(channelConfigId, session.sessionId, outgoing)
   }
 
   // ── recordReply() ───────────────────────────────────────────────────────
@@ -120,7 +208,13 @@ export class GatewayService {
     const cfg     = await this.loadChannelConfig(channelConfigId)
     const adapter = this.resolveAdapter(cfg.type)
 
-    await this.sessions.recordAssistantReply(sessionId, outgoing)
+    await this.sessions.recordAssistantReply(sessionId, {
+      externalUserId: outgoing.externalId,
+      text:           outgoing.text,
+      attachments:    [],
+      options:        outgoing.richContent ? { richContent: outgoing.richContent } : undefined,
+      buttons:        undefined,
+    } satisfies SessionOutboundMessage)
     await (adapter as unknown as {
       send: (m: OutgoingMessage, c: Record<string, unknown>, s: Record<string, unknown>) => Promise<void>
     }).send(outgoing, cfg.config, cfg.secrets)

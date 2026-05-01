@@ -12,6 +12,19 @@ import {
 export class WebhookAdapter extends BaseChannelAdapter {
   readonly channel = 'webhook'
 
+  static verifySecret(
+    config: { webhookSecret?: string },
+    authHeader?: string,
+    xWebhookSecret?: string,
+  ): boolean {
+    const expected = config.webhookSecret ?? ''
+    if (!expected) return true
+
+    const bearer = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : ''
+    const provided = xWebhookSecret ?? bearer
+    return provided === expected
+  }
+
   async initialize(channelConfigId: string): Promise<void> {
     this.channelConfigId = channelConfigId
   }

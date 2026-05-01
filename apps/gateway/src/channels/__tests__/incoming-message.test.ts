@@ -147,6 +147,27 @@ describe('IncomingMessage.replyFn', () => {
     expect(body.thread_ts).toBe('200')
   })
 
+  it('DiscordAdapter.receive() detecta INTERACTION_CREATE por token y construye replyFn', async () => {
+    const adapter = new DiscordAdapter()
+    const rawPayload = {
+      t: 'INTERACTION_CREATE',
+      d: {
+        id: 'interaction-1',
+        token: 'discord-token',
+        channel_id: 'C123',
+        user: { id: 'U123' },
+        data: { name: 'ping' },
+      },
+    }
+
+    const incoming = await adapter.receive(rawPayload as Record<string, unknown>, { botToken: 'BOT' })
+
+    expect(incoming).not.toBeNull()
+    expect(incoming!.type).toBe('command')
+    expect(incoming!.text).toBe('ping')
+    expect(typeof incoming!.replyFn).toBe('function')
+  })
+
   it('WebhookAdapter.receive() sin callbackUrl → replyFn undefined', async () => {
     const adapter    = new WebhookAdapter()
     const rawPayload = { sessionId: 'sess1', text: 'hola' }
@@ -230,6 +251,35 @@ describe('IncomingMessage.rawPayload', () => {
     expect(incoming!.rawPayload['bot_token']).toBeUndefined()
     expect(incoming!.rawPayload['access_token']).toBeUndefined()
     expect(incoming!.rawPayload['token']).toBeUndefined()
+  })
+
+  it('rawPayload elimina secretos anidados en objetos y arrays', async () => {
+    const adapter = new TelegramAdapter()
+    const dirtPayload = {
+      ...makeTelegramUpdate({
+        message: {
+          ...makeTelegramUpdate().message,
+          botToken: 'nested-secret',
+          nested: {
+            access_token: 'deep-secret',
+            items: [{ apiKey: 'array-secret' }],
+          },
+        },
+      }),
+    }
+
+    const incoming = await adapter.receive(dirtPayload as Record<string, unknown>, telegramSecrets)
+    const raw = incoming!.rawPayload as Record<string, unknown>
+    const message = raw.message as Record<string, unknown>
+    const nested = message.nested as Record<string, unknown>
+    const items = nested.items as Array<Record<string, unknown>>
+
+    expect(JSON.stringify(raw)).not.toContain('nested-secret')
+    expect(JSON.stringify(raw)).not.toContain('deep-secret')
+    expect(JSON.stringify(raw)).not.toContain('array-secret')
+    expect(message.botToken).toBeUndefined()
+    expect(nested.access_token).toBeUndefined()
+    expect(items[0].apiKey).toBeUndefined()
   })
 
   it('rawPayload contiene los campos de contenido del mensaje original (message_id, chat, from)', async () => {

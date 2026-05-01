@@ -72,7 +72,7 @@ export class TelegramAdapter implements IChannelAdapter {
     rawPayload: Record<string, unknown>,
     secrets:    Record<string, unknown>,
   ): Promise<IncomingMessage | null> {
-    const update = rawPayload as TelegramUpdate;
+    const update = rawPayload as unknown as TelegramUpdate;
     const token  = secrets.botToken as string;
 
     // ── callback_query (inline button press) ─────────────────────────

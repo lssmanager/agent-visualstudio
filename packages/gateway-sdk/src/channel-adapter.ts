@@ -132,6 +132,14 @@ export interface IChannelAdapter {
   ): Promise<void>;
 }
 
+export interface ChannelConfigSnapshot {
+  id: string;
+  type: string;
+  config: Record<string, unknown>;
+  secrets: Record<string, unknown>;
+  agentId?: string;
+}
+
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
 /**
@@ -149,6 +157,7 @@ export interface IChannelAdapter {
  */
 export class ChannelAdapterRegistry {
   private readonly adapters = new Map<string, IChannelAdapter>();
+  private readonly channelConfigs = new Map<string, ChannelConfigSnapshot>();
 
   register(adapter: IChannelAdapter): void {
     if (this.adapters.has(adapter.type)) {
@@ -173,6 +182,18 @@ export class ChannelAdapterRegistry {
       );
     }
     return adapter;
+  }
+
+  setChannelConfig(channelConfig: ChannelConfigSnapshot): void {
+    this.channelConfigs.set(channelConfig.id, channelConfig);
+  }
+
+  getChannelConfig(channelConfigId: string): ChannelConfigSnapshot | null {
+    return this.channelConfigs.get(channelConfigId) ?? null;
+  }
+
+  deleteChannelConfig(channelConfigId: string): void {
+    this.channelConfigs.delete(channelConfigId);
   }
 
   has(type: string): boolean {

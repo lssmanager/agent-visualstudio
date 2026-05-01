@@ -204,15 +204,31 @@ export abstract class BaseChannelAdapter implements IChannelAdapter {
     raw:        Record<string, unknown>,
     secretKeys: string[] = [],
   ): Record<string, unknown> {
-    const DEFAULT_SECRET_KEYS = [
-      'token', 'bot_token', 'access_token', 'secret',
-      'api_key', 'apiKey', 'password', 'credential',
-    ]
-    const keysToRemove = new Set([...DEFAULT_SECRET_KEYS, ...secretKeys])
-
-    return Object.fromEntries(
-      Object.entries(raw).filter(([k]) => !keysToRemove.has(k.toLowerCase())),
+    const keysToRemove = new Set(
+      [
+        'token', 'bot_token', 'access_token', 'secret',
+        'api_key', 'apiKey', 'password', 'credential',
+        ...secretKeys,
+      ].map((key) => key.toLowerCase()),
     )
+
+    const scrub = (value: unknown): unknown => {
+      if (Array.isArray(value)) {
+        return value.map((item) => scrub(item))
+      }
+
+      if (!value || typeof value !== 'object') {
+        return value
+      }
+
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .filter(([k]) => !keysToRemove.has(k.toLowerCase()))
+          .map(([k, v]) => [k, scrub(v)]),
+      )
+    }
+
+    return scrub(raw) as Record<string, unknown>
   }
 }
 

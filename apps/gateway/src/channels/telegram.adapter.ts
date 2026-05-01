@@ -23,7 +23,7 @@
  *     alerta via onError() y espera 60s antes de reintentar
  */
 
-import { Router, type Request, type Response } from 'express'
+import { Router, type Request, type Response as ExpressResponse } from 'express'
 import {
   BaseChannelAdapter,
   type IncomingMessage,
@@ -82,7 +82,7 @@ export async function fetchWithRetry(
   url:      string,
   init:     RequestInit,
   maxTries: number = 3,
-): Promise<Response> {
+): Promise<globalThis.Response> {
   let lastError: unknown
   for (let attempt = 0; attempt < maxTries; attempt++) {
     try {
@@ -272,7 +272,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
      * Responde 200 inmediatamente — processing es async.
      * Telegram tiene timeout de 3s; si no recibe 200 reintenta.
      */
-    router.post('/webhook', async (req: Request, res: Response) => {
+    router.post('/webhook', async (req: Request, res: ExpressResponse) => {
       // 1. Validar secret token
       if (this.webhookSecret) {
         const secret = req.headers['x-telegram-bot-api-secret-token']
@@ -293,7 +293,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
     })
 
     /** POST /gateway/telegram/setup — registra el webhook en Telegram */
-    router.post('/setup', async (req: Request, res: Response) => {
+    router.post('/setup', async (req: Request, res: ExpressResponse) => {
       const { webhookUrl } = req.body as { webhookUrl?: string }
       if (!webhookUrl) {
         res.status(400).json({ ok: false, error: 'webhookUrl is required' })
@@ -309,7 +309,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
     })
 
     /** DELETE /gateway/telegram/webhook — elimina el webhook */
-    router.delete('/webhook', async (_req: Request, res: Response) => {
+    router.delete('/webhook', async (_req: Request, res: ExpressResponse) => {
       try {
         const result = await this.deleteWebhook()
         res.json({ ok: true, telegram: result })
@@ -320,7 +320,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
     })
 
     /** GET /gateway/telegram/info — verifica que el bot está activo */
-    router.get('/info', async (_req: Request, res: Response) => {
+    router.get('/info', async (_req: Request, res: ExpressResponse) => {
       try {
         const apiRes = await fetchWithRetry(
           `${TELEGRAM_API}/bot${this.botToken}/getMe`,
@@ -541,7 +541,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
     // replyFn: answerCallbackQuery PRIMERO + sendMessage SEGUNDO
     const replyFn: ReplyFn = async (replyText: string, opts?: ReplyOptions) => {
       // 1. Responder al callback query (elimina el "loading" del botón)
-      await fetchWithRetry(
+      const ackRes = await fetchWithRetry(
         `${TELEGRAM_API}/bot${token}/answerCallbackQuery`,
         {
           method:  'POST',
@@ -549,6 +549,11 @@ export class TelegramAdapter extends BaseChannelAdapter {
           body:    JSON.stringify({ callback_query_id: callbackQuery.id }),
         },
       )
+      if (!ackRes.ok) {
+        const err = await ackRes.text().catch(() => `HTTP ${ackRes.status}`)
+        console.warn(`[telegram] answerCallbackQuery failed: ${err}`)
+        return
+      }
       // 2. Enviar respuesta visible al usuario
       const body: Record<string, unknown> = {
         chat_id:    chatId,
