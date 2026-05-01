@@ -1,157 +1,140 @@
-/**
- * routes/whatsapp-baileys.ts — Router Express para WhatsApp Baileys
- * [F3a-22]
- *
- * Rutas:
- *   GET  /gateway/whatsapp/:configId/qr         — SSE stream del QR
- *   GET  /gateway/whatsapp/:configId/status      — estado del adapter
- *   POST /gateway/whatsapp/:configId/connect     — conectar (lazy-connect)
- *   POST /gateway/whatsapp/:configId/disconnect  — desconectar y limpiar
- *
- * Autenticación:
- *   Las rutas están bajo /gateway/whatsapp que el security middleware
- *   protege con JWT (X-Gateway-Token). Ver security.middleware.ts.
- *   En desarrollo con REQUIRE_AUTH=false, las rutas son accesibles sin token.
- *
- * SSE (Server-Sent Events):
- *   El endpoint /qr usa el protocolo SSE estándar:
- *     Content-Type: text/event-stream
- *     Cache-Control: no-cache
- *     Connection: keep-alive
- *
- *   Formato de los eventos:
- *     event: qr
- *     data: <qr-string>\n\n
- *     event: state
- *     data: <connecting|qr|open|closed|reconnecting>\n\n
- *     event: heartbeat
- *     data: ok\n\n
- *
- *   El cliente puede parsear el QR string con la librería 'qrcode' para
- *   renderizarlo como imagen en el browser.
+ï»¿/**
+ * routes/whatsapp-baileys.ts â€” [F3a-22/F3a-23]
  */
 
 import { Router, type Request, type Response } from 'express'
+import type { PrismaClient } from '@prisma/client'
 import { whatsappSessionStore } from '../whatsapp-session.store.js'
-import { type SseEvent } from '../whatsapp-session.store.js'
+import { WhatsAppDeprovisionService } from '../channels/whatsapp-deprovision.service.js'
 
-const SSE_HEARTBEAT_INTERVAL_MS = 20_000
-
-function formatSseEvent(event: SseEvent): string {
-  const data = typeof event.data === 'string' ? event.data : JSON.stringify(event.data)
-  return `event: ${event.type}\ndata: ${data}\n\n`
+interface BaileysAdapterConstructable {
+  new (configId: string): {
+    readonly channel: string
+    state?: string
+    onQr(handler: (qr: string) => void): void
+    onConnected(handler: () => void): void
+    onDisconnected(handler: () => void): void
+    setup(config: Record<string, unknown>, secrets: Record<string, unknown>): Promise<void>
+    logout(): Promise<void>
+    dispose(): Promise<void>
+  }
 }
 
-export function whatsappBaileysRouter(
-  store = whatsappSessionStore,
-): Router {
-  const router = Router()
+export function whatsappBaileysRouter(db: PrismaClient): Router {
+  const router = Router({ mergeParams: true })
+  const deprovisionSvc = new WhatsAppDeprovisionService(db, whatsappSessionStore)
 
-  router.get('/:configId/qr', async (req: Request, res: Response) => {
-    const { configId } = req.params as { configId: string }
-
+  router.get('/:configId/qr', (req: Request, res: Response): void => {
+    const { configId } = req.params
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache')
     res.setHeader('Connection', 'keep-alive')
     res.setHeader('X-Accel-Buffering', 'no')
     res.flushHeaders()
-
-    if (!store.has(configId)) {
-      await store.getOrCreate(configId, {}, {})
-    }
-
-    const subscriber = (event: SseEvent): void => {
-      if (res.writableEnded) return
-      res.write(formatSseEvent(event))
-    }
-
-    const unsubscribe = store.subscribe(configId, subscriber)
-
-    const heartbeatTimer = setInterval(() => {
-      if (res.writableEnded) {
-        clearInterval(heartbeatTimer)
-        return
-      }
+    res.write(': connected\n\n')
+    whatsappSessionStore.addSseClient(configId, res)
+    const heartbeat = setInterval(() => {
       try {
-        res.write(formatSseEvent({ type: 'heartbeat', data: 'ok' }))
+        res.write(': heartbeat\n\n')
       } catch {
-        clearInterval(heartbeatTimer)
+        clearInterval(heartbeat)
       }
-    }, SSE_HEARTBEAT_INTERVAL_MS)
-
-    req.on('close', () => {
-      clearInterval(heartbeatTimer)
-      unsubscribe()
-      console.info(`[whatsapp-router] SSE client disconnected: configId=${configId}`)
-    })
-
-    console.info(`[whatsapp-router] SSE client connected: configId=${configId}`)
+    }, 25_000)
+    res.on('close', () => clearInterval(heartbeat))
   })
 
-  router.get('/:configId/status', (req: Request, res: Response) => {
-    const { configId } = req.params as { configId: string }
+  router.get('/:configId/status', (req: Request, res: Response): void => {
+    const { configId } = req.params
+    const entry = whatsappSessionStore.get(configId)
+    if (!entry) {
+      res.status(404).json({ ok: false, error: 'session not found', configId })
+      return
+    }
+    res.json({ ok: true, configId, status: entry.status, hasQr: !!entry.qrBuffer })
+  })
 
-    const statuses = store.getStatus(configId)
-    if (statuses.length === 0) {
-      res.status(404).json({
-        ok: false,
-        error: `No session found for configId=${configId}`,
-      })
+  router.post('/:configId/connect', async (req: Request, res: Response): Promise<void> => {
+    const { configId } = req.params
+    const existing = whatsappSessionStore.get(configId)
+    if (existing && existing.status !== 'disconnected' && existing.status !== 'error') {
+      res.status(409).json({ ok: false, error: 'session already active', configId, status: existing.status })
       return
     }
 
-    res.json({ ok: true, session: statuses[0] })
-  })
-
-  router.get('/sessions', (_req: Request, res: Response) => {
-    res.json({ ok: true, sessions: store.getStatus() })
-  })
-
-  router.post('/:configId/connect', async (req: Request, res: Response) => {
-    const { configId } = req.params as { configId: string }
-    const { config = {}, secrets = {} } = req.body as {
-      config?: Record<string, unknown>
-      secrets?: Record<string, unknown>
-    }
-
     try {
-      const adapter = await store.getOrCreate(configId, config, secrets)
-
-      if (adapter.getState() === 'open') {
-        res.json({ ok: true, message: 'Already connected', state: adapter.getState() })
+      let AdapterClass: BaileysAdapterConstructable
+      try {
+        const mod = await import('../channels/whatsapp.adapter.js')
+        AdapterClass = (mod.WhatsAppBaileysAdapter ?? mod.default) as BaileysAdapterConstructable
+      } catch {
+        res.status(503).json({ ok: false, error: 'WhatsAppBaileysAdapter not available â€” install @whiskeysockets/baileys' })
         return
       }
 
-      adapter.connect().catch((err: unknown) => {
-        console.error(`[whatsapp-router] connect() error configId=${configId}:`, err)
+      const adapter = new AdapterClass(configId)
+      adapter.onQr((qr: string) => whatsappSessionStore.setQr(configId, qr))
+      adapter.onConnected(() => whatsappSessionStore.setStatus(configId, 'connected'))
+      adapter.onDisconnected(() => whatsappSessionStore.setStatus(configId, 'disconnected'))
+
+      whatsappSessionStore.setAdapter(configId, adapter)
+      whatsappSessionStore.setStatus(configId, 'connecting')
+
+      const { config = {}, secrets = {} } = (req.body ?? {}) as {
+        config?: Record<string, unknown>
+        secrets?: Record<string, unknown>
+      }
+
+      adapter.setup(config, secrets).catch(() => {
+        whatsappSessionStore.setStatus(configId, 'error')
       })
 
-      res.json({
-        ok: true,
-        message: 'Connection initiated — subscribe to SSE /qr for QR code',
-        state: adapter.getState(),
-        sseUrl: `/gateway/whatsapp/${configId}/qr`,
-      })
+      res.json({ ok: true, configId, status: 'connecting' })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       res.status(500).json({ ok: false, error: msg })
     }
   })
 
-  router.post('/:configId/disconnect', async (req: Request, res: Response) => {
-    const { configId } = req.params as { configId: string }
-
-    if (!store.has(configId)) {
-      res.status(404).json({ ok: false, error: `No active session for configId=${configId}` })
+  router.post('/:configId/logout', async (req: Request, res: Response): Promise<void> => {
+    const { configId } = req.params
+    const entry = whatsappSessionStore.get(configId)
+    if (!entry) {
+      res.status(404).json({ ok: false, error: 'session_not_found' })
       return
     }
-
     try {
-      await store.remove(configId)
-      res.json({ ok: true, message: `Session ${configId} disconnected and removed` })
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      res.status(500).json({ ok: false, error: msg })
+      const result = await deprovisionSvc.logout(configId)
+      res.json({ ok: true, ...result })
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message ?? 'internal_error' })
+    }
+  })
+
+  router.post('/:configId/disconnect', async (req: Request, res: Response): Promise<void> => {
+    const { configId } = req.params
+    try {
+      const result = await deprovisionSvc.logout(configId)
+      res.json({ ok: true, ...result })
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message ?? 'internal_error' })
+    }
+  })
+
+  router.post('/:configId/deprovision', async (req: Request, res: Response): Promise<void> => {
+    const { configId } = req.params
+    if (req.body?.confirm !== true) {
+      res.status(400).json({
+        ok: false,
+        error: 'confirmation_required',
+        hint: 'Send { "confirm": true } in request body to confirm deprovision',
+      })
+      return
+    }
+    try {
+      const result = await deprovisionSvc.deprovision(configId)
+      res.json({ ok: true, ...result })
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message ?? 'internal_error' })
     }
   })
 

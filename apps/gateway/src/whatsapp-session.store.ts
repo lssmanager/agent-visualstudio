@@ -1,156 +1,131 @@
-/**
- * whatsapp-session.store.ts ó Store en memoria para sesiones WhatsApp Baileys
- * [F3a-22]
+Ôªø/**
+ * whatsapp-session.store.ts ‚Äî [F3a-22]
+ *
+ * Store en memoria para sesiones WhatsApp Baileys.
+ * Exporta la clase (para typing en DI) y el singleton whatsappSessionStore.
  */
 
-import { WhatsAppBaileysAdapter, type WhatsAppAdapterState } from './channels/whatsapp-baileys.adapter.js'
+import type { Response } from 'express'
 
-export type SseEvent =
-  | { type: 'qr'; data: string }
-  | { type: 'state'; data: WhatsAppAdapterState }
-  | { type: 'heartbeat'; data: string }
+export type WhatsAppSessionStatus =
+  | 'connecting'
+  | 'qr_ready'
+  | 'connected'
+  | 'disconnected'
+  | 'error'
 
-export type SseSubscriber = (event: SseEvent) => void
-
-interface SessionEntry {
-  adapter: WhatsAppBaileysAdapter
-  latestQr: string | null
-  subscribers: Set<SseSubscriber>
+export interface IWhatsAppAdapter {
+  readonly channel: string
+  state?: string
+  onQr?: (handler: (qr: string) => void) => void
+  onConnected?: (handler: () => void) => void
+  onDisconnected?: (handler: () => void) => void
+  logout?: () => Promise<void>
+  dispose(): Promise<void>
 }
 
-export interface SessionStatus {
-  configId: string
-  state: WhatsAppAdapterState
-  hasQr: boolean
-  subscribers: number
+export interface SessionEntry {
+  adapter: IWhatsAppAdapter
+  qrBuffer: string | null
+  status: WhatsAppSessionStatus
+  sseClients: Set<Response>
 }
 
 export class WhatsAppSessionStore {
   private readonly sessions = new Map<string, SessionEntry>()
 
-  async getOrCreate(
-    configId: string,
-    config: Record<string, unknown> = {},
-    secrets: Record<string, unknown> = {},
-  ): Promise<WhatsAppBaileysAdapter> {
-    const existing = this.sessions.get(configId)
-    if (existing) return existing.adapter
-
-    const adapter = new WhatsAppBaileysAdapter()
-    ;(adapter as unknown as Record<string, unknown>)['channelConfigId'] = configId
-
-    await adapter.setup(config, secrets)
-
-    const entry: SessionEntry = {
-      adapter,
-      latestQr: null,
-      subscribers: new Set(),
+  getOrCreate(configId: string): SessionEntry {
+    if (!this.sessions.has(configId)) {
+      this.sessions.set(configId, {
+        adapter: null as unknown as IWhatsAppAdapter,
+        qrBuffer: null,
+        status: 'disconnected',
+        sseClients: new Set(),
+      })
     }
-
-    this.sessions.set(configId, entry)
-
-    adapter.onQr((qr) => {
-      entry.latestQr = qr
-      this.fanOut(configId, { type: 'qr', data: qr })
-    })
-
-    adapter.onStateChange((state) => {
-      if (state === 'open' || state === 'closed') {
-        entry.latestQr = null
-      }
-      this.fanOut(configId, { type: 'state', data: state })
-    })
-
-    adapter.onError((err) => {
-      console.error(`[whatsapp-store] Error en adapter configId=${configId}:`, err.message)
-    })
-
-    console.info(`[whatsapp-store] SesiÛn creada (lazy) para configId=${configId}`)
-    return adapter
+    return this.sessions.get(configId)!
   }
 
-  subscribe(configId: string, subscriber: SseSubscriber): () => void {
-    const entry = this.sessions.get(configId)
-    if (!entry) {
-      console.warn(`[whatsapp-store] subscribe() llamado para configId=${configId} inexistente`)
-      return () => {}
-    }
-
-    entry.subscribers.add(subscriber)
-
-    if (entry.latestQr) {
-      try {
-        subscriber({ type: 'qr', data: entry.latestQr })
-      } catch (err) {
-        console.warn('[whatsapp-store] Error enviando QR buffered:', err)
-      }
-    }
-
-    try {
-      subscriber({ type: 'state', data: entry.adapter.getState() })
-    } catch {
-      /* cliente ya desconectado */
-    }
-
-    return () => {
-      entry.subscribers.delete(subscriber)
-    }
-  }
-
-  async remove(configId: string): Promise<void> {
-    const entry = this.sessions.get(configId)
-    if (!entry) return
-
-    try {
-      await entry.adapter.dispose()
-    } catch (err) {
-      console.error(`[whatsapp-store] Error en dispose para configId=${configId}:`, err)
-    }
-
-    this.fanOut(configId, { type: 'state', data: 'closed' })
-    this.sessions.delete(configId)
-    console.info(`[whatsapp-store] SesiÛn eliminada para configId=${configId}`)
-  }
-
-  getStatus(configId?: string): SessionStatus[] {
-    if (configId) {
-      const entry = this.sessions.get(configId)
-      if (!entry) return []
-      return [this.toStatus(configId, entry)]
-    }
-    return Array.from(this.sessions.entries()).map(([id, entry]) => this.toStatus(id, entry))
+  get(configId: string): SessionEntry | undefined {
+    return this.sessions.get(configId)
   }
 
   has(configId: string): boolean {
     return this.sessions.has(configId)
   }
 
-  get(configId: string): WhatsAppBaileysAdapter | null {
-    return this.sessions.get(configId)?.adapter ?? null
+  setAdapter(configId: string, adapter: IWhatsAppAdapter): void {
+    const entry = this.getOrCreate(configId)
+    entry.adapter = adapter
   }
 
-  private fanOut(configId: string, event: SseEvent): void {
+  setQr(configId: string, qr: string): void {
     const entry = this.sessions.get(configId)
-    if (!entry || entry.subscribers.size === 0) return
+    if (!entry) return
+    entry.qrBuffer = qr
+    entry.status = 'qr_ready'
+    this.broadcastSse(entry, { event: 'qr', data: qr })
+  }
 
-    for (const subscriber of entry.subscribers) {
+  setStatus(configId: string, status: WhatsAppSessionStatus): void {
+    const entry = this.sessions.get(configId)
+    if (!entry) return
+    entry.status = status
+    if (status === 'connected') entry.qrBuffer = null
+    this.broadcastSse(entry, { event: 'status', data: status })
+  }
+
+  remove(configId: string): void {
+    const entry = this.sessions.get(configId)
+    if (!entry) return
+    for (const client of entry.sseClients) {
       try {
-        subscriber(event)
-      } catch (err) {
-        console.warn('[whatsapp-store] Suscriptor roto, eliminando:', err)
-        entry.subscribers.delete(subscriber)
-      }
+        client.end()
+      } catch {}
+    }
+    entry.sseClients.clear()
+    this.sessions.delete(configId)
+  }
+
+  /**
+   * Alias sem√°ntico de remove() para el flujo de deprovision.
+   * destroy() = remove() + logging expl√≠cito.
+   */
+  destroy(configId: string): void {
+    console.info(`[wa-session-store] Destroying session: ${configId}`)
+    this.remove(configId)
+  }
+
+  addSseClient(configId: string, res: Response): void {
+    const entry = this.getOrCreate(configId)
+    entry.sseClients.add(res)
+    this.sendSseEvent(res, { event: 'status', data: entry.status })
+    if (entry.qrBuffer) {
+      this.sendSseEvent(res, { event: 'qr', data: entry.qrBuffer })
+    }
+    res.on('close', () => {
+      entry.sseClients.delete(res)
+    })
+  }
+
+  private broadcastSse(entry: SessionEntry, payload: { event: string; data: string }): void {
+    for (const client of entry.sseClients) {
+      this.sendSseEvent(client, payload)
     }
   }
 
-  private toStatus(configId: string, entry: SessionEntry): SessionStatus {
-    return {
-      configId,
-      state: entry.adapter.getState(),
-      hasQr: entry.latestQr !== null,
-      subscribers: entry.subscribers.size,
-    }
+  private sendSseEvent(res: Response, payload: { event: string; data: string }): void {
+    try {
+      res.write(`event: ${payload.event}\ndata: ${payload.data}\n\n`)
+    } catch {}
+  }
+
+  activeSessions(): string[] {
+    return [...this.sessions.keys()]
   }
 }
+
+/** Tipo exportado para inyecci√≥n en WhatsAppDeprovisionService y tests */
+export type WhatsAppSessionStore_t = WhatsAppSessionStore
 
 export const whatsappSessionStore = new WhatsAppSessionStore()
