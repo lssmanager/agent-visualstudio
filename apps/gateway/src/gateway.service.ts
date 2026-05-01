@@ -3,7 +3,7 @@
  *
  * Responsabilidades:
  *   1. Cargar y cachear ChannelConfig desde Prisma
- *   2. Resolver el IChannelAdapter correcto para cada canal
+ *   2. Delegar el ciclo de vida de canales al ChannelRouter [F3a-08]
  *   3. Coordinar receive() → SessionManager → AgentRunner → FlowExecutor
  *   4. Coordinar FlowEngine reply → SessionManager → adapter.send()
  *   5. Ciclo de vida: activateChannel() / deactivateChannel()
@@ -15,18 +15,17 @@
  *     [12 bytes IV][16 bytes auth tag][N bytes ciphertext]
  */
 
-import { Injectable }      from '@nestjs/common';
+import { Injectable }       from '@nestjs/common';
 import { createDecipheriv } from 'crypto';
 import type { PrismaClient }  from '@prisma/client';
 import {
-  registry,
   SessionManager,
   type IncomingMessage,
   type OutboundMessage,
 } from '@agent-vs/gateway-sdk';
 import { AgentRunner }        from '@agent-vs/flow-engine';
-import type { IChannelAdapter } from './channels/channel-adapter.interface';
 import { PrismaService }       from './prisma/prisma.service';
+import { ChannelRouter }       from './channel-router.service';
 
 // ---------------------------------------------------------------------------
 // Tipos internos
@@ -51,10 +50,13 @@ export class GatewayService {
   private readonly agentRunner:   AgentRunner;
   private readonly configCache  = new Map<string, DecryptedChannelConfig>();
   private readonly encKey:       Buffer;
+  /** [F3a-08] Router de canales — gestiona el ciclo de vida de adapters */
+  private readonly channelRouter: ChannelRouter;
 
   constructor(private readonly db: PrismaService) {
-    this.sessions    = new SessionManager(db);
-    this.agentRunner = new AgentRunner({ db });
+    this.sessions      = new SessionManager(db);
+    this.agentRunner   = new AgentRunner({ db });
+    this.channelRouter = new ChannelRouter();
 
     const keyHex = process.env.GATEWAY_ENCRYPTION_KEY ?? '';
     if (!keyHex) {
@@ -66,27 +68,27 @@ export class GatewayService {
   }
 
   // -------------------------------------------------------------------------
-  // Public: lifecycle
+  // Public: lifecycle — delegado al ChannelRouter [F3a-08]
   // -------------------------------------------------------------------------
 
   async activateChannel(channelConfigId: string): Promise<void> {
-    const cfg     = await this.loadChannelConfig(channelConfigId);
-    const adapter = this.resolveAdapter(cfg.type);
-    await (adapter as unknown as {
-      setup: (c: Record<string, unknown>, s: Record<string, unknown>) => Promise<void>;
-    }).setup(cfg.config, cfg.secrets);
+    const cfg = await this.loadChannelConfig(channelConfigId);
+
+    await this.channelRouter.activate(
+      {
+        id:               cfg.id,
+        channel:          cfg.type,
+        active:           true,
+        secretsEncrypted: null, // ya desencriptado en configCache
+      },
+      (msg: IncomingMessage) => this.handleIncoming(channelConfigId, msg),
+    );
+
     console.info(`[GatewayService] channel ${channelConfigId} (${cfg.type}) activated`);
   }
 
   async deactivateChannel(channelConfigId: string): Promise<void> {
-    const cached = this.configCache.get(channelConfigId);
-    if (!cached) return;
-    const adapter = this.resolveAdapter(cached.type);
-    await (adapter as unknown as {
-      teardown: (c: Record<string, unknown>, s: Record<string, unknown>) => Promise<void>;
-    }).teardown(cached.config, cached.secrets).catch((err: unknown) => {
-      console.warn(`[GatewayService] teardown error for channel ${channelConfigId}:`, err);
-    });
+    await this.channelRouter.deactivate(channelConfigId, 'manual');
     this.configCache.delete(channelConfigId);
     console.info(`[GatewayService] channel ${channelConfigId} deactivated`);
   }
@@ -110,10 +112,22 @@ export class GatewayService {
     rawPayload:      Record<string, unknown>,
   ): Promise<void> {
     const cfg     = await this.loadChannelConfig(channelConfigId);
-    const adapter = this.resolveAdapter(cfg.type);
+    const adapter = this.channelRouter.getAdapter(channelConfigId);
+
+    if (!adapter) {
+      console.warn(
+        `[GatewayService] dispatch called for inactive channel ${channelConfigId} — activating on demand`,
+      );
+      await this.activateChannel(channelConfigId);
+    }
+
+    const activeAdapter = this.channelRouter.getAdapter(channelConfigId);
+    if (!activeAdapter) {
+      throw new Error(`[GatewayService] could not activate adapter for channel ${channelConfigId}`);
+    }
 
     // 1. Parse inbound message
-    const incoming = await (adapter as unknown as {
+    const incoming = await (activeAdapter as unknown as {
       receive: (p: Record<string, unknown>, s: Record<string, unknown>) => Promise<IncomingMessage | null>;
     }).receive(rawPayload, cfg.secrets);
 
@@ -157,8 +171,13 @@ export class GatewayService {
     sessionId:       string,
     outbound:        OutboundMessage,
   ): Promise<void> {
-    const cfg     = await this.loadChannelConfig(channelConfigId);
-    const adapter = this.resolveAdapter(cfg.type);
+    const cfg = await this.loadChannelConfig(channelConfigId);
+
+    // [F3a-08] Usar adapter del ChannelRouter en lugar de resolveAdapter()
+    const adapter = this.channelRouter.getAdapter(channelConfigId);
+    if (!adapter) {
+      throw new Error(`[GatewayService] no active adapter for channel ${channelConfigId}`);
+    }
 
     await this.sessions.recordAssistantReply(sessionId, outbound);
     await (adapter as unknown as {
@@ -169,6 +188,34 @@ export class GatewayService {
   // -------------------------------------------------------------------------
   // Private helpers
   // -------------------------------------------------------------------------
+
+  /** Handler interno conectado a cada adapter vía channelRouter.activate() */
+  private async handleIncoming(
+    channelConfigId: string,
+    incoming:        IncomingMessage,
+  ): Promise<void> {
+    const cfg = await this.loadChannelConfig(channelConfigId);
+    const session = await this.sessions.receiveUserMessage(
+      channelConfigId,
+      cfg.agentId,
+      incoming,
+    );
+
+    let replyText: string;
+    try {
+      const result = await this.agentRunner.run(session.agentId, session.history);
+      replyText = result.reply || '(sin respuesta)';
+    } catch (err) {
+      console.error('[GatewayService] AgentRunner error in handleIncoming:', err);
+      replyText = '(ocurrió un error al procesar tu mensaje)';
+    }
+
+    const outbound: OutboundMessage = {
+      externalUserId: incoming.externalUserId,
+      text: replyText,
+    };
+    await this.recordReply(channelConfigId, session.id, outbound);
+  }
 
   private async loadChannelConfig(
     channelConfigId: string,
@@ -190,16 +237,6 @@ export class GatewayService {
     };
     this.configCache.set(channelConfigId, cfg);
     return cfg;
-  }
-
-  private resolveAdapter(type: string): IChannelAdapter {
-    if (registry.has(type)) {
-      return registry.get(type) as unknown as IChannelAdapter;
-    }
-    throw new Error(
-      `GatewayService: no adapter registered for channel type '${type}'. ` +
-      `Registered: ${registry.registeredTypes().join(', ') || '(none)'}`,
-    );
   }
 
   private decrypt(secretsEncrypted: string | null): Record<string, unknown> {
