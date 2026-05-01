@@ -1,5 +1,5 @@
-import { Injectable, Logger }    from '@nestjs/common'
-import { PrismaService }         from '../../prisma/prisma.service.js'
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common'
+import { PrismaService } from '../../lib/prisma.service.js'
 import { GatewayService }        from '../gateway/gateway.service.js'
 import { AgentResolverService }  from '../gateway/agent-resolver.service.js'
 import {
@@ -35,7 +35,7 @@ const TRANSITIONS: Record<ChannelStatus, ChannelStatus[]> = {
 // ── Servicio ────────────────────────────────────────────────────────────
 
 @Injectable()
-export class ChannelLifecycleService {
+export class ChannelLifecycleService implements OnModuleInit {
   private readonly logger = new Logger(ChannelLifecycleService.name)
 
   constructor(
@@ -43,6 +43,10 @@ export class ChannelLifecycleService {
     private readonly gateway:  GatewayService,
     private readonly resolver: AgentResolverService,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    await this.recoverStuckTransitions()
+  }
 
   // ────────────────────────────────────────────────────────────────────
   // PROVISION — Crea el ChannelConfig en BD con status='provisioned'
@@ -115,7 +119,7 @@ export class ChannelLifecycleService {
     this.resolver.invalidateCache(channelConfigId)
 
     try {
-      // Delegar al GatewayService la activación real del canal (stub-safe)
+      // Delegar al GatewayService la activación real del canal.
       await this.callGatewayActivate(channelConfigId)
 
       // Marcar como 'active'
@@ -246,7 +250,7 @@ export class ChannelLifecycleService {
     })
 
     return Promise.all(
-      channels.map((ch) => this.buildStatusDto(ch, ch.id))
+      channels.map((ch: any) => this.buildStatusDto(ch, ch.id))
     )
   }
 
@@ -260,10 +264,7 @@ export class ChannelLifecycleService {
    * para que el build no rompa.
    */
   private async callGatewayActivate(id: string): Promise<void> {
-    if (typeof (this.gateway as any).activateChannel === 'function') {
-      await (this.gateway as any).activateChannel(id)
-    }
-    // else: no-op hasta que GatewayService implemente el método
+    await this.gateway.activateChannel(id)
   }
 
   /**
@@ -271,10 +272,34 @@ export class ChannelLifecycleService {
    * Si aún no está implementado en GatewayService, actúa como no-op.
    */
   private async callGatewayDeactivate(id: string): Promise<void> {
-    if (typeof (this.gateway as any).deactivateChannel === 'function') {
-      await (this.gateway as any).deactivateChannel(id)
+    await this.gateway.deactivateChannel(id)
+  }
+
+  /**
+   * Recupera transiciones intermedias que quedaron abiertas tras un crash.
+   * Esto evita que un canal quede atrapado en 'starting'/'stopping' sin salida.
+   */
+  async recoverStuckTransitions(): Promise<number> {
+    const result = await this.db.channelConfig.updateMany({
+      where: {
+        status: {
+          in: ['starting', 'stopping'],
+        },
+      },
+      data: {
+        status:       'error',
+        isActive:     false,
+        errorMessage: 'Recovered from interrupted lifecycle transition',
+      },
+    })
+
+    if (result.count > 0) {
+      this.logger.warn(
+        `[recovery] Reset ${result.count} channel(s) stuck in an intermediate state`,
+      )
     }
-    // else: no-op hasta que GatewayService implemente el método
+
+    return result.count
   }
 
   // ────────────────────────────────────────────────────────────────────
@@ -341,7 +366,13 @@ export class ChannelLifecycleService {
   private encryptSecrets(secrets: Record<string, unknown>): string {
     const keyHex = process.env.GATEWAY_ENCRYPTION_KEY ?? ''
     if (!keyHex) throw new Error('GATEWAY_ENCRYPTION_KEY is not set')
+    if (!/^[0-9a-fA-F]{64}$/.test(keyHex)) {
+      throw new Error('GATEWAY_ENCRYPTION_KEY must be 64 hex characters (32 bytes)')
+    }
     const key    = Buffer.from(keyHex, 'hex')
+    if (key.length !== 32) {
+      throw new Error('GATEWAY_ENCRYPTION_KEY contains invalid hex')
+    }
     const iv     = randomBytes(12)
     const cipher = createCipheriv('aes-256-gcm', key, iv)
     const plain  = Buffer.from(JSON.stringify(secrets), 'utf8')
