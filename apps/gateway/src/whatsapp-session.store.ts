@@ -2,10 +2,24 @@
  * whatsapp-session.store.ts — [F3a-22]
  *
  * Store en memoria para sesiones WhatsApp Baileys.
- * Exporta la clase (para typing en DI) y el singleton whatsappSessionStore.
+ *
+ * Cada entrada guarda:
+ *   - adapter?  : instancia activa del WhatsAppBaileysAdapter (opcional hasta
+ *                 que POST /connect lo registre)
+ *   - qrBuffer  : último QR recibido (PNG base64 data-url o cadena qr raw)
+ *   - status    : 'connecting' | 'qr_ready' | 'connected' | 'disconnected' | 'error'
+ *   - sseClients: lista de Response (SSE) suscritos al QR de este configId
+ *
+ * El store es un singleton exportado — todos los routers comparten la
+ * misma instancia sin necesidad de inyección de dependencias.
+ *
+ * Fix aplicado: getOrCreate() ya no setea adapter=null — el adapter es opcional
+ * en SessionEntry. setAdapter() crea la entrada si no existe y marca 'connecting'.
  */
 
 import type { Response } from 'express'
+
+// ── Tipos ────────────────────────────────────────────────────────────────────
 
 export type WhatsAppSessionStatus =
   | 'connecting'
@@ -14,6 +28,11 @@ export type WhatsAppSessionStatus =
   | 'disconnected'
   | 'error'
 
+/**
+ * Contrato mínimo que debe cumplir el adapter para ser almacenado.
+ * Evita importar WhatsAppBaileysAdapter directamente y crear
+ * dependencias circulares — el adapter real se pasa en tiempo de ejecución.
+ */
 export interface IWhatsAppAdapter {
   readonly channel: string
   state?: string
@@ -25,21 +44,32 @@ export interface IWhatsAppAdapter {
 }
 
 export interface SessionEntry {
-  adapter: IWhatsAppAdapter
-  qrBuffer: string | null
-  status: WhatsAppSessionStatus
-  sseClients: Set<Response>
+  adapter?:   IWhatsAppAdapter       // undefined hasta que POST /connect lo registre
+  qrBuffer:   string | null          // data-url PNG o cadena QR raw
+  status:     WhatsAppSessionStatus
+  sseClients: Set<Response>          // clientes SSE activos suscritos al QR
 }
+
+// ── Store ────────────────────────────────────────────────────────────────────
 
 export class WhatsAppSessionStore {
   private readonly sessions = new Map<string, SessionEntry>()
 
+  // ── CRUD ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Recupera la sesión existente o crea una nueva entrada vacía (sin adapter).
+   * El adapter se registra después con setAdapter().
+   *
+   * Fix: NO rellena adapter con null — adapter es opcional hasta que
+   *      setAdapter() lo registre. Esto evita que el QR endpoint cree
+   *      entradas con adapter vacío que nunca producen eventos reales.
+   */
   getOrCreate(configId: string): SessionEntry {
     if (!this.sessions.has(configId)) {
       this.sessions.set(configId, {
-        adapter: null as unknown as IWhatsAppAdapter,
-        qrBuffer: null,
-        status: 'disconnected',
+        qrBuffer:   null,
+        status:     'disconnected',
         sseClients: new Set(),
       })
     }
@@ -54,34 +84,59 @@ export class WhatsAppSessionStore {
     return this.sessions.has(configId)
   }
 
+  /**
+   * Registra el adapter activo para un configId.
+   * Crea la entrada si no existe y marca la sesión como 'connecting'.
+   */
   setAdapter(configId: string, adapter: IWhatsAppAdapter): void {
     const entry = this.getOrCreate(configId)
     entry.adapter = adapter
+    entry.status  = 'connecting'
   }
 
+  /**
+   * Guarda el QR más reciente y notifica a todos los clientes SSE suscritos.
+   */
   setQr(configId: string, qr: string): void {
     const entry = this.sessions.get(configId)
     if (!entry) return
     entry.qrBuffer = qr
-    entry.status = 'qr_ready'
+    entry.status   = 'qr_ready'
     this.broadcastSse(entry, { event: 'qr', data: qr })
   }
 
+  /**
+   * Actualiza el estado de la sesión y notifica a los clientes SSE.
+   * Si status es 'connecting' y la entrada no existe, la crea
+   * (para reservar el slot antes del primer await en /connect).
+   */
   setStatus(configId: string, status: WhatsAppSessionStatus): void {
+    if (status === 'connecting' && !this.sessions.has(configId)) {
+      this.sessions.set(configId, {
+        qrBuffer:   null,
+        status:     'connecting',
+        sseClients: new Set(),
+      })
+      return
+    }
     const entry = this.sessions.get(configId)
     if (!entry) return
     entry.status = status
-    if (status === 'connected') entry.qrBuffer = null
+    if (status === 'connected') {
+      entry.qrBuffer = null   // QR ya no es relevante
+    }
     this.broadcastSse(entry, { event: 'status', data: status })
   }
 
+  /**
+   * Elimina la sesión del store.
+   * Cierra todos los streams SSE pendientes antes de borrar.
+   */
   remove(configId: string): void {
     const entry = this.sessions.get(configId)
     if (!entry) return
     for (const client of entry.sseClients) {
-      try {
-        client.end()
-      } catch {}
+      try { client.end() } catch { /* ya cerrado */ }
     }
     entry.sseClients.clear()
     this.sessions.delete(configId)
@@ -96,36 +151,75 @@ export class WhatsAppSessionStore {
     this.remove(configId)
   }
 
+  // ── SSE client management ─────────────────────────────────────────────────
+
+  /**
+   * Registra un cliente SSE (Response de Express) para recibir
+   * eventos QR y de estado de este configId.
+   *
+   * Si ya hay un QR en buffer, lo envía inmediatamente para que
+   * el cliente no tenga que esperar al siguiente ciclo.
+   */
   addSseClient(configId: string, res: Response): void {
     const entry = this.getOrCreate(configId)
     entry.sseClients.add(res)
+
+    // Enviar estado e QR actuales de inmediato
     this.sendSseEvent(res, { event: 'status', data: entry.status })
     if (entry.qrBuffer) {
       this.sendSseEvent(res, { event: 'qr', data: entry.qrBuffer })
     }
+
+    // Limpiar al cerrar la conexión
     res.on('close', () => {
       entry.sseClients.delete(res)
     })
   }
 
-  private broadcastSse(entry: SessionEntry, payload: { event: string; data: string }): void {
+  /**
+   * Elimina un cliente SSE específico del set de un configId.
+   * Útil para cleanup explícito en tests o en el route handler.
+   */
+  removeSseClient(configId: string, res: Response): void {
+    const entry = this.sessions.get(configId)
+    if (!entry) return
+    entry.sseClients.delete(res)
+  }
+
+  // ── Helpers SSE ───────────────────────────────────────────────────────────
+
+  private broadcastSse(
+    entry:   SessionEntry,
+    payload: { event: string; data: string },
+  ): void {
     for (const client of entry.sseClients) {
       this.sendSseEvent(client, payload)
     }
   }
 
-  private sendSseEvent(res: Response, payload: { event: string; data: string }): void {
+  private sendSseEvent(
+    res:     Response,
+    payload: { event: string; data: string },
+  ): void {
     try {
       res.write(`event: ${payload.event}\ndata: ${payload.data}\n\n`)
-    } catch {}
+    } catch {
+      /* cliente ya desconectado — se limpiará en el handler 'close' */
+    }
   }
 
+  // ── Debug ─────────────────────────────────────────────────────────────────
+
+  /** Lista de configIds con adapter activo (útil para health/debug). */
   activeSessions(): string[] {
-    return [...this.sessions.keys()]
+    return [...this.sessions.entries()]
+      .filter(([, entry]) => !!entry.adapter)
+      .map(([configId]) => configId)
   }
 }
 
 /** Tipo exportado para inyección en WhatsAppDeprovisionService y tests */
 export type WhatsAppSessionStore_t = WhatsAppSessionStore
 
+/** Singleton exportado */
 export const whatsappSessionStore = new WhatsAppSessionStore()
