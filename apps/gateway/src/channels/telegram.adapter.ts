@@ -36,15 +36,13 @@ import {
   type Context,
 } from 'grammy';
 import { Router, type Request, type Response } from 'express';
-import { PrismaService } from '../prisma/prisma.service.js';
+import { getPrisma } from '../../lib/prisma.js';
 import {
   BaseChannelAdapter,
   type ChannelType,
   type IncomingMessage,
   type OutgoingMessage,
 } from './channel-adapter.interface.js';
-
-const db = new PrismaService();
 
 // ── Tipos de credenciales ──────────────────────────────────────────────────
 
@@ -98,9 +96,8 @@ export class TelegramAdapter extends BaseChannelAdapter {
   async initialize(channelConfigId: string): Promise<void> {
     this.channelConfigId = channelConfigId;
 
-    const config = await db.channelConfig.findUnique({
-      where: { id: channelConfigId },
-    });
+    const db     = getPrisma();
+    const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } });
     if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
 
     const creds = config.credentials as TelegramCredentials;
