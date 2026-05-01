@@ -101,7 +101,15 @@ export class AgentResolverService {
     }
 
     // ── 4. Binding marcado isDefault → usar ese ──────────────────────
-    const defaultBinding = bindings.find((b) => b.isDefault)
+    const defaultBindings = bindings.filter((b) => b.isDefault)
+    if (defaultBindings.length > 1) {
+      throw new AmbiguousBindingError(
+        channelConfigId,
+        defaultBindings.map((b) => b.agentId),
+      )
+    }
+
+    const defaultBinding = defaultBindings[0]
     if (defaultBinding) {
       return {
         agentId:    defaultBinding.agentId,

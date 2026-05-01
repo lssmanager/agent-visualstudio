@@ -81,6 +81,17 @@ describe('resolve() — casos base', () => {
     expect(res.isDefault).toBe(true)
   })
 
+  it('2 bindings isDefault=true → AmbiguousBindingError', async () => {
+    const svc = makeSvc(makeDb([
+      makeBinding('agent-A', 'agent', true),
+      makeBinding('agent-B', 'agency', true),
+    ]))
+    const err = await svc.resolve(CHANNEL_ID, USER_ID).catch((e) => e)
+    expect(err).toBeInstanceOf(AmbiguousBindingError)
+    expect((err as AmbiguousBindingError).candidates).toContain('agent-A')
+    expect((err as AmbiguousBindingError).candidates).toContain('agent-B')
+  })
+
   it('2 bindings mismo scopeLevel sin isDefault → AmbiguousBindingError', async () => {
     const svc = makeSvc(makeDb([
       makeBinding('agent-A', 'agent'),
