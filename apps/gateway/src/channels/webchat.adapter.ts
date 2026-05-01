@@ -5,33 +5,36 @@
  *   POST /gateway/webchat/:sessionId/message  → mensaje entrante
  *   GET  /gateway/webchat/:sessionId/stream   → SSE de respuestas
  *
- * El servidor Fastify/Express del gateway monta las rutas usando
+ * El servidor Express del gateway monta las rutas usando
  * WebChatAdapter.getRouter().
  *
  * Inspirado en Flowise ChatFlow y n8n WebhookNode.
  */
 
 import { Router, type Request, type Response } from 'express';
-import { prisma } from '../../../api/src/modules/core/db/prisma.service';
+import type { PrismaClient } from '@prisma/client';
 import {
   BaseChannelAdapter,
+  type ChannelType,
   type IncomingMessage,
   type OutgoingMessage,
 } from './channel-adapter.interface';
 
-const db = prisma as any;
-
 export class WebChatAdapter extends BaseChannelAdapter {
-  readonly channel = 'webchat';
+  readonly channel = 'webchat' as const satisfies ChannelType;
 
   // SSE clients: sessionId → list of Response streams
   private readonly sseClients = new Map<string, Response[]>();
 
-  // ── Lifecycle ────────────────────────────────────────────────────────────
+  constructor(private readonly db: PrismaClient) {
+    super();
+  }
+
+  // ── Lifecycle ──────────────────────────────────────────────────────────────────────
 
   async initialize(channelConfigId: string): Promise<void> {
     this.channelConfigId = channelConfigId;
-    const config = await db.channelConfig.findUnique({
+    const config = await this.db.channelConfig.findUnique({
       where: { id: channelConfigId },
     });
     if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
@@ -48,7 +51,7 @@ export class WebChatAdapter extends BaseChannelAdapter {
     this.sseClients.clear();
   }
 
-  // ── Send ─────────────────────────────────────────────────────────────────
+  // ── Send ────────────────────────────────────────────────────────────────────────────
 
   async send(message: OutgoingMessage): Promise<void> {
     const clients = this.sseClients.get(message.externalId) ?? [];
@@ -62,7 +65,7 @@ export class WebChatAdapter extends BaseChannelAdapter {
 
     if (clients.length === 0) {
       // Guardar en DB para que el cliente la recupere en el próximo poll
-      await db.gatewaySession.update({
+      await this.db.gatewaySession.update({
         where: {
           channelConfigId_externalId: {
             channelConfigId: this.channelConfigId,
@@ -85,7 +88,7 @@ export class WebChatAdapter extends BaseChannelAdapter {
     });
   }
 
-  // ── Express Router ───────────────────────────────────────────────────────
+  // ── Express Router ───────────────────────────────────────────────────────────────────
 
   getRouter(): Router {
     const router = Router();
@@ -104,12 +107,14 @@ export class WebChatAdapter extends BaseChannelAdapter {
       }
 
       const msg: IncomingMessage = {
-        externalId: sessionId,
-        senderId: sessionId,
-        text: text.trim(),
-        type: 'text',
+        channelConfigId: this.channelConfigId,
+        channelType:     'webchat',
+        externalId:      sessionId,
+        senderId:        sessionId,
+        text:            text.trim(),
+        type:            'text',
         metadata,
-        receivedAt: this.makeTimestamp(),
+        receivedAt:      this.makeTimestamp(),
       };
 
       await this.emit(msg);
@@ -147,7 +152,7 @@ export class WebChatAdapter extends BaseChannelAdapter {
     // GET /webchat/:sessionId/history — historial para HTTP polling
     router.get('/:sessionId/history', async (req: Request, res: Response) => {
       const { sessionId } = req.params;
-      const session = await db.gatewaySession.findFirst({
+      const session = await this.db.gatewaySession.findFirst({
         where: {
           channelConfigId: this.channelConfigId,
           externalId: sessionId,
