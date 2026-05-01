@@ -1,7 +1,7 @@
 /**
- * slack.adapter.ts — Canal Slack vía @slack/bolt
+ * slack.adapter.ts — Adaptador Slack
  *
- * Modo de operación: Socket Mode (no requiere URL pública) o HTTP mode.
+ * Soporta dos modos:
  *   - Socket Mode: SLACK_SOCKET_MODE=true + SLACK_APP_TOKEN=xapp-...
  *   - HTTP Mode: recibe POST en /gateway/slack/:channelId
  *
@@ -23,6 +23,7 @@
 import { getPrisma } from '../../lib/prisma.js';
 import {
   BaseChannelAdapter,
+  type ChannelType,
   type IncomingMessage,
   type OutgoingMessage,
 } from './channel-adapter.interface';
@@ -61,7 +62,7 @@ type SlackEventPayload = {
 };
 
 export class SlackAdapter extends BaseChannelAdapter {
-  readonly channel = 'slack';
+  readonly channel = 'slack' as const satisfies ChannelType;
 
   private boltApp:    BoltApp | null = null;
   private socketMode = false;
@@ -73,12 +74,10 @@ export class SlackAdapter extends BaseChannelAdapter {
   async initialize(channelConfigId: string): Promise<void> {
     this.channelConfigId = channelConfigId;
 
-    // Carga credenciales desde DB — mismo patrón que discord/telegram/whatsapp adapters
     const db     = getPrisma();
     const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } });
     if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
 
-    // Asignar credentials ANTES de cualquier uso (send/startSocketMode lo necesita)
     this.credentials = config.credentials as Record<string, unknown>;
 
     const secrets = this.credentials as SlackSecrets;
@@ -89,7 +88,6 @@ export class SlackAdapter extends BaseChannelAdapter {
     if (this.socketMode) {
       await this.startSocketMode();
     }
-    // En HTTP mode no hay nada que iniciar — los mensajes llegan vía receive()
 
     console.info(`[SlackAdapter] initialized (channelConfigId=${channelConfigId}, socketMode=${this.socketMode})`);
   }
@@ -99,18 +97,14 @@ export class SlackAdapter extends BaseChannelAdapter {
       await this.boltApp.stop().catch((err: unknown) =>
         console.warn('[SlackAdapter] stop error:', err),
       );
-      this.boltApp = null;
     }
+    this.boltApp = null;
   }
 
   // ---------------------------------------------------------------------------
-  // Receive (HTTP mode) — parsea Slack Events API payload
+  // Receive (HTTP mode)
   // ---------------------------------------------------------------------------
 
-  /**
-   * HTTP mode: parsea el payload de Slack Events API.
-   * Retorna null para eventos que no son mensajes.
-   */
   async receive(
     rawPayload: Record<string, unknown>,
   ): Promise<IncomingMessage | null> {
@@ -124,12 +118,14 @@ export class SlackAdapter extends BaseChannelAdapter {
     if (!event.user || !event.channel) return null;
 
     return {
-      externalId:  event.channel,
-      senderId:    event.user,
-      text:        event.text ?? '',
-      type:        'text',
-      receivedAt:  this.makeTimestamp(),
-      metadata:    rawPayload,
+      channelConfigId: this.channelConfigId,
+      channelType:     'slack',
+      externalId:      event.channel,
+      senderId:        event.user,
+      text:            event.text ?? '',
+      type:            'text',
+      receivedAt:      this.makeTimestamp(),
+      metadata:        rawPayload,
     };
   }
 
@@ -138,10 +134,9 @@ export class SlackAdapter extends BaseChannelAdapter {
   // ---------------------------------------------------------------------------
 
   async send(message: OutgoingMessage): Promise<void> {
-    const secrets = this.credentials as SlackSecrets;
+    const secrets    = this.credentials as SlackSecrets;
     const isMarkdown = message.type === 'markdown';
 
-    // Socket Mode: usar cliente Bolt
     if (this.socketMode && this.boltApp) {
       await this.boltApp.client.chat.postMessage({
         channel: message.externalId,
@@ -151,7 +146,6 @@ export class SlackAdapter extends BaseChannelAdapter {
       return;
     }
 
-    // HTTP mode: llamar directo a Slack Web API
     const response = await fetch('https://slack.com/api/chat.postMessage', {
       method:  'POST',
       headers: {
@@ -166,12 +160,8 @@ export class SlackAdapter extends BaseChannelAdapter {
     });
 
     if (!response.ok) {
-      throw new Error(`[SlackAdapter] send failed: HTTP ${response.status}`);
-    }
-
-    const body = (await response.json()) as { ok: boolean; error?: string };
-    if (!body.ok) {
-      throw new Error(`[SlackAdapter] Slack API error: ${body.error}`);
+      const err = await response.text();
+      throw new Error(`[SlackAdapter] send failed: ${err}`);
     }
   }
 
@@ -179,10 +169,6 @@ export class SlackAdapter extends BaseChannelAdapter {
   // Slack signature verification (HMAC-SHA256)
   // ---------------------------------------------------------------------------
 
-  /**
-   * Verifica la firma X-Slack-Signature del request.
-   * Llamar desde el router antes de dispatch().
-   */
   static async verifySignature(
     signingSecret: string,
     timestamp:     string,
@@ -207,7 +193,7 @@ export class SlackAdapter extends BaseChannelAdapter {
   }
 
   // ---------------------------------------------------------------------------
-  // Socket Mode interno
+  // Socket Mode bootstrap
   // ---------------------------------------------------------------------------
 
   private async startSocketMode(): Promise<void> {
@@ -236,12 +222,14 @@ export class SlackAdapter extends BaseChannelAdapter {
       if (!this.messageHandler || msg.bot_id || !msg.user) return;
 
       const incoming: IncomingMessage = {
-        externalId: msg.channel ?? '',
-        senderId:   msg.user,
-        text:       msg.text ?? '',
-        type:       'text',
-        receivedAt: this.makeTimestamp(),
-        metadata:   message as unknown as Record<string, unknown>,
+        channelConfigId: this.channelConfigId,
+        channelType:     'slack',
+        externalId:      msg.channel ?? '',
+        senderId:        msg.user,
+        text:            msg.text ?? '',
+        type:            'text',
+        receivedAt:      this.makeTimestamp(),
+        metadata:        message as unknown as Record<string, unknown>,
       };
 
       await this.emit(incoming);
@@ -249,6 +237,6 @@ export class SlackAdapter extends BaseChannelAdapter {
 
     await app.start();
     this.boltApp = app as unknown as BoltApp;
-    console.info('[SlackAdapter] Socket Mode started');
+    console.info('[SlackAdapter] Socket Mode connected');
   }
 }

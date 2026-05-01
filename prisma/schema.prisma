@@ -270,18 +270,44 @@ model RunStep {
   @@index([agentId, startedAt])
 }
 
+enum ChannelType {
+  telegram
+  whatsapp
+  webchat
+  discord
+  teams
+  slack
+  webhook
+}
+
+/// Estado operacional del adaptador del canal.
+/// Actualizado por ChannelAdapterManager tras cada cambio de estado.
+enum BotStatus {
+  initializing
+  online
+  offline
+  error
+  rate_limited
+  webhook_error
+}
+
 // ─── Gateway / Channels ──────────────────────────────────────────────────────
 
 model ChannelConfig {
   id               String  @id @default(uuid())
-  /// 'telegram' | 'whatsapp' | 'webchat' | 'slack' | 'discord' | 'webhook'
-  type             String
+  type             ChannelType
   name             String
   /// AES-256-GCM encrypted secrets (CHANNEL_SECRET env key)
-  secretsEncrypted String   @db.Text
+  secretsEncrypted String      @db.Text
   /// Non-sensitive config: { webhookPath, parseMode, allowedOrigins, ... }
   config           Json
-  isActive         Boolean  @default(false)
+  isActive         Boolean     @default(false)
+  /// Estado operacional del bot/webhook — actualizado por el adapter manager.
+  botStatus        BotStatus   @default(initializing)
+  /// Detalle del último error o aviso (stack trace, mensaje Telegram API, etc.)
+  statusDetail     String?     @db.Text
+  /// Timestamp del último cambio de botStatus.
+  statusUpdatedAt  DateTime?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
