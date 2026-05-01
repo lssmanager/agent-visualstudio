@@ -293,10 +293,11 @@ describe('TelegramAdapter — grammÝY SDK', () => {
   })
 
   it('send() cuando bot === null → no lanza, solo warn', async () => {
-    // No inicializar el adapter — bot es null; implementación hace return+warn
+    // bot es null porque no se llamó initialize();
+    // el adapter hace console.warn + return → resuelve a undefined
     await expect(
       adapter.send({ externalId: '000', text: 'test' }),
-    ).resolves.not.toThrow()
+    ).resolves.toBeUndefined()
   })
 
   // ── sendTyping() ────────────────────────────────────────────────────
