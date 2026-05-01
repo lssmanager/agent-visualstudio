@@ -26,9 +26,9 @@ import {
 const DISCORD_API = 'https://discord.com/api/v10';
 
 interface DiscordCredentials {
-  botToken:      string;
-  applicationId: string;
-  publicKey:     string;
+  botToken:       string;
+  applicationId:  string;
+  publicKey:      string;
 }
 
 const INTERACTION_TYPE          = { PING: 1, APPLICATION_COMMAND: 2, MESSAGE_COMPONENT: 3 };
@@ -48,11 +48,11 @@ export class DiscordAdapter extends BaseChannelAdapter {
     const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } });
     if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
 
-    const creds        = config.credentials as DiscordCredentials;
-    this.botToken      = creds.botToken;
-    this.applicationId = creds.applicationId;
-    this.publicKey     = creds.publicKey;
-    this.credentials   = config.credentials as Record<string, unknown>;
+    const creds          = config.credentials as DiscordCredentials;
+    this.botToken        = creds.botToken;
+    this.applicationId   = creds.applicationId;
+    this.publicKey       = creds.publicKey;
+    this.credentials     = config.credentials as Record<string, unknown>;
 
     console.info(`[discord] Initialized app ${this.applicationId}`);
   }
@@ -99,14 +99,14 @@ export class DiscordAdapter extends BaseChannelAdapter {
       }
 
       const interaction = req.body as {
-        type:           number;
-        id:             string;
-        token:          string;
-        application_id: string;
-        data?:          { name?: string; options?: Array<{ name: string; value: unknown }> };
-        member?:        { user?: { id: string; username?: string } };
-        user?:          { id: string; username?: string };
-        channel_id?:    string;
+        type:            number;
+        id:              string;
+        token:           string;
+        application_id:  string;
+        data?:           { name?: string; options?: Array<{ name: string; value: unknown }> };
+        member?:         { user?: { id: string; username?: string } };
+        user?:           { id: string; username?: string };
+        channel_id?:     string;
       };
 
       if (interaction.type === INTERACTION_TYPE.PING) {
@@ -140,12 +140,16 @@ export class DiscordAdapter extends BaseChannelAdapter {
         return;
       }
 
-      res.json({ type: INTERACTION_RESPONSE_TYPE.CHANNEL_MESSAGE_WITH_SOURCE,
-        data: { content: 'Interacción no soportada', flags: 64 } });
+      res.json({
+        type: INTERACTION_RESPONSE_TYPE.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: { content: 'Interacción no soportada', flags: 64 },
+      });
     });
 
     return router;
   }
+
+  // ── Helpers ──────────────────────────────────────────────────────────────────────
 
   private _verifySignature(body: string, timestamp: string, signature: string): boolean {
     try {

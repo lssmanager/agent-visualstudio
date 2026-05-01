@@ -9,8 +9,7 @@
  *   {
  *     botToken:      "xoxb-...",
  *     signingSecret: "...",
- *     appToken?:     "xapp-..." (solo Socket Mode),
- *     socketMode?:   boolean
+ *     appToken?:     "xapp-..." (solo Socket Mode)
  *   }
  *
  * Patrón de integración:
@@ -41,10 +40,10 @@ type BoltApp = {
 };
 
 type SlackSecrets = {
-  botToken:      string;
-  signingSecret: string;
-  appToken?:     string;
-  socketMode?:   boolean;
+  botToken:       string;
+  signingSecret:  string;
+  appToken?:      string;
+  socketMode?:    boolean;
 };
 
 type SlackMessageEvent = {
@@ -103,7 +102,7 @@ export class SlackAdapter extends BaseChannelAdapter {
   }
 
   // ---------------------------------------------------------------------------
-  // Receive (HTTP mode) — parsea Slack Events API payload
+  // Receive (HTTP mode)
   // ---------------------------------------------------------------------------
 
   async receive(
