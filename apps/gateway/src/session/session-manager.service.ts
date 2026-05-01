@@ -40,7 +40,7 @@ const MAX_HISTORY_TURNS = 40
 
 /**
  * TTL de sesión: si updatedAt > MAX_SESSION_AGE_MS atrás,
- * el historial se retorna vacío (sesión “fría” → contexto limpio).
+ * el historial se retorna vacío (sesión "fría" → contexto limpio).
  * Default: 24 horas.
  */
 const MAX_SESSION_AGE_MS = 24 * 60 * 60 * 1_000
@@ -60,13 +60,15 @@ export class SessionManager {
    * Punto de entrada principal del flujo inbound.
    *
    * Pasos:
-   *  1. upsert GatewaySession por (channelConfigId, externalUserId)
-   *  2. Si la sesión está “fría” (> MAX_SESSION_AGE_MS sin actividad):
+   *  1. Buscar sesión existente para capturar updatedAt ANTES del upsert
+   *  2. Comprobar TTL contra el updatedAt ORIGINAL (no el que escribirá el upsert)
+   *  3. Upsert GatewaySession con updatedAt=now
+   *  4. Si la sesión estaba "fría" (> MAX_SESSION_AGE_MS sin actividad):
    *     - preserva turns anteriores en DB
    *     - pero retorna history=[] al AgentRunner (contexto limpio)
-   *  3. Crear ConversationMessage con role='user'
-   *  4. Cargar los últimos MAX_HISTORY_TURNS turns (desc + reverse)
-   *  5. Actualizar caché y retornar GatewaySessionDto
+   *  5. Crear ConversationMessage con role='user'
+   *  6. Cargar los últimos MAX_HISTORY_TURNS turns (desc + reverse)
+   *  7. Actualizar caché y retornar GatewaySessionDto
    */
   async receiveUserMessage(
     channelConfigId: string,
@@ -76,7 +78,20 @@ export class SessionManager {
     const externalUserId = incoming.externalId
     const now = new Date()
 
-    // ── 1. Upsert sesión ───────────────────────────────────────────
+    // ── 1. Leer sesión existente para capturar updatedAt original ──
+    // CRÍTICO: el upsert sobreescribe updatedAt=now, así que si hacemos
+    // isSessionStale(sessionRow.updatedAt) DESPUÉS del upsert, siempre
+    // comparamos now vs now → nunca stale. Debemos leer ANTES.
+    const existing = await (this.db as any).gatewaySession.findUnique({
+      where: {
+        channelConfigId_externalUserId: { channelConfigId, externalUserId },
+      },
+    })
+
+    // ── 2. Comprobar TTL contra updatedAt original ─────────────────
+    const isStale = existing ? this.isSessionStale(existing.updatedAt) : false
+
+    // ── 3. Upsert sesión ───────────────────────────────────────────
     const sessionRow = await (this.db as any).gatewaySession.upsert({
       where: {
         channelConfigId_externalUserId: { channelConfigId, externalUserId },
@@ -92,10 +107,7 @@ export class SessionManager {
       },
     })
 
-    // ── 2. Comprobar TTL ───────────────────────────────────────────
-    const isStale = this.isSessionStale(sessionRow.updatedAt)
-
-    // ── 3. Crear turn de usuario ─────────────────────────────────
+    // ── 4. Crear turn de usuario ─────────────────────────────────
     // TODO: remover 'as any' tras npx prisma generate
     await (this.db as any).conversationMessage.create({
       data: {
@@ -110,12 +122,12 @@ export class SessionManager {
       },
     })
 
-    // ── 4. Cargar historial ──────────────────────────────────────
+    // ── 5. Cargar historial ──────────────────────────────────────
     const turns = isStale
       ? []
       : await this.loadTurns(sessionRow.id)
 
-    // ── 5. Construir DTO y cachear ────────────────────────────────
+    // ── 6. Construir DTO y cachear ────────────────────────────────
     const dto: GatewaySessionDto = {
       id:              sessionRow.id,
       channelConfigId: sessionRow.channelConfigId,
