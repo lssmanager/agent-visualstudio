@@ -1,16 +1,16 @@
 /**
- * discord.adapter.ts — Adaptador Discord
+ * discord.adapter.ts — Adaptador Discord (Interactions Endpoint)
  *
- * Recibe slash commands e interacciones via webhook de Discord.
- * Envía DMs y mensajes de canal usando Discord REST API.
+ * Recibe slash commands e interacciones via HTTP endpoint.
+ * Discord requiere verificación Ed25519 de cada request.
  *
- * Credentials en ChannelConfig.credentials (cifrado en DB):
+ * Credentials en ChannelConfig.credentials:
  *   { botToken, applicationId, publicKey }
  *
  * Endpoints:
- *   POST /gateway/discord/interactions — slash commands e interacciones
+ *   POST /gateway/discord/interactions — interacciones de Discord
  *
- * Inspirado en n8n DiscordTrigger y Semantic Kernel DiscordPlugin.
+ * Inspirado en n8n DiscordTrigger y Semantic Kernel Discord plugin.
  */
 
 import { createVerify } from 'node:crypto';
@@ -18,6 +18,7 @@ import { Router, type Request, type Response } from 'express';
 import { getPrisma } from '../../lib/prisma.js';
 import {
   BaseChannelAdapter,
+  type ChannelType,
   type IncomingMessage,
   type OutgoingMessage,
 } from './channel-adapter.interface';
@@ -34,7 +35,7 @@ const INTERACTION_TYPE          = { PING: 1, APPLICATION_COMMAND: 2, MESSAGE_COM
 const INTERACTION_RESPONSE_TYPE = { PONG: 1, CHANNEL_MESSAGE_WITH_SOURCE: 4 };
 
 export class DiscordAdapter extends BaseChannelAdapter {
-  readonly channel = 'discord';
+  readonly channel = 'discord' as const satisfies ChannelType;
   private botToken      = '';
   private applicationId = '';
   private publicKey     = '';
@@ -126,19 +127,23 @@ export class DiscordAdapter extends BaseChannelAdapter {
         });
 
         const msg: IncomingMessage = {
-          externalId: channelId,
-          senderId:   userId,
-          text:       userInput,
-          type:       'command',
-          metadata:   { interactionId: interaction.id, interactionToken: interaction.token, commandName, raw: interaction },
-          receivedAt: this.makeTimestamp(),
+          channelConfigId: this.channelConfigId,
+          channelType:     'discord',
+          externalId:      channelId,
+          senderId:        userId,
+          text:            userInput,
+          type:            'command',
+          metadata:        { interactionId: interaction.id, interactionToken: interaction.token, commandName, raw: interaction },
+          receivedAt:      this.makeTimestamp(),
         };
         this.emit(msg).catch((err) => console.error('[discord] emit error:', err));
         return;
       }
 
-      res.json({ type: INTERACTION_RESPONSE_TYPE.CHANNEL_MESSAGE_WITH_SOURCE,
-        data: { content: 'Interacción no soportada', flags: 64 } });
+      res.json({
+        type: INTERACTION_RESPONSE_TYPE.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: { content: 'Interacción no soportada', flags: 64 },
+      });
     });
 
     return router;

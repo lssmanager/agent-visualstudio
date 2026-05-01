@@ -16,6 +16,7 @@ import { Router, type Request, type Response } from 'express';
 import { getPrisma } from '../../lib/prisma.js';
 import {
   BaseChannelAdapter,
+  type ChannelType,
   type IncomingMessage,
   type OutgoingMessage,
 } from './channel-adapter.interface';
@@ -28,11 +29,11 @@ interface TelegramCredentials {
 }
 
 export class TelegramAdapter extends BaseChannelAdapter {
-  readonly channel      = 'telegram';
+  readonly channel      = 'telegram' as const satisfies ChannelType;
   private botToken      = '';
   private webhookSecret = '';
 
-  // ── Lifecycle ─────────────────────────────────────────────────────────────────────
+  // ── Lifecycle ─────────────────────────────────────────────────────────────────────────────────
 
   async initialize(channelConfigId: string): Promise<void> {
     this.channelConfigId = channelConfigId;
@@ -52,7 +53,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
     console.info('[telegram] Adapter disposed');
   }
 
-  // ── Send ────────────────────────────────────────────────────────────────────────
+  // ── Send ───────────────────────────────────────────────────────────────────────────────
 
   async send(message: OutgoingMessage): Promise<void> {
     const url  = `${TELEGRAM_API}/bot${this.botToken}/sendMessage`;
@@ -76,7 +77,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
     }
   }
 
-  // ── Router ────────────────────────────────────────────────────────────────────
+  // ── Router ────────────────────────────────────────────────────────────────────────────
 
   getRouter(): Router {
     const router = Router();
@@ -106,23 +107,27 @@ export class TelegramAdapter extends BaseChannelAdapter {
 
       if (message?.text) {
         const msg: IncomingMessage = {
-          externalId: String(message.chat.id),
-          senderId:   String(message.from?.id ?? message.chat.id),
-          text:       message.text,
-          type:       message.text.startsWith('/') ? 'command' : 'text',
-          metadata:   { updateId: update.update_id, raw: message },
-          receivedAt: this.makeTimestamp(),
+          channelConfigId: this.channelConfigId,
+          channelType:     'telegram',
+          externalId:      String(message.chat.id),
+          senderId:        String(message.from?.id ?? message.chat.id),
+          text:            message.text,
+          type:            message.text.startsWith('/') ? 'command' : 'text',
+          metadata:        { updateId: update.update_id, raw: message },
+          receivedAt:      this.makeTimestamp(),
         };
         await this.emit(msg);
       } else if (callbackQuery?.data) {
         const chatId = callbackQuery.message?.chat.id;
         const msg: IncomingMessage = {
-          externalId: String(chatId),
-          senderId:   String(chatId),
-          text:       callbackQuery.data,
-          type:       'command',
-          metadata:   { callbackQueryId: callbackQuery.id, raw: callbackQuery },
-          receivedAt: this.makeTimestamp(),
+          channelConfigId: this.channelConfigId,
+          channelType:     'telegram',
+          externalId:      String(chatId),
+          senderId:        String(chatId),
+          text:            callbackQuery.data,
+          type:            'button_click',
+          metadata:        { callbackQueryId: callbackQuery.id, raw: callbackQuery },
+          receivedAt:      this.makeTimestamp(),
         };
         await this.emit(msg);
         await fetch(`${TELEGRAM_API}/bot${this.botToken}/answerCallbackQuery`, {
