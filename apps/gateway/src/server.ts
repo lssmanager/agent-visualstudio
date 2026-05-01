@@ -1,10 +1,15 @@
-/**
- * server.ts � Express app factory del Gateway
+﻿/**
+ * server.ts — Express app factory del Gateway
  */
 
 import path from 'path';
 import express, { type Application } from 'express';
 import { PrismaClient } from '@prisma/client';
+import {
+  registry,
+  TelegramAdapter,
+  WebChatAdapter,
+} from '@agent-vs/gateway-sdk';
 import { applySecurityMiddleware } from './middleware/security.middleware';
 import { GatewayService } from './gateway.service';
 import { telegramRouter } from './routes/telegram';
@@ -21,6 +26,9 @@ export interface AppOptions {
 export function createApp(opts: AppOptions = {}): Application {
   const app = express();
   const db = opts.db ?? new PrismaClient();
+
+  if (!registry.has('telegram')) registry.register(new TelegramAdapter());
+  if (!registry.has('webchat')) registry.register(new WebChatAdapter());
 
   applySecurityMiddleware(app, {
     corsOrigins: opts.corsOrigins,
@@ -49,9 +57,9 @@ export function createApp(opts: AppOptions = {}): Application {
 
   app.use('/gateway/telegram', telegramRouter(gatewayService));
   app.use('/gateway/webchat', webchatGatewayRouter(gatewayService));
-  app.use('/gateway/whatsapp', whatsappBaileysRouter());
   app.use('/api/webchat', webchatApiRouter(gatewayService));
   app.use('/api/channels', channelsApiRouter(db, gatewayService));
+  app.use('/gateway/whatsapp', whatsappBaileysRouter(db));
 
   app.use((_req, res) => {
     res.status(404).json({ ok: false, error: 'Route not found' });
