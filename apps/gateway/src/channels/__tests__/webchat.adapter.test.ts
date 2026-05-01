@@ -1,8 +1,5 @@
 /**
- * webchat.adapter.test.ts — Integration tests for WebChatAdapter (ws)
- *
- * Pattern: creates an in-memory http.Server, attaches the adapter,
- * connects with a ws client, sends frames, verifies responses.
+ * webchat.adapter.test.ts - Integration tests for WebChatAdapter (ws)
  */
 
 import { createServer, type Server } from 'http'
@@ -10,23 +7,22 @@ import { WebSocket } from 'ws'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { WebChatAdapter } from '../webchat.adapter.js'
 
-// ── Mock prisma ─────────────────────────────────────────────────────────
-vi.mock('../../../../api/src/modules/core/db/prisma.service', () => ({
-  prisma: {
-    channelConfig: {
-      findUnique: vi.fn().mockResolvedValue({
-        id:          'cfg-1',
-        credentials: {},
-      }),
-    },
-    gatewaySession: {
-      findFirst: vi.fn().mockResolvedValue(null),
-      upsert:    vi.fn().mockResolvedValue({}),
-    },
+const prismaMock = vi.hoisted(() => ({
+  channelConfig: {
+    findUnique: vi.fn().mockResolvedValue({
+      id: 'cfg-1',
+      credentials: {},
+    }),
+  },
+  gatewaySession: {
+    findFirst: vi.fn().mockResolvedValue(null),
+    upsert: vi.fn().mockResolvedValue({}),
   },
 }))
 
-// ── Helpers ─────────────────────────────────────────────────────────────
+vi.mock('../../prisma/prisma.service.js', () => ({
+  PrismaService: vi.fn().mockImplementation(() => prismaMock),
+}))
 
 function waitForFrame(
   ws: WebSocket,
@@ -34,10 +30,7 @@ function waitForFrame(
   timeoutMs = 2000,
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error('waitForFrame timeout')),
-      timeoutMs,
-    )
+    const timer = setTimeout(() => reject(new Error('waitForFrame timeout')), timeoutMs)
     ws.on('message', (data) => {
       const frame = JSON.parse(data.toString()) as Record<string, unknown>
       if (predicate(frame)) {
@@ -54,8 +47,8 @@ function connectWS(
 ): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const query = new URLSearchParams(params).toString()
-    const ws = new WebSocket(`ws://localhost:${port}/gateway/webchat?${query}`)
-    ws.once('open',  () => resolve(ws))
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/gateway/webchat?${query}`)
+    ws.once('open', () => resolve(ws))
     ws.once('error', reject)
   })
 }
@@ -68,15 +61,13 @@ function closeWS(ws: WebSocket): Promise<void> {
   })
 }
 
-// ── Test suite ──────────────────────────────────────────────────────────
-
-describe('WebChatAdapter — WebSocket protocol', () => {
+describe('WebChatAdapter - WebSocket protocol', () => {
   let httpServer: Server
   let adapter: WebChatAdapter
   let port: number
 
   beforeEach(async () => {
-    adapter    = new WebChatAdapter()
+    adapter = new WebChatAdapter()
     httpServer = createServer()
     await adapter.initialize('cfg-1', httpServer)
 
@@ -94,31 +85,39 @@ describe('WebChatAdapter — WebSocket protocol', () => {
     await new Promise<void>((res) => httpServer.close(() => res()))
   })
 
-  // ── Conexión ──────────────────────────────────────────────────────────
-
-  it('conectar sin sessionId → recibe error MISSING_SESSION_ID y se cierra con 1008', async () => {
-    const ws = await connectWS(port, {}) // sin sessionId
-    const frame = await waitForFrame(ws, (f) => f['type'] === 'error')
-    expect(frame['code']).toBe('MISSING_SESSION_ID')
-
-    const closeCode = await new Promise<number>((resolve) => {
+  it('conectar sin sessionId -> recibe error MISSING_SESSION_ID y se cierra con 1008', async () => {
+    const ws = await connectWS(port, {})
+    const closed = new Promise<number>((resolve) => {
       ws.once('close', (code) => resolve(code))
     })
-    expect(closeCode).toBe(1008)
+
+    const frame = await waitForFrame(ws, (f) => f['type'] === 'error')
+    expect(frame['code']).toBe('MISSING_SESSION_ID')
+    expect(await closed).toBe(1008)
   })
 
-  it('conectar con sessionId válido → primer frame es { type: connected, sessionId }', async () => {
-    const ws = await connectWS(port, { sessionId: 'sess-001' })
+  it('conectar sin agentId -> recibe error MISSING_AGENT_ID y se cierra con 1008', async () => {
+    const ws = await connectWS(port, { sessionId: 'sess-missing-agent' })
+    const closed = new Promise<number>((resolve) => {
+      ws.once('close', (code) => resolve(code))
+    })
+
+    const frame = await waitForFrame(ws, (f) => f['type'] === 'error')
+    expect(frame['code']).toBe('MISSING_AGENT_ID')
+    expect(await closed).toBe(1008)
+  })
+
+  it('conectar con sessionId valido -> primer frame es connected', async () => {
+    const ws = await connectWS(port, { sessionId: 'sess-001', agentId: 'agent-1' })
     const frame = await waitForFrame(ws, (f) => f['type'] === 'connected')
     expect(frame['sessionId']).toBe('sess-001')
     await closeWS(ws)
   })
 
-  it('múltiples clientes con el mismo sessionId → ambos reciben el mensaje de send()', async () => {
-    const ws1 = await connectWS(port, { sessionId: 'sess-multi' })
-    const ws2 = await connectWS(port, { sessionId: 'sess-multi' })
+  it('multiple clients with same sessionId -> both receive send() message', async () => {
+    const ws1 = await connectWS(port, { sessionId: 'sess-multi', agentId: 'agent-1' })
+    const ws2 = await connectWS(port, { sessionId: 'sess-multi', agentId: 'agent-1' })
 
-    // Consumir frames 'connected'
     await waitForFrame(ws1, (f) => f['type'] === 'connected')
     await waitForFrame(ws2, (f) => f['type'] === 'connected')
 
@@ -137,14 +136,14 @@ describe('WebChatAdapter — WebSocket protocol', () => {
     await closeWS(ws2)
   })
 
-  // ── Mensajes ──────────────────────────────────────────────────────────
-
-  it('enviar { type: message, text: "hola" } → messageHandler llamado con texto correcto', async () => {
-    const ws = await connectWS(port, { sessionId: 'sess-msg' })
+  it('message frame with text dispatches the user message', async () => {
+    const ws = await connectWS(port, { sessionId: 'sess-msg', agentId: 'agent-1' })
     await waitForFrame(ws, (f) => f['type'] === 'connected')
 
     let received: import('../channel-adapter.interface.js').IncomingMessage | null = null
-    adapter.onMessage(async (msg) => { received = msg })
+    adapter.onMessage(async (msg) => {
+      received = msg
+    })
 
     ws.send(JSON.stringify({ type: 'message', text: 'hola' }))
 
@@ -155,12 +154,14 @@ describe('WebChatAdapter — WebSocket protocol', () => {
     await closeWS(ws)
   })
 
-  it('enviar { type: message, text: "" } → recibe error EMPTY_MESSAGE, messageHandler NO llamado', async () => {
-    const ws = await connectWS(port, { sessionId: 'sess-empty' })
+  it('empty message returns EMPTY_MESSAGE and does not dispatch', async () => {
+    const ws = await connectWS(port, { sessionId: 'sess-empty', agentId: 'agent-1' })
     await waitForFrame(ws, (f) => f['type'] === 'connected')
 
     let called = false
-    adapter.onMessage(async () => { called = true })
+    adapter.onMessage(async () => {
+      called = true
+    })
 
     ws.send(JSON.stringify({ type: 'message', text: '' }))
 
@@ -171,8 +172,8 @@ describe('WebChatAdapter — WebSocket protocol', () => {
     await closeWS(ws)
   })
 
-  it('enviar JSON malformado → recibe error INVALID_JSON', async () => {
-    const ws = await connectWS(port, { sessionId: 'sess-json' })
+  it('malformed JSON returns INVALID_JSON', async () => {
+    const ws = await connectWS(port, { sessionId: 'sess-json', agentId: 'agent-1' })
     await waitForFrame(ws, (f) => f['type'] === 'connected')
 
     ws.send('not-valid-json{')
@@ -183,8 +184,8 @@ describe('WebChatAdapter — WebSocket protocol', () => {
     await closeWS(ws)
   })
 
-  it('enviar { type: ping } → recibe { type: pong }', async () => {
-    const ws = await connectWS(port, { sessionId: 'sess-ping' })
+  it('ping returns pong', async () => {
+    const ws = await connectWS(port, { sessionId: 'sess-ping', agentId: 'agent-1' })
     await waitForFrame(ws, (f) => f['type'] === 'connected')
 
     ws.send(JSON.stringify({ type: 'ping' }))
@@ -195,10 +196,28 @@ describe('WebChatAdapter — WebSocket protocol', () => {
     await closeWS(ws)
   })
 
-  // ── send() / respuestas ───────────────────────────────────────────────
+  it('history_request returns the active session history', async () => {
+    vi.mocked(prismaMock.gatewaySession.findFirst).mockResolvedValueOnce({
+      activeContextJson: [
+        { role: 'user', content: 'hola', ts: '2026-05-01T00:00:00.000Z' },
+        { role: 'assistant', content: 'saludos', ts: '2026-05-01T00:00:01.000Z' },
+      ],
+    })
 
-  it('adapter.send() con cliente conectado → cliente recibe { type: message }', async () => {
-    const ws = await connectWS(port, { sessionId: 'sess-send' })
+    const ws = await connectWS(port, { sessionId: 'sess-history', agentId: 'agent-1' })
+    await waitForFrame(ws, (f) => f['type'] === 'connected')
+
+    ws.send(JSON.stringify({ type: 'history_request' }))
+
+    const frame = await waitForFrame(ws, (f) => f['type'] === 'history')
+    expect(Array.isArray(frame['messages'])).toBe(true)
+    expect((frame['messages'] as Array<Record<string, unknown>>).length).toBe(2)
+
+    await closeWS(ws)
+  })
+
+  it('adapter.send() with connected client delivers a message frame', async () => {
+    const ws = await connectWS(port, { sessionId: 'sess-send', agentId: 'agent-1' })
     await waitForFrame(ws, (f) => f['type'] === 'connected')
 
     const pending = waitForFrame(ws, (f) => f['type'] === 'message')
@@ -210,21 +229,16 @@ describe('WebChatAdapter — WebSocket protocol', () => {
     await closeWS(ws)
   })
 
-  it('adapter.send() sin cliente conectado → no lanza, llama upsert en DB', async () => {
-    const { prisma } = await import('../../../../api/src/modules/core/db/prisma.service')
-    const upsertSpy = vi.spyOn((prisma as any).gatewaySession, 'upsert')
-
+  it('adapter.send() without a client does not throw and upserts the session', async () => {
     await expect(
       adapter.send({ externalId: 'sess-offline', text: 'guardado' }),
     ).resolves.not.toThrow()
 
-    expect(upsertSpy).toHaveBeenCalled()
+    expect(prismaMock.gatewaySession.upsert).toHaveBeenCalled()
   })
 
-  // ── sendTyping() ──────────────────────────────────────────────────────
-
-  it('sendTyping(sessionId, "start") → cliente recibe { type: typing, status: "start" }', async () => {
-    const ws = await connectWS(port, { sessionId: 'sess-typing' })
+  it('sendTyping(start) sends a typing frame', async () => {
+    const ws = await connectWS(port, { sessionId: 'sess-typing', agentId: 'agent-1' })
     await waitForFrame(ws, (f) => f['type'] === 'connected')
 
     const pending = waitForFrame(ws, (f) => f['type'] === 'typing')
@@ -236,23 +250,19 @@ describe('WebChatAdapter — WebSocket protocol', () => {
     await closeWS(ws)
   })
 
-  // ── Desconexión / limpieza ────────────────────────────────────────────
-
-  it('al cerrar WebSocket cliente → getStats().totalConnections decrementa', async () => {
-    const ws = await connectWS(port, { sessionId: 'sess-disconnect' })
+  it('closing the client decrements totalConnections', async () => {
+    const ws = await connectWS(port, { sessionId: 'sess-disconnect', agentId: 'agent-1' })
     await waitForFrame(ws, (f) => f['type'] === 'connected')
 
     expect(adapter.getStats().totalConnections).toBe(1)
 
     await closeWS(ws)
-
-    // Pequeña espera para que el evento close se procese
     await new Promise((r) => setTimeout(r, 50))
     expect(adapter.getStats().totalConnections).toBe(0)
   })
 
-  it('dispose() → cierra todas las conexiones con código 1001', async () => {
-    const ws = await connectWS(port, { sessionId: 'sess-dispose' })
+  it('dispose closes all connections with code 1001', async () => {
+    const ws = await connectWS(port, { sessionId: 'sess-dispose', agentId: 'agent-1' })
     await waitForFrame(ws, (f) => f['type'] === 'connected')
 
     const closeCode = new Promise<number>((resolve) => {
@@ -260,7 +270,6 @@ describe('WebChatAdapter — WebSocket protocol', () => {
     })
 
     await adapter.dispose()
-
     expect(await closeCode).toBe(1001)
   })
 })

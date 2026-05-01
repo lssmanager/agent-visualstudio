@@ -1,9 +1,12 @@
-import { PrismaClient } from '@prisma/client'
+/**
+ * settings.service.ts
+ *
+ * Acepta PrismaClient como dependencia inyectada (patrón global del repo).
+ * Si no se pasa, usa el singleton `prisma` exportado por prisma.service
+ * (ruta canónica del repo: modules/core/db/prisma.service).
+ */
+import type { PrismaClient } from '@prisma/client'
 import { PROVIDER_MODELS } from '../../lib/provider-models'
-
-// Singleton prisma — si el proyecto exporta uno compartido (ej. lib/prisma.ts),
-// reemplazar esta línea con: import { prisma } from '../../lib/prisma'
-const prisma = new PrismaClient()
 
 // ── Errores tipados para el controller ───────────────────────────────────────
 export class NotFoundError extends Error {
@@ -17,16 +20,34 @@ export class BadRequestError extends Error {
 
 // ── Service ──────────────────────────────────────────────────────────────────
 export class SettingsService {
+  private readonly prisma: PrismaClient
+
+  /**
+   * @param prisma PrismaClient inyectado desde el caller (preferido).
+   *   Si se omite, importa el singleton `prisma` de modules/core/db/prisma.service.
+   *   Esto permite usar SettingsService() sin args (retrocompatible)
+   *   y SettingsService(prisma) con inyección explícita.
+   */
+  constructor(prisma?: PrismaClient) {
+    if (prisma) {
+      this.prisma = prisma
+    } else {
+      // Lazy require para evitar ciclos — usa la ruta canónica del repo
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { getPrisma } = require('../core/db/prisma.service') as { getPrisma: () => PrismaClient }
+      this.prisma = getPrisma()
+    }
+  }
 
   // ── helpers ────────────────────────────────────────────────────────────────
 
   private async getSysConfig(): Promise<Record<string, string>> {
-    const rows = await prisma.systemConfig.findMany()
-    return Object.fromEntries(rows.map(r => [r.key, r.value]))
+    const rows = await this.prisma.systemConfig.findMany()
+    return Object.fromEntries(rows.map((r: { key: string; value: string }) => [r.key, r.value]))
   }
 
   private async setKey(key: string, value: string): Promise<void> {
-    await prisma.systemConfig.upsert({
+    await this.prisma.systemConfig.upsert({
       where:  { key },
       update: { value },
       create: { key, value },
@@ -34,7 +55,7 @@ export class SettingsService {
   }
 
   private async deleteKey(key: string): Promise<void> {
-    await prisma.systemConfig.deleteMany({ where: { key } })
+    await this.prisma.systemConfig.deleteMany({ where: { key } })
   }
 
   // ── providers ──────────────────────────────────────────────────────────────
@@ -45,7 +66,6 @@ export class SettingsService {
       id,
       name:        p.label,
       requiresKey: p.requiresKey,
-      // hasKey: solo indica si existe la key — NUNCA devuelve el valor
       hasKey:      p.keyEnv ? Boolean(config[p.keyEnv]) : false,
       baseURL:     null as string | null,
       models:      p.models,
@@ -77,7 +97,6 @@ export class SettingsService {
     const config = await this.getSysConfig()
     const start  = Date.now()
     try {
-      // Import dinámico para evitar dependencias circulares
       const { buildLLMClient } = await import('@agent-visualstudio/run-engine')
       const client = buildLLMClient(modelId, { configOverride: config })
       await client.chat(

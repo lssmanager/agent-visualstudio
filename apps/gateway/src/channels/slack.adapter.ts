@@ -1,26 +1,32 @@
 /**
- * slack.adapter.ts — Canal Slack vía @slack/bolt
+ * slack.adapter.ts — Adaptador Slack
  *
- * Modo de operación: Socket Mode (no requiere URL pública) o HTTP mode.
+ * Soporta dos modos:
  *   - Socket Mode: SLACK_SOCKET_MODE=true + SLACK_APP_TOKEN=xapp-...
  *   - HTTP Mode: recibe POST en /gateway/slack/:channelId
  *
- * Secrets esperados en ChannelConfig.secretsEncrypted:
+ * Secrets esperados en ChannelConfig.credentials (cifrado en DB):
  *   {
- *     botToken:     "xoxb-...",
+ *     botToken:      "xoxb-...",
  *     signingSecret: "...",
- *     appToken?:    "xapp-..." (solo Socket Mode)
+ *     appToken?:     "xapp-..." (solo Socket Mode)
  *   }
  *
  * Patrón de integración:
- *   El SlackAdapter implementa IChannelAdapter.
+ *   SlackAdapter extiende BaseChannelAdapter.
  *   En HTTP mode, receive() parsea el payload de Slack Events API.
  *   En Socket Mode, la App Bolt maneja internamente y llama onMessage handler.
  *
  * Ref: https://slack.dev/bolt-js/
  */
 
-import type { IChannelAdapter, IncomingMessage, OutgoingMessage } from './channel-adapter.interface';
+import { getPrisma } from '../../lib/prisma.js';
+import {
+  BaseChannelAdapter,
+  type ChannelType,
+  type IncomingMessage,
+  type OutgoingMessage,
+} from './channel-adapter.interface';
 
 // Tipos Bolt importados dinámicamente para lazy-load
 type BoltApp = {
@@ -30,89 +36,80 @@ type BoltApp = {
     };
   };
   start: () => Promise<void>;
-  stop: () => Promise<void>;
+  stop:  () => Promise<void>;
 };
 
 type SlackSecrets = {
-  botToken: string;
-  signingSecret: string;
-  appToken?: string;
+  botToken:       string;
+  signingSecret:  string;
+  appToken?:      string;
+  socketMode?:    boolean;
 };
 
 type SlackMessageEvent = {
-  type: string;
-  user?: string;
-  bot_id?: string;
-  text?: string;
+  type:     string;
+  user?:    string;
+  bot_id?:  string;
+  text?:    string;
   channel?: string;
-  ts?: string;
+  ts?:      string;
 };
 
 type SlackEventPayload = {
-  type: string;
-  event?: SlackMessageEvent;
+  type:       string;
+  event?:     SlackMessageEvent;
   challenge?: string;
 };
 
-export class SlackAdapter implements IChannelAdapter {
-  readonly channelType = 'slack';
+export class SlackAdapter extends BaseChannelAdapter {
+  readonly channel = 'slack' as const satisfies ChannelType;
 
-  private boltApp: BoltApp | null = null;
-  private secrets: SlackSecrets | null = null;
-  private messageHandler: ((msg: IncomingMessage) => Promise<void>) | null = null;
+  private boltApp:    BoltApp | null = null;
   private socketMode = false;
 
   // ---------------------------------------------------------------------------
-  // IChannelAdapter — setup / teardown
+  // IChannelAdapter — initialize / dispose
   // ---------------------------------------------------------------------------
 
-  async setup(
-    config: Record<string, unknown>,
-    secrets: Record<string, unknown>,
-  ): Promise<void> {
-    this.secrets = secrets as SlackSecrets;
+  async initialize(channelConfigId: string): Promise<void> {
+    this.channelConfigId = channelConfigId;
+
+    const db     = getPrisma();
+    const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } });
+    if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
+
+    this.credentials = config.credentials as Record<string, unknown>;
+
+    const secrets = this.credentials as SlackSecrets;
     this.socketMode =
-      (config['socketMode'] as boolean | undefined) ??
+      secrets.socketMode ??
       process.env.SLACK_SOCKET_MODE === 'true';
 
     if (this.socketMode) {
       await this.startSocketMode();
     }
-    // En HTTP mode no hay nada que iniciar — los mensajes llegan vía receive()
+
+    console.info(`[SlackAdapter] initialized (channelConfigId=${channelConfigId}, socketMode=${this.socketMode})`);
   }
 
-  async teardown(
-    _config: Record<string, unknown>,
-    _secrets: Record<string, unknown>,
-  ): Promise<void> {
+  async dispose(): Promise<void> {
     if (this.boltApp && this.socketMode) {
       await this.boltApp.stop().catch((err: unknown) =>
         console.warn('[SlackAdapter] stop error:', err),
       );
-      this.boltApp = null;
     }
+    this.boltApp = null;
   }
 
   // ---------------------------------------------------------------------------
-  // IChannelAdapter — onMessage / receive / send
+  // Receive (HTTP mode)
   // ---------------------------------------------------------------------------
 
-  onMessage(handler: (msg: IncomingMessage) => Promise<void>): void {
-    this.messageHandler = handler;
-  }
-
-  /**
-   * HTTP mode: parsea el payload de Slack Events API.
-   * Retorna null para eventos que no son mensajes (ej. url_verification ya
-   * se maneja en el router antes de llegar aquí).
-   */
   async receive(
     rawPayload: Record<string, unknown>,
-    _secrets: Record<string, unknown>,
   ): Promise<IncomingMessage | null> {
     const payload = rawPayload as SlackEventPayload;
 
-    // Ignorar mensajes de bots
     const event = payload.event;
     if (!event || event.type !== 'message' || event.bot_id) {
       return null;
@@ -121,53 +118,50 @@ export class SlackAdapter implements IChannelAdapter {
     if (!event.user || !event.channel) return null;
 
     return {
-      channelType: 'slack',
-      externalUserId: event.user,
-      externalChatId: event.channel,
-      text: event.text ?? '',
-      rawPayload,
+      channelConfigId: this.channelConfigId,
+      channelType:     'slack',
+      externalId:      event.channel,
+      senderId:        event.user,
+      text:            event.text ?? '',
+      type:            'text',
+      receivedAt:      this.makeTimestamp(),
+      metadata:        rawPayload,
     };
   }
 
-  async send(
-    outbound: OutgoingMessage,
-    _config: Record<string, unknown>,
-    secrets: Record<string, unknown>,
-  ): Promise<void> {
-    const s = (secrets as SlackSecrets);
+  // ---------------------------------------------------------------------------
+  // IChannelAdapter — send
+  // ---------------------------------------------------------------------------
 
-    // En Socket Mode, usamos el cliente Bolt
+  async send(message: OutgoingMessage): Promise<void> {
+    const secrets    = this.credentials as SlackSecrets;
+    const isMarkdown = message.type === 'markdown';
+
     if (this.socketMode && this.boltApp) {
       await this.boltApp.client.chat.postMessage({
-        channel: outbound.externalChatId ?? outbound.externalUserId,
-        text: outbound.text,
-        mrkdwn: outbound.parseMode === 'markdown',
+        channel: message.externalId,
+        text:    message.text,
+        mrkdwn:  isMarkdown,
       });
       return;
     }
 
-    // En HTTP mode, llamamos directo a la Slack Web API con fetch
-    const channel = outbound.externalChatId ?? outbound.externalUserId;
     const response = await fetch('https://slack.com/api/chat.postMessage', {
-      method: 'POST',
+      method:  'POST',
       headers: {
-        Authorization: `Bearer ${s.botToken}`,
+        Authorization:  `Bearer ${secrets.botToken}`,
         'Content-Type': 'application/json; charset=utf-8',
       },
       body: JSON.stringify({
-        channel,
-        text: outbound.text,
-        mrkdwn: outbound.parseMode === 'markdown',
+        channel: message.externalId,
+        text:    message.text,
+        mrkdwn:  isMarkdown,
       }),
     });
 
     if (!response.ok) {
-      throw new Error(`[SlackAdapter] send failed: HTTP ${response.status}`);
-    }
-
-    const body = (await response.json()) as { ok: boolean; error?: string };
-    if (!body.ok) {
-      throw new Error(`[SlackAdapter] Slack API error: ${body.error}`);
+      const err = await response.text();
+      throw new Error(`[SlackAdapter] send failed: ${err}`);
     }
   }
 
@@ -175,36 +169,23 @@ export class SlackAdapter implements IChannelAdapter {
   // Slack signature verification (HMAC-SHA256)
   // ---------------------------------------------------------------------------
 
-  /**
-   * Verifica la firma X-Slack-Signature del request.
-   * Llamar desde el router antes de dispatch().
-   *
-   * @param signingSecret  ChannelConfig.secretsEncrypted.signingSecret
-   * @param timestamp      Header X-Slack-Request-Timestamp
-   * @param signature      Header X-Slack-Signature
-   * @param rawBody        Raw body string (antes de JSON.parse)
-   */
   static async verifySignature(
     signingSecret: string,
-    timestamp: string,
-    signature: string,
-    rawBody: string,
+    timestamp:     string,
+    signature:     string,
+    rawBody:       string,
   ): Promise<boolean> {
-    // Rechazar requests con más de 5 minutos de antigüedad (replay attacks)
     const ts = parseInt(timestamp, 10);
     if (Math.abs(Date.now() / 1000 - ts) > 300) return false;
 
-    const { createHmac } = await import('crypto');
-    const baseString = `v0:${timestamp}:${rawBody}`;
-    const expectedSig =
-      'v0=' + createHmac('sha256', signingSecret).update(baseString).digest('hex');
+    const { createHmac, timingSafeEqual } = await import('crypto');
+    const baseString  = `v0:${timestamp}:${rawBody}`;
+    const expectedSig = 'v0=' + createHmac('sha256', signingSecret).update(baseString).digest('hex');
 
-    // Comparación segura para evitar timing attacks
-    const { timingSafeEqual } = await import('crypto');
     try {
       return timingSafeEqual(
         Buffer.from(expectedSig, 'utf8'),
-        Buffer.from(signature, 'utf8'),
+        Buffer.from(signature,   'utf8'),
       );
     } catch {
       return false;
@@ -212,15 +193,16 @@ export class SlackAdapter implements IChannelAdapter {
   }
 
   // ---------------------------------------------------------------------------
-  // Socket Mode interno
+  // Socket Mode bootstrap
   // ---------------------------------------------------------------------------
 
   private async startSocketMode(): Promise<void> {
-    if (!this.secrets?.appToken) {
+    const secrets = this.credentials as SlackSecrets;
+
+    if (!secrets.appToken) {
       throw new Error('[SlackAdapter] Socket Mode requires appToken (xapp-...)');
     }
 
-    // Importación dinámica — @slack/bolt no se carga si no se usa
     const { App, LogLevel } = await import('@slack/bolt').catch(() => {
       throw new Error(
         '[SlackAdapter] @slack/bolt not installed. Run: pnpm add @slack/bolt',
@@ -228,33 +210,33 @@ export class SlackAdapter implements IChannelAdapter {
     });
 
     const app = new App({
-      token: this.secrets.botToken,
-      signingSecret: this.secrets.signingSecret,
-      appToken: this.secrets.appToken,
-      socketMode: true,
-      logLevel: LogLevel.WARN,
+      token:         secrets.botToken,
+      signingSecret: secrets.signingSecret,
+      appToken:      secrets.appToken,
+      socketMode:    true,
+      logLevel:      LogLevel.WARN,
     });
 
-    // Escuchar mensajes
-    app.message(async ({ message, say: _say }) => {
+    app.message(async ({ message }) => {
       const msg = message as SlackMessageEvent;
       if (!this.messageHandler || msg.bot_id || !msg.user) return;
 
       const incoming: IncomingMessage = {
-        channelType: 'slack',
-        externalUserId: msg.user,
-        externalChatId: msg.channel,
-        text: msg.text ?? '',
-        rawPayload: message as unknown as Record<string, unknown>,
+        channelConfigId: this.channelConfigId,
+        channelType:     'slack',
+        externalId:      msg.channel ?? '',
+        senderId:        msg.user,
+        text:            msg.text ?? '',
+        type:            'text',
+        receivedAt:      this.makeTimestamp(),
+        metadata:        message as unknown as Record<string, unknown>,
       };
 
-      await this.messageHandler(incoming).catch((err: unknown) => {
-        console.error('[SlackAdapter] messageHandler error:', err);
-      });
+      await this.emit(incoming);
     });
 
     await app.start();
     this.boltApp = app as unknown as BoltApp;
-    console.info('[SlackAdapter] Socket Mode started');
+    console.info('[SlackAdapter] Socket Mode connected');
   }
 }

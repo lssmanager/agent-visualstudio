@@ -20,14 +20,14 @@
 
 import { WebSocketServer, WebSocket, type RawData } from 'ws'
 import type { IncomingMessage as HttpIncomingMessage, Server } from 'http'
-import { prisma } from '../../../api/src/modules/core/db/prisma.service'
+import { PrismaService } from '../prisma/prisma.service.js'
 import {
   BaseChannelAdapter,
   type IncomingMessage,
   type OutgoingMessage,
 } from './channel-adapter.interface.js'
 
-const db = prisma as any
+const db = new PrismaService()
 
 // ── Tipos de frame ──────────────────────────────────────────────────────
 
@@ -113,6 +113,10 @@ export class WebChatAdapter extends BaseChannelAdapter {
   }
 
   async dispose(): Promise<void> {
+    if (!this.wss) {
+      return Promise.resolve()
+    }
+
     // Cerrar todas las conexiones activas con código 1001 (Going Away)
     for (const [sessionId, conns] of this.connections) {
       for (const conn of conns) {
@@ -122,8 +126,9 @@ export class WebChatAdapter extends BaseChannelAdapter {
     }
     this.connections.clear()
 
+    const wss = this.wss
     await new Promise<void>((resolve, reject) => {
-      this.wss?.close((err) => (err ? reject(err) : resolve()))
+      wss.close((err) => (err ? reject(err) : resolve()))
     })
     this.wss = null
     console.info('[webchat] WebSocketServer closed')
@@ -149,23 +154,19 @@ export class WebChatAdapter extends BaseChannelAdapter {
       return
     }
 
-    const dead: ActiveConnection[] = []
-    for (const conn of conns) {
-      if (conn.ws.readyState === WebSocket.OPEN) {
-        conn.ws.send(payload)
-      } else {
-        dead.push(conn)
-      }
+    const alive = conns.filter((conn) => conn.ws.readyState === WebSocket.OPEN)
+    if (alive.length === 0) {
+      this.connections.delete(message.externalId)
+      await this.persistMessage(message.externalId, 'assistant', message.text)
+      return
     }
 
-    // Limpiar conexiones muertas
-    if (dead.length > 0) {
-      const alive = conns.filter((c) => !dead.includes(c))
-      if (alive.length > 0) {
-        this.connections.set(message.externalId, alive)
-      } else {
-        this.connections.delete(message.externalId)
-      }
+    if (alive.length !== conns.length) {
+      this.connections.set(message.externalId, alive)
+    }
+
+    for (const conn of alive) {
+      conn.ws.send(payload)
     }
   }
 
@@ -185,7 +186,7 @@ export class WebChatAdapter extends BaseChannelAdapter {
 
   private handleConnection(ws: WebSocket, req: HttpIncomingMessage): void {
     // Parsear query string: ?sessionId=...&agentId=...
-    const url       = new URL(req.url ?? '/', `ws://localhost`)
+    const url       = new URL(req.url ?? '/', `ws://127.0.0.1`)
     const sessionId = url.searchParams.get('sessionId') ?? ''
     const agentId   = url.searchParams.get('agentId')   ?? ''
 
@@ -196,6 +197,16 @@ export class WebChatAdapter extends BaseChannelAdapter {
         message: 'sessionId query param is required',
       })
       ws.close(1008, 'Missing sessionId')
+      return
+    }
+
+    if (!agentId) {
+      this.sendFrame(ws, {
+        type:    'error',
+        code:    'MISSING_AGENT_ID',
+        message: 'agentId query param is required',
+      })
+      ws.close(1008, 'Missing agentId')
       return
     }
 
@@ -286,9 +297,11 @@ export class WebChatAdapter extends BaseChannelAdapter {
         }
 
         // Persistir mensaje del usuario
-        await this.persistMessage(conn.sessionId, 'user', text)
+        await this.persistMessage(conn.sessionId, 'user', text, conn.agentId)
 
         const msg: IncomingMessage = {
+          channelConfigId: this.channelConfigId,
+          channelType:     'webchat',
           externalId:  conn.sessionId,
           senderId:    conn.sessionId,
           text,
@@ -342,10 +355,10 @@ export class WebChatAdapter extends BaseChannelAdapter {
       const session = await db.gatewaySession.findFirst({
         where: {
           channelConfigId: this.channelConfigId,
-          externalId:      conn.sessionId,
+          externalUserId:   conn.sessionId,
         },
       })
-      const messages = (session?.contextWindow as HistoryEntry[]) ?? []
+      const messages = this.readHistory(session?.activeContextJson)
       this.sendFrame(conn.ws, { type: 'history', messages })
     } catch (err) {
       console.error('[webchat] sendHistory error:', (err as Error).message)
@@ -361,26 +374,31 @@ export class WebChatAdapter extends BaseChannelAdapter {
     sessionId: string,
     role:      'user' | 'assistant',
     content:   string,
+    agentId?:  string,
   ): Promise<void> {
     try {
+      const resolvedAgentId = agentId ?? await this.resolveAgentId(sessionId)
+      if (!resolvedAgentId) {
+        throw new Error(`Missing agentId for WebChat session ${sessionId}`)
+      }
+
       await db.gatewaySession.upsert({
         where: {
-          channelConfigId_externalId: {
+          channelConfigId_externalUserId: {
             channelConfigId: this.channelConfigId,
-            externalId:      sessionId,
+            externalUserId:   sessionId,
           },
         },
         update: {
-          contextWindow: {
+          activeContextJson: {
             push: { role, content, ts: new Date().toISOString() },
           } as any,
-          lastActivityAt: new Date(),
         },
         create: {
           channelConfigId: this.channelConfigId,
-          externalId:      sessionId,
-          contextWindow:   [{ role, content, ts: new Date().toISOString() }] as any,
-          lastActivityAt:  new Date(),
+          externalUserId:   sessionId,
+          activeContextJson: [{ role, content, ts: new Date().toISOString() }] as any,
+          agentId:          resolvedAgentId,
         },
       })
     } catch (err) {
@@ -400,5 +418,23 @@ export class WebChatAdapter extends BaseChannelAdapter {
       activeSessions:   this.connections.size,
       totalConnections,
     }
+  }
+
+  private readHistory(value: unknown): HistoryEntry[] {
+    if (!Array.isArray(value)) return []
+    return value.filter((entry): entry is HistoryEntry => {
+      return !!entry && typeof entry === 'object' && typeof (entry as HistoryEntry).content === 'string'
+    })
+  }
+
+  private async resolveAgentId(sessionId: string): Promise<string | null> {
+    const session = await db.gatewaySession.findFirst({
+      where: {
+        channelConfigId: this.channelConfigId,
+        externalUserId:  sessionId,
+      },
+      select: { agentId: true },
+    })
+    return session?.agentId ?? null
   }
 }

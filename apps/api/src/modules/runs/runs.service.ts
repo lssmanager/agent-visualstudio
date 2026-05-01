@@ -1,76 +1,163 @@
-import type { RunSpec, RunTrigger, RunStep } from '../../../../../packages/core-types/src';
-import type { FlowSpec } from '../../../../../packages/core-types/src';
-import { FlowExecutor, RunRepository, StepExecutor, LlmStepExecutor, ApprovalQueue } from '../../../../../packages/run-engine/src';
-import { GatewayService } from '../gateway/gateway.service';
-import { workspaceStore, studioConfig } from '../../config'; // @deprecated(F0-08) — migrate to RunRepository (Prisma)
+/**
+ * runs.service.ts  —  F1a / RunsService (Prisma edition)
+ *
+ * Reemplaza la implementación basada en workspaceStore (JSON) por Prisma + PostgreSQL.
+ * RunRepository se construye con PrismaClient (via getPrisma()).
+ * FlowExecutor usa { prisma, executeAgent } — sin repository ni stepExecutor propio.
+ *
+ * Métodos públicos mantenidos para compatibilidad con runs.routes.ts:
+ *   findAll()           → findRunsByWorkspace()  (async)
+ *   findById(id)        → findRunById(id)        (async)
+ *   startRun(...)       → createRun + executeRun (async, no-block)
+ *   cancelRun(id)       → runRepository.cancelRun(id)
+ *   approveStep(...)    → atomic updateMany (sin race condition)
+ *   rejectStep(...)     → atomic updateMany (sin race condition)
+ *   getTrace(id)        → findRunById(id)
+ *   getReplayMetadata   → findRunById + metadata
+ *   replayRun(id)       → createRun + executeRun (guarda flowId nulo)
+ *   compareRuns(ids)    → findRunById × N  (usa tokenUsage.input/output)
+ *   getRunCost(id)      → findRunById + steps aggregate
+ *   getUsage(filters)   → findRunsByWorkspace + aggregate por run
+ *   getUsageByAgent()   → findRunsByWorkspace + per-agent aggregate
+ */
 
-const runRepository = new RunRepository(studioConfig.workspaceRoot);
-const gatewayService = new GatewayService();
+import { getPrisma } from '../core/db/prisma.service';
+import {
+  RunRepository,
+  FlowExecutor,
+  LLMStepExecutor,
+} from '../../../../../packages/run-engine/src/index.js';
+import type { AgentExecutorFn } from '../../../../../packages/run-engine/src/index.js';
+import type { RunStatus } from '@prisma/client';
 
-// Usa LlmStepExecutor (gateway real) con fallback graceful si está offline
-const stepExecutor: StepExecutor = new LlmStepExecutor(gatewayService);
-const approvalQueue = new ApprovalQueue();
+// ── Singletons (lazy, construidos en la primera llamada) ─────────────────────
 
-let flowExecutor: FlowExecutor | null = null;
+let _repo: RunRepository | null = null;
 
-function getExecutor(): FlowExecutor {
-  if (!flowExecutor) {
-    const workspace = workspaceStore.readWorkspace();
-    flowExecutor = new FlowExecutor({
-      workspaceId: workspace?.id ?? 'default',
-      repository: runRepository,
-      stepExecutor,
-      approvalQueue,
-    });
-  }
-  return flowExecutor;
+function getRepo(): RunRepository {
+  if (!_repo) _repo = new RunRepository(getPrisma());
+  return _repo;
 }
 
+/**
+ * AgentExecutorFn mínima que usa LLMStepExecutor para ejecutar un RunStep.
+ */
+const executeAgent: AgentExecutorFn = async (stepId: string) => {
+  const executor = new LLMStepExecutor();
+  return executor.execute(stepId);
+};
+
+function getFlowExecutor(): FlowExecutor {
+  return new FlowExecutor({
+    prisma: getPrisma(),
+    executeAgent,
+  });
+}
+
+// ── RunsService ─────────────────────────────────────────────────────────────
+
 export class RunsService {
-  findAll(): RunSpec[] {
-    return runRepository.findAll();
+
+  // ── Queries ────────────────────────────────────────────────────────────────
+
+  async findAll(workspaceId: string) {
+    return getRepo().findRunsByWorkspace(workspaceId);
   }
 
-  findById(id: string): RunSpec | null {
-    return runRepository.findById(id);
+  async findById(id: string) {
+    return getRepo().findRunById(id);
   }
 
-  startRun(flowId: string, trigger?: RunTrigger): RunSpec {
-    const flows = workspaceStore.listFlows();
-    const flow = flows.find((f) => f.id === flowId);
-    if (!flow) {
-      throw new Error(`Flow not found: ${flowId}`);
+  // ── Mutations ──────────────────────────────────────────────────────────────
+
+  async startRun(params: {
+    workspaceId: string;
+    flowId:      string;
+    agentId?:    string;
+    inputData?:  Record<string, unknown>;
+    metadata?:   Record<string, unknown>;
+  }) {
+    const repo = getRepo();
+
+    const run = await repo.createRun({
+      workspaceId: params.workspaceId,
+      flowId:      params.flowId,
+      agentId:     params.agentId,
+      inputData:   params.inputData ?? {},
+      metadata:    params.metadata  ?? {},
+    });
+
+    // Fire-and-forget — no bloquea la respuesta HTTP
+    getFlowExecutor()
+      .executeRun(run.id)
+      .catch((err) => console.error(`[RunsService] executeRun(${run.id}) failed:`, err));
+
+    return run;
+  }
+
+  async cancelRun(id: string) {
+    return getRepo().cancelRun(id);
+  }
+
+  /**
+   * approveStep — actualización atómica para evitar doble-decisión bajo concurrencia.
+   * updateMany({ where: { runId, stepId, status: 'pending' } }) garantiza
+   * que sólo una llamada simultánea gana la escritura; si count===0, ya fue decidido.
+   */
+  async approveStep(runId: string, stepId: string) {
+    const prisma = getPrisma();
+
+    const { count } = await prisma.approval.updateMany({
+      where: { runId, stepId, status: 'pending' },
+      data:  { status: 'approved', decidedAt: new Date() },
+    });
+
+    if (count === 0) {
+      throw new Error(`No pending approval for run=${runId} step=${stepId}`);
     }
 
-    const runTrigger: RunTrigger = trigger ?? { type: 'manual' };
-    return getExecutor().startRun(flow, runTrigger);
+    return prisma.approval.findFirst({
+      where:   { runId, stepId },
+      orderBy: { decidedAt: 'desc' },
+    });
   }
 
-  cancelRun(id: string): RunSpec | null {
-    return getExecutor().cancelRun(id);
+  /**
+   * rejectStep — mismo patrón atómico que approveStep.
+   */
+  async rejectStep(runId: string, stepId: string, reason?: string) {
+    const prisma = getPrisma();
+
+    const { count } = await prisma.approval.updateMany({
+      where: { runId, stepId, status: 'pending' },
+      data:  { status: 'rejected', decidedAt: new Date(), reason: reason ?? null },
+    });
+
+    if (count === 0) {
+      throw new Error(`No pending approval for run=${runId} step=${stepId}`);
+    }
+
+    return prisma.approval.findFirst({
+      where:   { runId, stepId },
+      orderBy: { decidedAt: 'desc' },
+    });
   }
 
-  async approveStep(runId: string, stepId: string): Promise<RunSpec | null> {
-    return getExecutor().resumeAfterApproval(runId, stepId, true);
+  // ── Trace & Replay ─────────────────────────────────────────────────────────
+
+  async getTrace(id: string) {
+    return getRepo().findRunById(id);
   }
 
-  async rejectStep(runId: string, stepId: string, reason?: string): Promise<RunSpec | null> {
-    return getExecutor().resumeAfterApproval(runId, stepId, false, reason);
-  }
-
-  getTrace(id: string): RunSpec | null {
-    return runRepository.findById(id);
-  }
-
-  getReplayMetadata(id: string) {
-    const run = runRepository.findById(id);
+  async getReplayMetadata(id: string) {
+    const run = await getRepo().findRunById(id);
     if (!run) return null;
 
     const metadata = (run.metadata ?? {}) as Record<string, unknown>;
-    const topologyEvents = Array.isArray(metadata.topologyEvents) ? metadata.topologyEvents : [];
-    const handoffs = Array.isArray(metadata.handoffs) ? metadata.handoffs : [];
-    const redirects = Array.isArray(metadata.redirects) ? metadata.redirects : [];
-    const stateTransitions = Array.isArray(metadata.stateTransitions) ? metadata.stateTransitions : [];
+    const topologyEvents   = Array.isArray(metadata['topologyEvents'])   ? metadata['topologyEvents']   : [];
+    const handoffs         = Array.isArray(metadata['handoffs'])         ? metadata['handoffs']         : [];
+    const redirects        = Array.isArray(metadata['redirects'])        ? metadata['redirects']        : [];
+    const stateTransitions = Array.isArray(metadata['stateTransitions']) ? metadata['stateTransitions'] : [];
 
     return {
       topologyEvents,
@@ -78,48 +165,72 @@ export class RunsService {
       redirects,
       stateTransitions,
       replay: {
-        sourceRunId: typeof metadata.sourceRunId === 'string' ? metadata.sourceRunId : undefined,
-        replayType: run.trigger?.type?.startsWith('replay:') ? run.trigger.type : undefined,
+        sourceRunId: typeof metadata['sourceRunId'] === 'string' ? metadata['sourceRunId'] : undefined,
+        replayType:  typeof metadata['replayType']  === 'string' ? metadata['replayType']  : undefined,
       },
     };
   }
 
-  // ── Sprint 7: Operations ─────────────────────────────────────────────
-
-  replayRun(id: string): RunSpec {
-    const original = runRepository.findById(id);
+  async replayRun(id: string) {
+    const original = await getRepo().findRunById(id);
     if (!original) throw new Error(`Run not found: ${id}`);
-    if (original.status !== 'completed' && original.status !== 'failed') {
+
+    const status = original.status as RunStatus;
+    if (status !== 'completed' && status !== 'failed') {
       throw new Error('Can only replay completed or failed runs');
     }
-    return this.startRun(original.flowId, { ...original.trigger, type: `replay:${original.trigger.type}` });
+
+    // Guard: flowId es requerido para crear un run válido
+    if (!original.flowId) {
+      throw new Error(
+        `Cannot replay run ${id}: original run has no flowId. ` +
+        'The flow may have been deleted.',
+      );
+    }
+
+    return this.startRun({
+      workspaceId: original.workspaceId,
+      flowId:      original.flowId,
+      agentId:     original.agentId ?? undefined,
+      inputData:   (original.inputData as Record<string, unknown>) ?? {},
+      metadata: {
+        ...((original.metadata as Record<string, unknown>) ?? {}),
+        replayType:  'replay',
+        sourceRunId: original.id,
+      },
+    });
   }
 
-  compareRuns(ids: string[]) {
-    const runs = ids.map((id) => {
-      const run = runRepository.findById(id);
-      if (!run) throw new Error(`Run not found: ${id}`);
-      return run;
-    });
+  // ── Analytics ──────────────────────────────────────────────────────────────
+
+  /**
+   * compareRuns — usa tokenUsage.input/output (contrato de stepPrismaToSpec).
+   * promptTokens/completionTokens no existen en el objeto mapeado.
+   */
+  async compareRuns(ids: string[]) {
+    const repo = getRepo();
+    const runs = await Promise.all(ids.map((id) => repo.findRunById(id)));
 
     const summaries = runs.map((run) => {
-      const totalCost = run.steps.reduce((sum, s) => sum + (s.costUsd ?? 0), 0);
-      const totalTokens = run.steps.reduce(
-        (acc, s) => ({
-          input: acc.input + (s.tokenUsage?.input ?? 0),
-          output: acc.output + (s.tokenUsage?.output ?? 0),
+      if (!run) throw new Error(`Run not found`);
+      const steps = run.steps ?? [];
+      const totalCost = steps.reduce((s, st) => s + ((st as any).costUsd ?? 0), 0);
+      const totalTokens = steps.reduce(
+        (acc, st) => ({
+          input:  acc.input  + ((st as any).tokenUsage?.input  ?? 0),
+          output: acc.output + ((st as any).tokenUsage?.output ?? 0),
         }),
         { input: 0, output: 0 },
       );
       return {
-        id: run.id,
-        flowId: run.flowId,
-        status: run.status,
-        startedAt: run.startedAt,
+        id:          run.id,
+        flowId:      run.flowId,
+        status:      run.status,
+        startedAt:   run.startedAt,
         completedAt: run.completedAt,
         totalCost,
         totalTokens,
-        stepCount: run.steps.length,
+        stepCount:   steps.length,
       };
     });
 
@@ -134,20 +245,23 @@ export class RunsService {
     return { runs: summaries, diffs };
   }
 
-  getRunCost(id: string) {
-    const run = runRepository.findById(id);
+  async getRunCost(id: string) {
+    const run = await getRepo().findRunById(id);
     if (!run) return null;
 
-    const steps = run.steps.map((s) => ({
-      stepId: s.id,
-      nodeId: s.nodeId,
-      nodeType: s.nodeType,
-      agentId: s.agentId,
-      costUsd: s.costUsd ?? 0,
-      tokenUsage: s.tokenUsage ?? { input: 0, output: 0 },
+    const steps = (run.steps ?? []).map((s: any) => ({
+      stepId:     s.id,
+      nodeId:     s.nodeId,
+      nodeType:   s.nodeType,
+      agentId:    s.agentId,
+      costUsd:    s.costUsd ?? 0,
+      tokenUsage: {
+        input:  s.tokenUsage?.input  ?? 0,
+        output: s.tokenUsage?.output ?? 0,
+      },
     }));
 
-    const totalCost = steps.reduce((sum, s) => sum + s.costUsd, 0);
+    const totalCost   = steps.reduce((sum, s) => sum + s.costUsd, 0);
     const totalTokens = steps.reduce(
       (acc, s) => ({ input: acc.input + s.tokenUsage.input, output: acc.output + s.tokenUsage.output }),
       { input: 0, output: 0 },
@@ -156,42 +270,55 @@ export class RunsService {
     return { runId: run.id, totalCost, totalTokens, steps };
   }
 
-  getUsage(filters?: { from?: string; to?: string; groupBy?: string }) {
-    let runs = runRepository.findAll();
+  /**
+   * getUsage — acumula cost+tokens por run individualmente.
+   * findRunsByWorkspace no incluye steps; usamos findRunById por run
+   * para obtener step-level cost/tokens.
+   */
+  async getUsage(workspaceId: string, filters?: { from?: string; to?: string; groupBy?: string }) {
+    let runs = await getRepo().findRunsByWorkspace(workspaceId, { limit: 1000 });
 
     if (filters?.from) {
       const fromDate = new Date(filters.from).getTime();
-      runs = runs.filter((r) => new Date(r.startedAt).getTime() >= fromDate);
+      runs = runs.filter((r) => r.createdAt && new Date(r.createdAt).getTime() >= fromDate);
     }
     if (filters?.to) {
       const toDate = new Date(filters.to).getTime();
-      runs = runs.filter((r) => new Date(r.startedAt).getTime() <= toDate);
+      runs = runs.filter((r) => r.createdAt && new Date(r.createdAt).getTime() <= toDate);
     }
 
     const groupBy = filters?.groupBy ?? 'flow';
     const groupMap = new Map<string, { cost: number; tokens: { input: number; output: number }; runs: number }>();
 
-    for (const run of runs) {
-      const key = groupBy === 'agent' ? 'by-agent'
+    // Cargamos steps por run para acumular cost/tokens reales
+    const fullRuns = await Promise.all(
+      runs.map((r) => getRepo().findRunById(r.id)),
+    );
+
+    for (const run of fullRuns) {
+      if (!run) continue;
+      const key = groupBy === 'agent'
+        ? (run.agentId ?? 'unassigned')
         : groupBy === 'model' ? 'by-model'
-        : run.flowId;
+        : (run.flowId ?? 'no-flow');
 
       if (!groupMap.has(key)) groupMap.set(key, { cost: 0, tokens: { input: 0, output: 0 }, runs: 0 });
       const entry = groupMap.get(key)!;
-
-      for (const step of run.steps) {
-        entry.cost += step.costUsd ?? 0;
-        entry.tokens.input += step.tokenUsage?.input ?? 0;
-        entry.tokens.output += step.tokenUsage?.output ?? 0;
-      }
       entry.runs += 1;
+
+      const steps = run.steps ?? [];
+      for (const st of steps as any[]) {
+        entry.cost              += st.costUsd              ?? 0;
+        entry.tokens.input      += st.tokenUsage?.input    ?? 0;
+        entry.tokens.output     += st.tokenUsage?.output   ?? 0;
+      }
     }
 
     const groups = Array.from(groupMap.entries())
       .map(([key, data]) => ({ key, ...data }))
       .sort((a, b) => b.cost - a.cost);
 
-    const totalCost = groups.reduce((s, g) => s + g.cost, 0);
+    const totalCost   = groups.reduce((s, g) => s + g.cost, 0);
     const totalTokens = groups.reduce(
       (acc, g) => ({ input: acc.input + g.tokens.input, output: acc.output + g.tokens.output }),
       { input: 0, output: 0 },
@@ -200,19 +327,30 @@ export class RunsService {
     return { totalCost, totalTokens, totalRuns: runs.length, groups };
   }
 
-  getUsageByAgent() {
-    const runs = runRepository.findAll();
-    const agentMap = new Map<string, { cost: number; tokens: { input: number; output: number }; steps: number }>();
+  /**
+   * getUsageByAgent — cuenta runs (no steps) por agente y acumula cost/tokens.
+   */
+  async getUsageByAgent(workspaceId: string) {
+    const runs = await getRepo().findRunsByWorkspace(workspaceId, { limit: 1000 });
+    const agentMap = new Map<string, { cost: number; tokens: { input: number; output: number }; runs: number }>();
 
-    for (const run of runs) {
-      for (const step of run.steps) {
-        const agentId = step.agentId ?? 'unassigned';
-        if (!agentMap.has(agentId)) agentMap.set(agentId, { cost: 0, tokens: { input: 0, output: 0 }, steps: 0 });
-        const entry = agentMap.get(agentId)!;
-        entry.cost += step.costUsd ?? 0;
-        entry.tokens.input += step.tokenUsage?.input ?? 0;
-        entry.tokens.output += step.tokenUsage?.output ?? 0;
-        entry.steps += 1;
+    // Cargamos steps para cost/tokens reales por agente
+    const fullRuns = await Promise.all(
+      runs.map((r) => getRepo().findRunById(r.id)),
+    );
+
+    for (const run of fullRuns) {
+      if (!run) continue;
+      const agentId = run.agentId ?? 'unassigned';
+      if (!agentMap.has(agentId)) agentMap.set(agentId, { cost: 0, tokens: { input: 0, output: 0 }, runs: 0 });
+      const entry = agentMap.get(agentId)!;
+      entry.runs += 1;
+
+      const steps = run.steps ?? [];
+      for (const st of steps as any[]) {
+        entry.cost              += st.costUsd              ?? 0;
+        entry.tokens.input      += st.tokenUsage?.input    ?? 0;
+        entry.tokens.output     += st.tokenUsage?.output   ?? 0;
       }
     }
 
