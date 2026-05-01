@@ -1,20 +1,19 @@
-import { Module }           from '@nestjs/common';
-import { GatewayService }   from './gateway.service';
-import { HealthController } from './health/health.controller';
-import { PrismaModule }     from './prisma/prisma.module';
+import { Module }               from '@nestjs/common';
+import { GatewayService }       from './gateway.service';
+import { AgentResolverService } from './agent-resolver.service';
+import { HealthController }     from './health/health.controller';
+import { PrismaModule }         from './prisma/prisma.module';
 
 /**
  * GatewayModule agrupa:
  *   - GatewayService (lógica de dispatch, session, encryption)
+ *   - AgentResolverService (resolución de agente por ChannelBinding + scope priority)
  *   - HealthController (GET /health — liveness probe)
- *
- * Cuando F3a-02/03 implementen los Controllers de canal,
- * se añadirán aquí: TelegramController, WebchatController.
  */
 @Module({
   imports:     [PrismaModule],
-  providers:   [GatewayService],
+  providers:   [GatewayService, AgentResolverService],
   controllers: [HealthController],
-  exports:     [GatewayService],
+  exports:     [GatewayService, AgentResolverService],
 })
 export class GatewayModule {}

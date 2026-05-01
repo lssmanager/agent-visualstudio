@@ -24,9 +24,10 @@ import {
   type IncomingMessage,
   type OutboundMessage,
 } from '@agent-vs/gateway-sdk';
-import { AgentRunner }        from '@agent-vs/flow-engine';
-import type { IChannelAdapter } from './channels/channel-adapter.interface';
-import { PrismaService }       from './prisma/prisma.service';
+import { AgentRunner }           from '@agent-vs/flow-engine';
+import type { IChannelAdapter }  from './channels/channel-adapter.interface';
+import { PrismaService }         from './prisma/prisma.service';
+import { AgentResolverService }  from './agent-resolver.service';
 
 // ---------------------------------------------------------------------------
 // Tipos internos
@@ -34,7 +35,6 @@ import { PrismaService }       from './prisma/prisma.service';
 
 interface DecryptedChannelConfig {
   id:      string;
-  agentId: string;
   type:    string;
   config:  Record<string, unknown>;
   secrets: Record<string, unknown>;
@@ -52,7 +52,10 @@ export class GatewayService {
   private readonly configCache  = new Map<string, DecryptedChannelConfig>();
   private readonly encKey:       Buffer;
 
-  constructor(private readonly db: PrismaService) {
+  constructor(
+    private readonly db:       PrismaService,
+    private readonly resolver: AgentResolverService,
+  ) {
     this.sessions    = new SessionManager(db);
     this.agentRunner = new AgentRunner({ db });
 
@@ -101,6 +104,7 @@ export class GatewayService {
    * Flow:
    *   rawPayload
    *     → adapter.receive()       parse channel format → IncomingMessage
+   *     → AgentResolverService     resolve agentId via ChannelBinding priority
    *     → SessionManager           upsert GatewaySession, append user turn
    *     → AgentRunner.run()        load Agent+FlowVersion, execute FlowExecutor
    *     → recordReply()            append assistant turn, adapter.send()
@@ -119,14 +123,27 @@ export class GatewayService {
 
     if (!incoming) return;
 
-    // 2. Persist user turn + upsert session
+    // 2. Cargar sesión existente para sticky-session
+    const existingSession = await this.findActiveSession(
+      channelConfigId,
+      incoming.externalUserId,
+    );
+
+    // 3. Resolver agente con prioridad de scope
+    const resolved = await this.resolver.resolve(
+      channelConfigId,
+      incoming.externalUserId,
+      existingSession?.agentId ?? null,
+    );
+
+    // 4. Persist user turn + upsert session
     const session = await this.sessions.receiveUserMessage(
       channelConfigId,
-      cfg.agentId,
+      resolved.agentId,
       incoming,
     );
 
-    // 3. Run agent via FlowExecutor
+    // 5. Run agent via FlowExecutor
     let replyText: string;
     try {
       const result = await this.agentRunner.run(
@@ -139,13 +156,13 @@ export class GatewayService {
       replyText = '(ocurrió un error al procesar tu mensaje)';
     }
 
-    // 4. Build outbound message
+    // 6. Build outbound message
     const outbound: OutboundMessage = {
       externalUserId: incoming.externalUserId,
       text: replyText,
     };
 
-    // 5. Persist assistant turn + send to channel
+    // 7. Persist assistant turn + send to channel
     await this.recordReply(channelConfigId, session.id, outbound);
   }
 
@@ -170,6 +187,20 @@ export class GatewayService {
   // Private helpers
   // -------------------------------------------------------------------------
 
+  /**
+   * Obtiene la sesión activa para un usuario en un canal.
+   * Usado para sticky-session: conservar el agentId de sesiones en curso.
+   */
+  private async findActiveSession(
+    channelConfigId: string,
+    externalUserId:  string,
+  ): Promise<{ id: string; agentId: string } | null> {
+    return this.db.gatewaySession.findFirst({
+      where: { channelConfigId, externalUserId, state: 'active' },
+      select: { id: true, agentId: true },
+    })
+  }
+
   private async loadChannelConfig(
     channelConfigId: string,
   ): Promise<DecryptedChannelConfig> {
@@ -182,10 +213,9 @@ export class GatewayService {
 
     const secrets = this.decrypt(row.secretsEncrypted as string | null);
     const cfg: DecryptedChannelConfig = {
-      id:      row.id,
-      agentId: row.agentId,
-      type:    row.type,
-      config:  (row.config as Record<string, unknown>) ?? {},
+      id:     row.id,
+      type:   row.type,
+      config: (row.config as Record<string, unknown>) ?? {},
       secrets,
     };
     this.configCache.set(channelConfigId, cfg);
