@@ -62,9 +62,11 @@ export function createApp(opts: AppOptions = {}): Application {
 
   // -------------------------------------------------------------------------
   // 1. Register channel adapters
+  //    WebChatAdapter requires PrismaClient for channelConfig lookups + SSE.
+  //    Pass the shared `db` instance — same one used by GatewayService.
   // -------------------------------------------------------------------------
   if (!registry.has('telegram')) registry.register(new TelegramAdapter());
-  if (!registry.has('webchat'))  registry.register(new WebChatAdapter());
+  if (!registry.has('webchat'))  registry.register(new WebChatAdapter(db));
 
   // -------------------------------------------------------------------------
   // 2. Security middleware

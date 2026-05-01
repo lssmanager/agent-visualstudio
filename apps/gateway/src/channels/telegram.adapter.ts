@@ -16,6 +16,7 @@ import { Router, type Request, type Response } from 'express';
 import { prisma } from '../../../api/src/modules/core/db/prisma.service';
 import {
   BaseChannelAdapter,
+  type ChannelType,
   type IncomingMessage,
   type OutgoingMessage,
 } from './channel-adapter.interface';
@@ -30,7 +31,7 @@ interface TelegramCredentials {
 }
 
 export class TelegramAdapter extends BaseChannelAdapter {
-  readonly channel = 'telegram';
+  readonly channel = 'telegram' as const satisfies ChannelType;
   private botToken = '';
   private webhookSecret = '';
 
@@ -67,7 +68,6 @@ export class TelegramAdapter extends BaseChannelAdapter {
       parse_mode: 'Markdown',
     };
 
-    // Botones / quick replies
     if (message.richContent) {
       body.reply_markup = message.richContent;
     }
@@ -90,9 +90,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
   getRouter(): Router {
     const router = Router();
 
-    // POST /telegram/webhook — updates de Telegram
     router.post('/webhook', async (req: Request, res: Response) => {
-      // Validar webhook secret si está configurado
       if (this.webhookSecret) {
         const secret = req.headers['x-telegram-bot-api-secret-token'];
         if (secret !== this.webhookSecret) {
@@ -117,27 +115,30 @@ export class TelegramAdapter extends BaseChannelAdapter {
 
       if (message?.text) {
         const msg: IncomingMessage = {
-          externalId: String(message.chat.id),
-          senderId: String(message.from?.id ?? message.chat.id),
-          text: message.text,
-          type: message.text.startsWith('/') ? 'command' : 'text',
-          metadata: { updateId: update.update_id, raw: message },
-          receivedAt: this.makeTimestamp(),
+          channelConfigId: this.channelConfigId,
+          channelType:     'telegram',
+          externalId:      String(message.chat.id),
+          senderId:        String(message.from?.id ?? message.chat.id),
+          text:            message.text,
+          type:            message.text.startsWith('/') ? 'command' : 'text',
+          metadata:        { updateId: update.update_id, raw: message },
+          receivedAt:      this.makeTimestamp(),
         };
         await this.emit(msg);
       } else if (callbackQuery?.data) {
         const chatId = callbackQuery.message?.chat.id;
         const msg: IncomingMessage = {
-          externalId: String(chatId),
-          senderId: String(chatId),
-          text: callbackQuery.data,
-          type: 'command',
-          metadata: { callbackQueryId: callbackQuery.id, raw: callbackQuery },
-          receivedAt: this.makeTimestamp(),
+          channelConfigId: this.channelConfigId,
+          channelType:     'telegram',
+          externalId:      String(chatId),
+          senderId:        String(chatId),
+          text:            callbackQuery.data,
+          type:            'button_click',
+          metadata:        { callbackQueryId: callbackQuery.id, raw: callbackQuery },
+          receivedAt:      this.makeTimestamp(),
         };
         await this.emit(msg);
 
-        // Responder al callback_query para quitar el spinner de Telegram
         await fetch(
           `${TELEGRAM_API}/bot${this.botToken}/answerCallbackQuery`,
           {
@@ -151,7 +152,6 @@ export class TelegramAdapter extends BaseChannelAdapter {
       res.json({ ok: true });
     });
 
-    // POST /telegram/setup — registra webhook en Telegram
     router.post('/setup', async (req: Request, res: Response) => {
       const { webhookUrl } = req.body as { webhookUrl: string };
       if (!webhookUrl) {
@@ -178,8 +178,6 @@ export class TelegramAdapter extends BaseChannelAdapter {
 
     return router;
   }
-
-  // ── Setup helper (puede llamarse en initialize si TELEGRAM_WEBHOOK_URL está en env) ──
 
   async autoSetupWebhook(): Promise<void> {
     const webhookUrl = process.env.TELEGRAM_WEBHOOK_URL;
