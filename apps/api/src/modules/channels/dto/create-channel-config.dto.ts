@@ -1,0 +1,108 @@
+/**
+ * DTO para POST /channels — crea un nuevo ChannelConfig.
+ *
+ * Flujo en el handler:
+ *   1. Zod valida el body completo (type + credentials + config)
+ *   2. parseCredentials(type, credentials) valida estructura por canal
+ *   3. encryptSecrets(credentials) → secretsEncrypted
+ *   4. prisma.channelConfig.create({ data: { type, name, config, secretsEncrypted, ... } })
+ *   5. La respuesta NUNCA incluye credentials ni secretsEncrypted
+ */
+
+import { z }           from 'zod'
+import { ChannelType } from '@prisma/client'
+import {
+  TelegramCredentialsSchema,
+  WhatsAppCredentialsSchema,
+  DiscordCredentialsSchema,
+  TeamsCredentialsSchema,
+  SlackCredentialsSchema,
+  WebhookCredentialsSchema,
+  WebchatCredentialsSchema,
+} from '@lss/crypto'
+
+// ── Schemas de config (no-sensible) por canal ──────────────────────────
+
+const TelegramConfigSchema = z.object({
+  parseMode:        z.enum(['Markdown', 'HTML', 'MarkdownV2']).default('Markdown'),
+  maxMessageLength: z.number().int().min(1).max(4096).default(4096),
+  webhookPath:      z.string().optional(),
+}).default({})
+
+const WhatsAppConfigSchema = z.object({
+  webhookPath: z.string().optional(),
+  apiVersion:  z.string().default('v18.0'),
+}).default({})
+
+const DiscordConfigSchema = z.object({
+  interactionsPath: z.string().optional(),
+  commandPrefix:    z.string().max(5).default('!'),
+}).default({})
+
+const TeamsConfigSchema = z.object({
+  webhookPath: z.string().optional(),
+}).default({})
+
+const SlackConfigSchema = z.object({
+  eventsPath: z.string().optional(),
+  slashPath:  z.string().optional(),
+}).default({})
+
+const WebhookConfigSchema = z.object({
+  path:   z.string().min(1).default('/webhook'),
+  method: z.enum(['POST', 'GET']).default('POST'),
+}).default({})
+
+const WebchatConfigSchema = z.object({
+  allowedOrigins:   z.array(z.string().url()).default([]),
+  sessionTimeoutMs: z.number().int().positive().default(1_800_000),
+}).default({})
+
+// ── Discriminated union completa ────────────────────────────────────────
+
+export const CreateChannelConfigSchema = z.discriminatedUnion('type', [
+  z.object({
+    type:        z.literal(ChannelType.telegram),
+    name:        z.string().min(1).max(128),
+    credentials: TelegramCredentialsSchema,
+    config:      TelegramConfigSchema,
+  }),
+  z.object({
+    type:        z.literal(ChannelType.whatsapp),
+    name:        z.string().min(1).max(128),
+    credentials: WhatsAppCredentialsSchema,
+    config:      WhatsAppConfigSchema,
+  }),
+  z.object({
+    type:        z.literal(ChannelType.discord),
+    name:        z.string().min(1).max(128),
+    credentials: DiscordCredentialsSchema,
+    config:      DiscordConfigSchema,
+  }),
+  z.object({
+    type:        z.literal(ChannelType.teams),
+    name:        z.string().min(1).max(128),
+    credentials: TeamsCredentialsSchema,
+    config:      TeamsConfigSchema,
+  }),
+  z.object({
+    type:        z.literal(ChannelType.slack),
+    name:        z.string().min(1).max(128),
+    credentials: SlackCredentialsSchema,
+    config:      SlackConfigSchema,
+  }),
+  z.object({
+    type:        z.literal(ChannelType.webhook),
+    name:        z.string().min(1).max(128),
+    credentials: WebhookCredentialsSchema,
+    config:      WebhookConfigSchema,
+  }),
+  z.object({
+    type:        z.literal(ChannelType.webchat),
+    name:        z.string().min(1).max(128),
+    credentials: WebchatCredentialsSchema,
+    config:      WebchatConfigSchema,
+  }),
+])
+
+export type CreateChannelConfigDto = z.infer<typeof CreateChannelConfigSchema>
