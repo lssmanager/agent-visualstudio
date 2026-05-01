@@ -23,6 +23,10 @@
  *   POST /api/channels/:id/deactivate           — desactivar canal (JWT)
  *   POST /api/channels/:id/bindings             — agregar binding (JWT)
  *   DELETE /api/channels/:id/bindings/:bid      — eliminar binding (JWT)
+ *   GET  /gateway/whatsapp/:configId/qr         — [F3a-22] SSE QR stream
+ *   GET  /gateway/whatsapp/:configId/status     — [F3a-22] JSON status
+ *   POST /gateway/whatsapp/:configId/connect    — [F3a-22] iniciar sesión WA
+ *   POST /gateway/whatsapp/:configId/disconnect — [F3a-22] detener sesión WA
  *
  * Seguridad:
  *   applySecurityMiddleware() aplica Helmet, CORS, rate limiting y JWT
@@ -42,6 +46,7 @@ import { GatewayService }          from './gateway.service';
 import { telegramRouter }          from './routes/telegram';
 import { webchatGatewayRouter, webchatApiRouter } from './routes/webchat';
 import { channelsApiRouter }       from './routes/channels';
+import { whatsappBaileysRouter }   from './routes/whatsapp-baileys';
 
 // ---------------------------------------------------------------------------
 // App factory
@@ -63,8 +68,14 @@ export function createApp(opts: AppOptions = {}): Application {
   // -------------------------------------------------------------------------
   // 1. Register channel adapters
   // -------------------------------------------------------------------------
-  if (!registry.has('telegram')) registry.register(new TelegramAdapter());
-  if (!registry.has('webchat'))  registry.register(new WebChatAdapter());
+  if (!registry.has('telegram'))  registry.register(new TelegramAdapter());
+  if (!registry.has('webchat'))   registry.register(new WebChatAdapter());
+
+  // WhatsApp Baileys adapter — registro diferido (importación dinámica en el router)
+  // El adapter se crea por sesión en POST /gateway/whatsapp/:configId/connect
+  // para soportar múltiples cuentas simultáneas con sesiones independientes.
+  // No se pre-registra en el registry global porque el registry usa un único
+  // adapter compartido, mientras que Baileys necesita una instancia por configId.
 
   // -------------------------------------------------------------------------
   // 2. Security middleware
@@ -124,6 +135,9 @@ export function createApp(opts: AppOptions = {}): Application {
 
   // Channels CRUD + activate/deactivate + bindings (JWT)
   app.use('/api/channels', channelsApiRouter(db, gatewayService));
+
+  // [F3a-22] WhatsApp Baileys session manager + QR SSE
+  app.use('/gateway/whatsapp', whatsappBaileysRouter());
 
   // -------------------------------------------------------------------------
   // 7. 404 fallthrough
