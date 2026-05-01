@@ -1,5 +1,5 @@
 /**
- * gateway.service.ts — Dispatcher central del Gateway
+ * gateway.service.ts — [F3a-01] Dispatcher central del Gateway
  *
  * Responsabilidades:
  *   1. Cargar y cachear ChannelConfig desde Prisma
@@ -15,19 +15,19 @@
  *     [12 bytes IV][16 bytes auth tag][N bytes ciphertext]
  */
 
-import { Injectable }      from '@nestjs/common';
+import { Injectable }       from '@nestjs/common';
 import { createDecipheriv } from 'crypto';
-import type { PrismaClient }  from '@prisma/client';
 import {
   registry,
   SessionManager,
+  type IChannelAdapter,
   type IncomingMessage,
   type OutboundMessage,
 } from '@agent-vs/gateway-sdk';
-import { AgentRunner }           from '@agent-vs/flow-engine';
-import type { IChannelAdapter }  from './channels/channel-adapter.interface';
-import { PrismaService }         from './prisma/prisma.service';
-import { AgentResolverService }  from './agent-resolver.service';
+import { AgentRunner }          from '@agent-vs/flow-engine';
+import type { RunInput }        from '@agent-vs/flow-engine';
+import { PrismaService }        from './prisma/prisma.service';
+import { AgentResolverService } from './agent-resolver.service';
 
 // ---------------------------------------------------------------------------
 // Tipos internos
@@ -38,6 +38,8 @@ interface DecryptedChannelConfig {
   type:    string;
   config:  Record<string, unknown>;
   secrets: Record<string, unknown>;
+  /** workspaceId es necesario para AgentRunner.run() */
+  workspaceId: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -47,17 +49,19 @@ interface DecryptedChannelConfig {
 @Injectable()
 export class GatewayService {
   /** Exposed for webchat reply route (needs findSession) */
-  readonly sessions:    SessionManager;
-  private readonly agentRunner:   AgentRunner;
-  private readonly configCache  = new Map<string, DecryptedChannelConfig>();
-  private readonly encKey:       Buffer;
+  readonly sessions:  SessionManager;
+  private readonly agentRunner: AgentRunner;
+  private readonly configCache = new Map<string, DecryptedChannelConfig>();
+  private readonly encKey:      Buffer;
 
   constructor(
     private readonly db:       PrismaService,
     private readonly resolver: AgentResolverService,
   ) {
+    // SessionManager acepta PrismaClient; PrismaService extiende PrismaClient ✔️
     this.sessions    = new SessionManager(db);
-    this.agentRunner = new AgentRunner({ db });
+    // AgentRunner constructor espera { prisma }, no { db }
+    this.agentRunner = new AgentRunner({ prisma: db });
 
     const keyHex = process.env.GATEWAY_ENCRYPTION_KEY ?? '';
     if (!keyHex) {
@@ -75,9 +79,8 @@ export class GatewayService {
   async activateChannel(channelConfigId: string): Promise<void> {
     const cfg     = await this.loadChannelConfig(channelConfigId);
     const adapter = this.resolveAdapter(cfg.type);
-    await (adapter as unknown as {
-      setup: (c: Record<string, unknown>, s: Record<string, unknown>) => Promise<void>;
-    }).setup(cfg.config, cfg.secrets);
+    // IChannelAdapter del SDK expone setup(config, secrets) directamente
+    await adapter.setup(cfg.config, cfg.secrets);
     console.info(`[GatewayService] channel ${channelConfigId} (${cfg.type}) activated`);
   }
 
@@ -85,9 +88,7 @@ export class GatewayService {
     const cached = this.configCache.get(channelConfigId);
     if (!cached) return;
     const adapter = this.resolveAdapter(cached.type);
-    await (adapter as unknown as {
-      teardown: (c: Record<string, unknown>, s: Record<string, unknown>) => Promise<void>;
-    }).teardown(cached.config, cached.secrets).catch((err: unknown) => {
+    await adapter.teardown(cached.config, cached.secrets).catch((err: unknown) => {
       console.warn(`[GatewayService] teardown error for channel ${channelConfigId}:`, err);
     });
     this.configCache.delete(channelConfigId);
@@ -103,11 +104,11 @@ export class GatewayService {
    *
    * Flow:
    *   rawPayload
-   *     → adapter.receive()       parse channel format → IncomingMessage
-   *     → AgentResolverService     resolve agentId via ChannelBinding priority
-   *     → SessionManager           upsert GatewaySession, append user turn
-   *     → AgentRunner.run()        load Agent+FlowVersion, execute FlowExecutor
-   *     → recordReply()            append assistant turn, adapter.send()
+   *     → adapter.receive()        parse channel format → IncomingMessage
+   *     → AgentResolverService      resolve agentId via ChannelBinding priority
+   *     → SessionManager            upsert GatewaySession, append user turn
+   *     → AgentRunner.run()         load Agent+FlowVersion, execute FlowExecutor
+   *     → recordReply()             append assistant turn, adapter.send()
    */
   async dispatch(
     channelConfigId: string,
@@ -116,15 +117,12 @@ export class GatewayService {
     const cfg     = await this.loadChannelConfig(channelConfigId);
     const adapter = this.resolveAdapter(cfg.type);
 
-    // 1. Parse inbound message
-    const incoming = await (adapter as unknown as {
-      receive: (p: Record<string, unknown>, s: Record<string, unknown>) => Promise<IncomingMessage | null>;
-    }).receive(rawPayload, cfg.secrets);
-
+    // 1. Parse inbound message — IChannelAdapter.receive() firma del SDK
+    const incoming = await adapter.receive(rawPayload, cfg.secrets);
     if (!incoming) return;
 
     // 2. Cargar sesión existente para sticky-session
-    const existingSession = await this.findActiveSession(
+    const existingSession = await this.sessions.findSession(
       channelConfigId,
       incoming.externalUserId,
     );
@@ -144,26 +142,44 @@ export class GatewayService {
     );
 
     // 5. Run agent via FlowExecutor
+    //    AgentRunner.run() espera RunInput: { workspaceId, agentId, sessionId, inputData }
+    //    El texto del usuario va en inputData.userMessage para que el
+    //    nodo LLM lo recoja como contexto de la conversación.
+    const runInput: RunInput = {
+      workspaceId: cfg.workspaceId,
+      agentId:     session.agentId,
+      sessionId:   session.sessionId,   // ActiveSession.sessionId (no .id)
+      channelKind: cfg.type,
+      inputData:   {
+        userMessage: incoming.text ?? '',
+      },
+    };
+
     let replyText: string;
     try {
-      const result = await this.agentRunner.run(
-        session.agentId,
-        session.history,
-      );
-      replyText = result.reply || '(sin respuesta)';
+      const result = await this.agentRunner.run(runInput);
+      replyText =
+        (result.output?.['reply'] as string | undefined) ??
+        (result.output?.['text']  as string | undefined) ??
+        '(sin respuesta)';
+      if (result.status === 'failed') {
+        console.error('[GatewayService] AgentRunner run failed:', result.error);
+        replyText = '(ocurrió un error al procesar tu mensaje)';
+      }
     } catch (err) {
-      console.error('[GatewayService] AgentRunner error:', err);
+      console.error('[GatewayService] AgentRunner threw:', err);
       replyText = '(ocurrió un error al procesar tu mensaje)';
     }
 
     // 6. Build outbound message
     const outbound: OutboundMessage = {
       externalUserId: incoming.externalUserId,
-      text: replyText,
+      text:           replyText,
     };
 
     // 7. Persist assistant turn + send to channel
-    await this.recordReply(channelConfigId, session.id, outbound);
+    //    session.sessionId es el campo correcto de ActiveSession
+    await this.recordReply(channelConfigId, session.sessionId, outbound);
   }
 
   /**
@@ -178,28 +194,13 @@ export class GatewayService {
     const adapter = this.resolveAdapter(cfg.type);
 
     await this.sessions.recordAssistantReply(sessionId, outbound);
-    await (adapter as unknown as {
-      send: (m: OutboundMessage, c: Record<string, unknown>, s: Record<string, unknown>) => Promise<void>;
-    }).send(outbound, cfg.config, cfg.secrets);
+    // IChannelAdapter.send(message, config, secrets) — firma del SDK
+    await adapter.send(outbound, cfg.config, cfg.secrets);
   }
 
   // -------------------------------------------------------------------------
   // Private helpers
   // -------------------------------------------------------------------------
-
-  /**
-   * Obtiene la sesión activa para un usuario en un canal.
-   * Usado para sticky-session: conservar el agentId de sesiones en curso.
-   */
-  private async findActiveSession(
-    channelConfigId: string,
-    externalUserId:  string,
-  ): Promise<{ id: string; agentId: string } | null> {
-    return this.db.gatewaySession.findFirst({
-      where: { channelConfigId, externalUserId, state: 'active' },
-      select: { id: true, agentId: true },
-    })
-  }
 
   private async loadChannelConfig(
     channelConfigId: string,
@@ -208,14 +209,16 @@ export class GatewayService {
     if (cached) return cached;
 
     const row = await this.db.channelConfig.findUniqueOrThrow({
-      where: { id: channelConfigId },
+      where:  { id: channelConfigId },
+      select: { id: true, type: true, config: true, secretsEncrypted: true, workspaceId: true },
     });
 
     const secrets = this.decrypt(row.secretsEncrypted as string | null);
     const cfg: DecryptedChannelConfig = {
-      id:     row.id,
-      type:   row.type,
-      config: (row.config as Record<string, unknown>) ?? {},
+      id:          row.id,
+      type:        row.type,
+      config:      (row.config as Record<string, unknown>) ?? {},
+      workspaceId: row.workspaceId,
       secrets,
     };
     this.configCache.set(channelConfigId, cfg);
@@ -223,13 +226,14 @@ export class GatewayService {
   }
 
   private resolveAdapter(type: string): IChannelAdapter {
-    if (registry.has(type)) {
-      return registry.get(type) as unknown as IChannelAdapter;
+    // registry.get() lanza si no existe — no necesitamos has() + get()
+    if (!registry.has(type)) {
+      throw new Error(
+        `GatewayService: no adapter registered for channel type '${type}'. ` +
+        `Registered: ${registry.registeredTypes().join(', ') || '(none)'}`,
+      );
     }
-    throw new Error(
-      `GatewayService: no adapter registered for channel type '${type}'. ` +
-      `Registered: ${registry.registeredTypes().join(', ') || '(none)'}`,
-    );
+    return registry.get(type);
   }
 
   private decrypt(secretsEncrypted: string | null): Record<string, unknown> {
