@@ -2,6 +2,12 @@ import { Injectable, Logger }    from '@nestjs/common'
 import { PrismaService }         from '../../prisma/prisma.service.js'
 import { GatewayService }        from '../gateway/gateway.service.js'
 import { AgentResolverService }  from '../gateway/agent-resolver.service.js'
+import { ChannelEventEmitter }   from './channel-event-emitter.js'
+import {
+  makeChannelEvent,
+  type StatusChangedPayload,
+  type ChannelErrorPayload,
+} from './channel-event.types.js'
 import {
   ChannelNotFoundError,
   InvalidTransitionError,
@@ -11,8 +17,6 @@ import {
 import type { ProvisionChannelDto, ChannelStatusDto } from './dto/provision-channel.dto.js'
 import { createCipheriv, randomBytes }               from 'crypto'
 
-// ── Tipos ───────────────────────────────────────────────────────────────
-
 type ChannelStatus =
   | 'provisioned'
   | 'starting'
@@ -20,8 +24,6 @@ type ChannelStatus =
   | 'stopping'
   | 'stopped'
   | 'error'
-
-// ── Transiciones permitidas (mapa explícito) ────────────────────────────
 
 const TRANSITIONS: Record<ChannelStatus, ChannelStatus[]> = {
   provisioned: ['starting'],
@@ -32,8 +34,6 @@ const TRANSITIONS: Record<ChannelStatus, ChannelStatus[]> = {
   error:       ['starting'],
 }
 
-// ── Servicio ────────────────────────────────────────────────────────────
-
 @Injectable()
 export class ChannelLifecycleService {
   private readonly logger = new Logger(ChannelLifecycleService.name)
@@ -42,19 +42,9 @@ export class ChannelLifecycleService {
     private readonly db:       PrismaService,
     private readonly gateway:  GatewayService,
     private readonly resolver: AgentResolverService,
+    private readonly events:   ChannelEventEmitter,
   ) {}
 
-  // ────────────────────────────────────────────────────────────────────
-  // PROVISION — Crea el ChannelConfig en BD con status='provisioned'
-  // ────────────────────────────────────────────────────────────────────
-
-  /**
-   * Crea un nuevo canal en la BD en estado 'provisioned'.
-   * No registra webhooks ni activa el canal.
-   * Si dto.autoStart=true, llama start() inmediatamente después.
-   *
-   * @returns ChannelStatusDto del canal creado
-   */
   async provision(dto: ProvisionChannelDto): Promise<ChannelStatusDto> {
     const secretsEncrypted = dto.secrets
       ? this.encryptSecrets(dto.secrets)
@@ -75,6 +65,11 @@ export class ChannelLifecycleService {
     })
 
     this.logger.log(`[provision] Channel "${channel.id}" (${channel.type}) created`)
+    this.events.emit(makeChannelEvent(
+      'channel.provisioned',
+      channel.id,
+      { name: channel.name, type: channel.type, status: 'provisioned' },
+    ))
 
     if (dto.autoStart) {
       return this.start(channel.id)
@@ -83,21 +78,6 @@ export class ChannelLifecycleService {
     return this.toStatusDto(channel, 0, 0)
   }
 
-  // ────────────────────────────────────────────────────────────────────
-  // START — Activa el canal: registra webhooks y marca isActive=true
-  // ────────────────────────────────────────────────────────────────────
-
-  /**
-   * Inicia un canal en estado 'provisioned', 'stopped', o 'error'.
-   * Flujo:
-   *   1. Validar transición → 'starting'
-   *   2. Persistir status='starting', isActive=true
-   *   3. Llamar GatewayService.activateChannel() (con stub de seguridad)
-   *   4a. Éxito → persistir status='active', lastStartedAt=now
-   *   4b. Fallo → persistir status='error', isActive=false, errorMessage
-   *
-   * @throws InvalidTransitionError si el canal no puede hacer start desde su estado actual
-   */
   async start(channelConfigId: string): Promise<ChannelStatusDto> {
     const channel = await this.loadOrThrow(channelConfigId)
 
@@ -107,7 +87,6 @@ export class ChannelLifecycleService {
 
     this.assertTransition(channel.status as ChannelStatus, 'starting', channelConfigId)
 
-    // Marcar como 'starting'
     await this.db.channelConfig.update({
       where: { id: channelConfigId },
       data:  { status: 'starting', isActive: true, errorMessage: null },
@@ -115,15 +94,23 @@ export class ChannelLifecycleService {
     this.resolver.invalidateCache(channelConfigId)
 
     try {
-      // Delegar al GatewayService la activación real del canal (stub-safe)
       await this.callGatewayActivate(channelConfigId)
 
-      // Marcar como 'active'
       const updated = await this.db.channelConfig.update({
         where: { id: channelConfigId },
         data:  { status: 'active', lastStartedAt: new Date() },
       })
       this.resolver.invalidateCache(channelConfigId)
+      this.events.emit(makeChannelEvent<StatusChangedPayload>(
+        'channel.status_changed',
+        channelConfigId,
+        {
+          previousStatus: channel.status,
+          currentStatus: 'active',
+          isActive: true,
+          errorMessage: null,
+        },
+      ))
       this.logger.log(`[start] Channel "${channelConfigId}" is now active`)
       return this.buildStatusDto(updated, channelConfigId)
 
@@ -134,26 +121,16 @@ export class ChannelLifecycleService {
         data:  { status: 'error', isActive: false, errorMessage },
       })
       this.resolver.invalidateCache(channelConfigId)
+      this.events.emit(makeChannelEvent<ChannelErrorPayload>(
+        'channel.error',
+        channelConfigId,
+        { operation: 'start', errorMessage, previousStatus: channel.status },
+      ))
       this.logger.error(`[start] Channel "${channelConfigId}" failed to start: ${errorMessage}`)
       throw new WebhookRegistrationError(channelConfigId, errorMessage)
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────
-  // STOP — Desactiva el canal: desregistra webhooks y marca isActive=false
-  // ────────────────────────────────────────────────────────────────────
-
-  /**
-   * Detiene un canal en estado 'active'.
-   * Flujo:
-   *   1. Validar transición → 'stopping'
-   *   2. Persistir status='stopping', isActive=false
-   *   3. Llamar GatewayService.deactivateChannel() (con stub de seguridad)
-   *   4a. Éxito → persistir status='stopped', lastStoppedAt=now
-   *   4b. Fallo → persistir status='error', errorMessage
-   *
-   * @throws InvalidTransitionError si el canal no está en estado 'active'
-   */
   async stop(channelConfigId: string): Promise<ChannelStatusDto> {
     const channel = await this.loadOrThrow(channelConfigId)
 
@@ -177,6 +154,16 @@ export class ChannelLifecycleService {
         data:  { status: 'stopped', lastStoppedAt: new Date() },
       })
       this.resolver.invalidateCache(channelConfigId)
+      this.events.emit(makeChannelEvent<StatusChangedPayload>(
+        'channel.status_changed',
+        channelConfigId,
+        {
+          previousStatus: 'active',
+          currentStatus: 'stopped',
+          isActive: false,
+          errorMessage: null,
+        },
+      ))
       this.logger.log(`[stop] Channel "${channelConfigId}" is now stopped`)
       return this.buildStatusDto(updated, channelConfigId)
 
@@ -187,21 +174,16 @@ export class ChannelLifecycleService {
         data:  { status: 'error', errorMessage },
       })
       this.resolver.invalidateCache(channelConfigId)
+      this.events.emit(makeChannelEvent<ChannelErrorPayload>(
+        'channel.error',
+        channelConfigId,
+        { operation: 'stop', errorMessage, previousStatus: 'active' },
+      ))
       this.logger.error(`[stop] Channel "${channelConfigId}" failed to stop: ${errorMessage}`)
       throw err
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────
-  // RESTART — stop() + start() con manejo de estado intermedio
-  // ────────────────────────────────────────────────────────────────────
-
-  /**
-   * Reinicia el canal.
-   * - Si está 'active' → stop() + start()
-   * - Si está 'error', 'stopped', 'provisioned' → start() directo
-   * - Si está 'starting' o 'stopping' → InvalidTransitionError
-   */
   async restart(channelConfigId: string): Promise<ChannelStatusDto> {
     const channel = await this.loadOrThrow(channelConfigId)
 
@@ -220,23 +202,11 @@ export class ChannelLifecycleService {
     return this.start(channelConfigId)
   }
 
-  // ────────────────────────────────────────────────────────────────────
-  // STATUS — Lectura enriquecida del estado del canal
-  // ────────────────────────────────────────────────────────────────────
-
-  /**
-   * Retorna el ChannelStatusDto con conteos de bindings y sesiones activas.
-   * Nunca lanza errores de transición — solo lanza ChannelNotFoundError.
-   */
   async status(channelConfigId: string): Promise<ChannelStatusDto> {
     const channel = await this.loadOrThrow(channelConfigId)
     return this.buildStatusDto(channel, channelConfigId)
   }
 
-  /**
-   * Lista todos los canales con su estado actual.
-   * Ordenados por: activos primero, luego por nombre.
-   */
   async listAll(): Promise<ChannelStatusDto[]> {
     const channels = await this.db.channelConfig.findMany({
       orderBy: [
@@ -250,36 +220,17 @@ export class ChannelLifecycleService {
     )
   }
 
-  // ────────────────────────────────────────────────────────────────────
-  // STUBS DE GATEWAY (safe delegation)
-  // ────────────────────────────────────────────────────────────────────
-
-  /**
-   * Llama gateway.activateChannel() si el método existe.
-   * Si aún no está implementado en GatewayService, actúa como no-op
-   * para que el build no rompa.
-   */
   private async callGatewayActivate(id: string): Promise<void> {
     if (typeof (this.gateway as any).activateChannel === 'function') {
       await (this.gateway as any).activateChannel(id)
     }
-    // else: no-op hasta que GatewayService implemente el método
   }
 
-  /**
-   * Llama gateway.deactivateChannel() si el método existe.
-   * Si aún no está implementado en GatewayService, actúa como no-op.
-   */
   private async callGatewayDeactivate(id: string): Promise<void> {
     if (typeof (this.gateway as any).deactivateChannel === 'function') {
       await (this.gateway as any).deactivateChannel(id)
     }
-    // else: no-op hasta que GatewayService implemente el método
   }
-
-  // ────────────────────────────────────────────────────────────────────
-  // PRIVADOS
-  // ────────────────────────────────────────────────────────────────────
 
   private assertTransition(
     from:             ChannelStatus,
@@ -334,10 +285,6 @@ export class ChannelLifecycleService {
     }
   }
 
-  /**
-   * Encripta los secretos del canal usando AES-256-GCM.
-   * Mismo esquema que GatewayService: [12 IV][16 tag][N ciphertext]
-   */
   private encryptSecrets(secrets: Record<string, unknown>): string {
     const keyHex = process.env.GATEWAY_ENCRYPTION_KEY ?? ''
     if (!keyHex) throw new Error('GATEWAY_ENCRYPTION_KEY is not set')
