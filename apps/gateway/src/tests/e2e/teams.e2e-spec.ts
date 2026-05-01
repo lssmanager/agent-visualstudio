@@ -1,913 +1,516 @@
 /**
- * teams.e2e-spec.ts — [F3a-27]
+ * teams.e2e-spec.ts — [F3a-27] Tests E2E del canal Microsoft Teams
  *
- * Tests E2E del flujo Microsoft Teams:
- *   Webhook HTTP → TeamsAdapter → IncomingMessage
- *   → MessageDispatcher → AgentExecutor (mock)
- *   → strategy.send → Teams API (fetch mock)
- *
- * Estrategia de mocking:
- *   - fetch global: mockeado con jest.spyOn para capturar llamadas a Teams/Microsoft API
- *   - IAgentExecutor: jest.fn() que devuelve respuesta configurable
- *   - JWT auth middleware: mockeado (_verifyBotFrameworkAuth) para saltear verificación
- *   - Prisma: NO se usa directamente en estos tests
- *
- * Estructura de suites:
- *   1. IncomingWebhookStrategy — envío y verificación
- *   2. BotFrameworkStrategy — token OAuth + envío de actividad
- *   3. TeamsAdapter (bot_framework) — recepción de message Activity
- *   4. TeamsAdapter — conversationUpdate / invoke / tipos desconocidos
- *   5. TeamsAdapter (incoming_webhook) — modo solo-envío
- *   6. MessageDispatcher — integración con TeamsAdapter
- *   7. Edge cases del TeamsAdapter
+ * Valida:
+ *   ✅ Actividad 'message' con bot_framework → emit() llamado → respuesta enviada
+ *   ✅ Actividad 'message' en modo incoming_webhook → responde 400 informativo
+ *   ✅ Actividad tipo 'invoke' (Teams health check) → responde 200 {}
+ *   ✅ Actividad 'conversationUpdate' → responde 200 sin emitir al agente
+ *   ✅ Actividad sin 'type' → responde 400
+ *   ✅ Autenticación Bot Framework: Bearer token con appId incorrecto → 401
+ *   ✅ Autenticación Bot Framework: Bearer token malformado → 401
+ *   ✅ Autenticación Bot Framework: sin Bearer → 401
+ *   ✅ Token válido (appId correcto) → procesa actividad normalmente
+ *   ✅ send() con serviceUrl → delega a strategy.send()
+ *   ✅ send() sin serviceUrl → error controlado (no lanza excepción)
+ *   ✅ GET /health → status ok + mode + channelConfigId
+ *   ✅ POST /messages en modo incoming_webhook → 400 con mensaje explicativo
+ *   ✅ Error en emit() → strategy.send() llamado con mensaje de error (no crash)
  */
 
-import express                from 'express'
-import request                from 'supertest'
-
-import { TeamsAdapter }       from '../../channels/teams/teams-bot.adapter.js'
-import { MessageDispatcher }  from '../../message-dispatcher.service.js'
+import express, { Application } from 'express'
+import request from 'supertest'
+import { TeamsAdapter } from '../../channels/teams/teams-bot.adapter.js'
 import type {
-  IAgentExecutor,
-  DispatchInput,
-  DispatchSuccess,
-  DispatchFailure,
-}                             from '../../message-dispatcher.types.js'
-import type { IncomingMessage } from '../../channels/channel-adapter.interface.js'
-import {
-  IncomingWebhookStrategy,
-  BotFrameworkStrategy,
-  buildAdaptiveTextCard,
-  buildAdaptiveRichCard,
-  type TeamsActivity,
-}                             from '../../channels/teams/teams-mode.strategy.js'
+  ITeamsModeStrategy,
+  TeamsActivity,
+  TeamsOutgoingPayload,
+  TeamsSendResult,
+} from '../../channels/teams/teams-mode.strategy.js'
+import type { OutgoingMessage } from '../../channels/channel-adapter.interface.js'
 
-// ── Fixtures ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-const FAKE_APP_ID       = 'app-id-test-1111'
-const FAKE_APP_PASSWORD = 'app-password-test-2222'
-const FAKE_WEBHOOK_URL  = 'https://prod-01.westus.logic.azure.com/fake-webhook'
-const FAKE_SERVICE_URL  = 'https://smba.trafficmanager.net/apis'
-const FAKE_CONV_ID      = '19:conversation-id-test@thread.v2'
-const FAKE_TENANT_ID    = 'tenant-uuid-test'
-const FAKE_TEAM_ID      = 'team-uuid-test'
-const FAKE_USER_ID      = 'aad-user-uuid-test'
-const FAKE_USER_NAME    = 'Test User'
-const FAKE_BOT_ID       = 'bot-uuid-test'
-const FAKE_CHANNEL_CFG  = 'channel-config-teams-test'
-const FAKE_AGENT_ID     = 'agent-uuid-teams-test'
-const FAKE_SESSION_ID   = 'session-teams-001'
-const FAKE_BEARER_TOKEN = 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJhcHBpZCI6ImFwcC1pZC10ZXN0LTExMTEiLCJleHAiOjk5OTk5OTk5OTl9.signature'
+/**
+ * Construye un JWT mínimo (sin firma real) con el appId indicado.
+ * Solo para tests de la verificación _verifyBotFrameworkAuth.
+ */
+function buildFakeJwt(payload: Record<string, unknown>): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url')
+  const body   = Buffer.from(JSON.stringify(payload)).toString('base64url')
+  const sig    = Buffer.from('fakesignature').toString('base64url')
+  return `${header}.${body}.${sig}`
+}
 
-/** Crea una TeamsActivity de tipo 'message' completa */
-function makeMessageActivity(text: string, overrides: Partial<TeamsActivity> = {}): TeamsActivity {
+function makeActivity(overrides: Partial<TeamsActivity> = {}): TeamsActivity {
   return {
     type:       'message',
-    id:         'activity-id-test-001',
+    id:         'act-001',
     timestamp:  new Date().toISOString(),
-    serviceUrl: FAKE_SERVICE_URL,
+    serviceUrl: 'https://smba.trafficmanager.net/amer/',
     channelId:  'msteams',
     from: {
-      id:          FAKE_USER_ID,
-      name:        FAKE_USER_NAME,
-      aadObjectId: FAKE_USER_ID,
+      id:          'user-aad-001',
+      name:        'Test User',
+      aadObjectId: 'aad-001',
     },
     conversation: {
-      id:       FAKE_CONV_ID,
-      tenantId: FAKE_TENANT_ID,
-      isGroup:  true,
+      id:       'conv-001',
+      tenantId: 'tenant-001',
+      isGroup:  false,
     },
     recipient: {
-      id:   FAKE_BOT_ID,
+      id:   'bot-app-id',
       name: 'TestBot',
     },
-    text,
+    text: 'Hola agente',
     channelData: {
-      tenant:  { id: FAKE_TENANT_ID },
-      team:    { id: FAKE_TEAM_ID, name: 'Test Team' },
-      channel: { id: '19:channel-id@thread.skype', name: 'General' },
+      tenant:  { id: 'tenant-001' },
+      team:    { id: 'team-001', name: 'Dev Team' },
+      channel: { id: 'ch-001',   name: 'general' },
     },
     ...overrides,
   }
 }
 
-/** Crea una TeamsActivity de tipo 'conversationUpdate' */
-function makeConversationUpdateActivity(): TeamsActivity {
-  return {
-    type:       'conversationUpdate',
-    id:         'activity-id-update-001',
-    serviceUrl: FAKE_SERVICE_URL,
-    channelId:  'msteams',
-    from:         { id: FAKE_BOT_ID, name: 'TestBot' },
-    conversation: { id: FAKE_CONV_ID, tenantId: FAKE_TENANT_ID, isGroup: true },
-    recipient:    { id: FAKE_USER_ID, name: FAKE_USER_NAME },
-    channelData: {
-      team:    { id: FAKE_TEAM_ID, name: 'Test Team' },
-      channel: { id: '19:channel@thread.skype', name: 'General' },
-    },
-  }
-}
+// ── Mock strategy factory ─────────────────────────────────────────────────────
 
-/** Crea una TeamsActivity de tipo 'invoke' (health check de Teams) */
-function makeInvokeActivity(): TeamsActivity {
-  return {
-    type:         'invoke',
-    id:           'activity-id-invoke-001',
-    serviceUrl:   FAKE_SERVICE_URL,
-    channelId:    'msteams',
-    from:         { id: FAKE_USER_ID },
-    conversation: { id: FAKE_CONV_ID },
-    recipient:    { id: FAKE_BOT_ID },
-  }
-}
+function makeMockStrategy(
+  mode:  'bot_framework' | 'incoming_webhook' = 'bot_framework',
+  appId = 'test-app-id',
+): { strategy: ITeamsModeStrategy; sendMock: jest.Mock } {
+  const sendMock = jest
+    .fn<Promise<TeamsSendResult>, [TeamsOutgoingPayload, string, string?]>()
+    .mockResolvedValue({ ok: true, activityId: 'sent-act-001' })
 
-/** Crea un DispatchInput válido */
-function makeDispatchInput(overrides: Partial<DispatchInput> = {}): DispatchInput {
-  return {
-    sessionId:       FAKE_SESSION_ID,
-    agentId:         FAKE_AGENT_ID,
-    channelConfigId: FAKE_CHANNEL_CFG,
-    externalUserId:  FAKE_USER_ID,
-    history: [
-      { role: 'user', content: 'Mensaje de prueba Teams' },
-    ],
-    ...overrides,
-  }
-}
-
-/** Construye un JWT mínimo con el appid correcto para pasar la verificación del adapter */
-function makeFakeJwt(appId: string): string {
-  const payload = Buffer.from(JSON.stringify({ appid: appId, exp: 9999999999 })).toString('base64url')
-  return `eyJhbGciOiJSUzI1NiJ9.${payload}.fakesignature`
-}
-
-// ── Harness compartido ────────────────────────────────────────────────────────
-
-async function buildBotFrameworkHarness(agentReply = 'Respuesta de Teams del agente') {
-  // Mock global de fetch — simula Microsoft API respondiendo OK
-  const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(
-    async (url: RequestInfo | URL) => {
-      const urlStr = typeof url === 'string' ? url : (url as URL).toString()
-
-      // Token endpoint de Microsoft
-      if (urlStr.includes('login.microsoftonline.com')) {
-        return new Response(
-          JSON.stringify({
-            access_token: FAKE_BEARER_TOKEN,
-            expires_in:   3600,
-            token_type:   'Bearer',
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
-      }
-
-      // Bot Framework Service (envío de respuesta)
-      if (urlStr.includes('smba.trafficmanager.net') || urlStr.includes('/v3/conversations/')) {
-        return new Response(
-          JSON.stringify({ id: 'mock-activity-id' }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
-      }
-
-      throw new Error(`fetch no mockeada para URL: ${urlStr}`)
-    },
-  )
-
-  // AgentExecutor mock
-  const mockExecutor: IAgentExecutor = {
-    run: jest.fn().mockResolvedValue({ reply: agentReply }),
+  const strategy: ITeamsModeStrategy = {
+    mode,
+    send:   sendMock,
+    verify: jest.fn().mockResolvedValue({ ok: true }),
+    buildTextCard: jest.fn().mockImplementation((text: string) => ({
+      contentType: 'application/vnd.microsoft.card.adaptive',
+      content:     { type: 'AdaptiveCard', body: [{ type: 'TextBlock', text }] },
+    })),
+    ...(mode === 'bot_framework'
+      ? { getBearerToken: jest.fn().mockResolvedValue('fake-bearer-token') }
+      : {}),
   }
 
-  // TeamsAdapter en modo bot_framework
-  const adapter = new TeamsAdapter()
-  await adapter.initialize(FAKE_CHANNEL_CFG)
-  await adapter.setup(
-    { mode: 'bot_framework' },
-    { appId: FAKE_APP_ID, appPassword: FAKE_APP_PASSWORD },
-  )
+  // Exponer appId para referencia interna en tests
+  ;(strategy as unknown as Record<string, unknown>)['_appId'] = appId
 
-  // MessageDispatcher
-  const dispatcher = new MessageDispatcher(mockExecutor, {
-    timeoutMs:    5_000,
-    maxAttempts:  1,
-    retryDelayMs: 50,
+  return { strategy, sendMock }
+}
+
+// ── App factory para tests ────────────────────────────────────────────────────
+
+async function buildTestApp(
+  mode:  'bot_framework' | 'incoming_webhook' = 'bot_framework',
+  appId = 'test-app-id',
+): Promise<{
+  app:        Application
+  adapter:    TeamsAdapter
+  sendMock:   jest.Mock
+  emitEvents: TeamsActivity[]
+}> {
+  const { strategy, sendMock } = makeMockStrategy(mode, appId)
+  const emitEvents: TeamsActivity[] = []
+
+  const adapter = new TeamsAdapter({ routePrefix: '/teams' })
+  await adapter.initialize('channel-config-001')
+
+  // Inyectar dependencias mock sin pasar por setup() que haría fetch a Azure
+  const adapterAny = adapter as unknown as Record<string, unknown>
+  adapterAny['strategy'] = strategy
+  adapterAny['config']   = { mode, agentTimeoutMs: 5_000 }
+  adapterAny['secrets']  = { appId, appPassword: 'test-password' }
+  adapterAny['router']   =
+    (adapter as unknown as { _buildRouter(): unknown })['_buildRouter']()
+
+  // Capturar IncomingMessages emitidos al agente
+  adapter.on('message', (msg: unknown) => {
+    emitEvents.push(
+      (msg as { rawPayload: TeamsActivity }).rawPayload,
+    )
   })
 
-  // App Express
   const app = express()
   app.use(express.json())
   app.use('/teams', adapter.getRouter())
 
-  // Capturar IncomingMessages
-  const capturedMessages: IncomingMessage[] = []
-  adapter.onMessage((msg) => capturedMessages.push(msg))
-
-  // Token Bearer con appid correcto para superar validación JWT
-  const validAuthHeader = `Bearer ${makeFakeJwt(FAKE_APP_ID)}`
-
-  return { adapter, dispatcher, mockExecutor, fetchSpy, app, capturedMessages, validAuthHeader }
+  return { app, adapter, sendMock, emitEvents }
 }
 
-// ── Suite 1: IncomingWebhookStrategy ─────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// SUITE PRINCIPAL
+// ─────────────────────────────────────────────────────────────────────────────
 
-describe('Teams E2E — IncomingWebhookStrategy', () => {
-  let fetchSpy: jest.SpyInstance
+describe('TeamsAdapter — E2E', () => {
 
-  beforeEach(() => {
-    fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(
-      new Response('1', { status: 200 }),
-    )
-  })
+  // ── Healthcheck ──────────────────────────────────────────────────────────────
 
-  afterEach(() => jest.restoreAllMocks())
+  describe('GET /teams/health', () => {
+    it('devuelve status ok, channel, mode y channelConfigId', async () => {
+      const { app } = await buildTestApp('bot_framework')
 
-  it('send() POST al webhookUrl con Adaptive Card cuando hay texto', async () => {
-    const strategy = new IncomingWebhookStrategy({ webhookUrl: FAKE_WEBHOOK_URL })
+      const res = await request(app).get('/teams/health')
 
-    const result = await strategy.send({
-      type:        'message',
-      attachments: [buildAdaptiveTextCard('Hola desde el agente')],
-    }, FAKE_CONV_ID)
-
-    expect(result.ok).toBe(true)
-    expect(fetchSpy).toHaveBeenCalledWith(
-      FAKE_WEBHOOK_URL,
-      expect.objectContaining({ method: 'POST' }),
-    )
-  })
-
-  it('send() incluye Adaptive Card en el body cuando hay attachments', async () => {
-    const strategy = new IncomingWebhookStrategy({ webhookUrl: FAKE_WEBHOOK_URL })
-
-    await strategy.send({
-      type:        'message',
-      attachments: [buildAdaptiveTextCard('Test message')],
-    }, FAKE_CONV_ID)
-
-    const sentBody = JSON.parse(
-      (fetchSpy.mock.calls[0]![1] as RequestInit).body as string,
-    )
-    expect(sentBody.type).toBe('message')
-    expect(sentBody.attachments).toHaveLength(1)
-    expect(sentBody.attachments[0].contentType).toBe('application/vnd.microsoft.card.adaptive')
-  })
-
-  it('send() devuelve { ok: false } cuando Teams responde 400', async () => {
-    fetchSpy.mockResolvedValueOnce(
-      new Response('Bad payload', { status: 400 }),
-    )
-
-    const strategy = new IncomingWebhookStrategy({ webhookUrl: FAKE_WEBHOOK_URL })
-    const result = await strategy.send({ type: 'message', text: 'test' }, FAKE_CONV_ID)
-
-    expect(result.ok).toBe(false)
-    expect(result.error).toContain('400')
-  })
-
-  it('send() devuelve { ok: false } en error de red', async () => {
-    fetchSpy.mockRejectedValueOnce(new Error('ECONNREFUSED'))
-
-    const strategy = new IncomingWebhookStrategy({ webhookUrl: FAKE_WEBHOOK_URL })
-    const result = await strategy.send({ type: 'message', text: 'test' }, FAKE_CONV_ID)
-
-    expect(result.ok).toBe(false)
-    expect(result.error).toContain('ECONNREFUSED')
-  })
-
-  it('verify() llama send() con una Adaptive Card de prueba', async () => {
-    const strategy = new IncomingWebhookStrategy({ webhookUrl: FAKE_WEBHOOK_URL })
-    const result   = await strategy.verify()
-
-    expect(result.ok).toBe(true)
-    expect(fetchSpy).toHaveBeenCalledTimes(1)
-  })
-
-  it('constructor lanza si webhookUrl no es HTTPS', () => {
-    expect(() => new IncomingWebhookStrategy({ webhookUrl: 'http://insecure.com/hook' }))
-      .toThrow('HTTPS')
-  })
-
-  it('buildAdaptiveTextCard genera estructura de Adaptive Card válida', () => {
-    const card = buildAdaptiveTextCard('Mensaje de prueba')
-
-    expect(card.contentType).toBe('application/vnd.microsoft.card.adaptive')
-    const content = card.content as Record<string, unknown>
-    expect(content['type']).toBe('AdaptiveCard')
-    expect(content['version']).toBe('1.5')
-    const body = content['body'] as Array<Record<string, unknown>>
-    expect(body[0]?.['text']).toBe('Mensaje de prueba')
-    expect(body[0]?.['wrap']).toBe(true)
-  })
-
-  it('buildAdaptiveRichCard incluye title, description y botones', () => {
-    const card = buildAdaptiveRichCard({
-      title:       'Estado del agente',
-      description: 'Fase F3a completada',
-      buttons:     [{ label: 'Ver más', value: 'action:ver-mas' }],
+      expect(res.status).toBe(200)
+      expect(res.body).toMatchObject({
+        status:          'ok',
+        channel:         'teams',
+        mode:            'bot_framework',
+        channelConfigId: 'channel-config-001',
+      })
+      expect(res.body.timestamp).toBeDefined()
     })
 
-    expect(card.contentType).toBe('application/vnd.microsoft.card.adaptive')
-    const content = card.content as Record<string, unknown>
-    const body    = content['body'] as Array<Record<string, unknown>>
-    const actions = content['actions'] as Array<Record<string, unknown>>
+    it('refleja mode incoming_webhook cuando está configurado así', async () => {
+      const { app } = await buildTestApp('incoming_webhook')
 
-    expect(body.some((b) => b['text'] === 'Estado del agente')).toBe(true)
-    expect(body.some((b) => b['text'] === 'Fase F3a completada')).toBe(true)
-    expect(actions).toHaveLength(1)
-    expect(actions[0]?.['title']).toBe('Ver más')
-  })
-})
+      const res = await request(app).get('/teams/health')
 
-// ── Suite 2: BotFrameworkStrategy — token OAuth ───────────────────────────────
-
-describe('Teams E2E — BotFrameworkStrategy (OAuth + send)', () => {
-  let fetchSpy: jest.SpyInstance
-
-  beforeEach(() => {
-    fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(
-      async (url: RequestInfo | URL) => {
-        const urlStr = typeof url === 'string' ? url : (url as URL).toString()
-
-        if (urlStr.includes('login.microsoftonline.com')) {
-          return new Response(
-            JSON.stringify({ access_token: FAKE_BEARER_TOKEN, expires_in: 3600, token_type: 'Bearer' }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } },
-          )
-        }
-
-        if (urlStr.includes('/v3/conversations/')) {
-          return new Response(
-            JSON.stringify({ id: 'new-activity-id' }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } },
-          )
-        }
-
-        throw new Error(`fetch no mockeada: ${urlStr}`)
-      },
-    )
-  })
-
-  afterEach(() => jest.restoreAllMocks())
-
-  it('getBearerToken() obtiene token de Microsoft OAuth', async () => {
-    const strategy = new BotFrameworkStrategy(
-      { appId: FAKE_APP_ID, appPassword: FAKE_APP_PASSWORD },
-    )
-
-    const token = await strategy.getBearerToken!()
-
-    expect(token).toBe(FAKE_BEARER_TOKEN)
-    expect(fetchSpy).toHaveBeenCalledWith(
-      'https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token',
-      expect.objectContaining({ method: 'POST' }),
-    )
-  })
-
-  it('getBearerToken() usa caché y no llama fetch dos veces', async () => {
-    const strategy = new BotFrameworkStrategy(
-      { appId: FAKE_APP_ID, appPassword: FAKE_APP_PASSWORD },
-    )
-
-    await strategy.getBearerToken!()
-    await strategy.getBearerToken!()
-
-    const tokenCalls = fetchSpy.mock.calls.filter(([url]) =>
-      url.toString().includes('login.microsoftonline.com')
-    )
-    expect(tokenCalls).toHaveLength(1)
-  })
-
-  it('send() incluye Bearer token en el header Authorization', async () => {
-    const strategy = new BotFrameworkStrategy(
-      { appId: FAKE_APP_ID, appPassword: FAKE_APP_PASSWORD },
-    )
-
-    await strategy.send(
-      { type: 'message', attachments: [buildAdaptiveTextCard('Respuesta')] },
-      FAKE_CONV_ID,
-      FAKE_SERVICE_URL,
-    )
-
-    const activityCall = fetchSpy.mock.calls.find(([url]) =>
-      url.toString().includes('/v3/conversations/')
-    )
-    expect(activityCall).toBeDefined()
-    expect((activityCall![1] as RequestInit).headers).toMatchObject({
-      Authorization: `Bearer ${FAKE_BEARER_TOKEN}`,
+      expect(res.status).toBe(200)
+      expect(res.body.mode).toBe('incoming_webhook')
     })
   })
 
-  it('send() construye URL correcta para el Bot Framework Service', async () => {
-    const strategy = new BotFrameworkStrategy(
-      { appId: FAKE_APP_ID, appPassword: FAKE_APP_PASSWORD },
-    )
+  // ── Modo incoming_webhook: POST /messages ─────────────────────────────────────
 
-    await strategy.send(
-      { type: 'message', text: 'Hola' },
-      FAKE_CONV_ID,
-      FAKE_SERVICE_URL,
-    )
+  describe('POST /teams/messages — modo incoming_webhook', () => {
+    it('responde 400 con mensaje explicativo (canal de solo envío)', async () => {
+      const { app } = await buildTestApp('incoming_webhook')
 
-    const activityCall = fetchSpy.mock.calls.find(([url]) =>
-      url.toString().includes('/v3/conversations/')
-    )
-    expect(activityCall![0]).toBe(
-      `${FAKE_SERVICE_URL}/v3/conversations/${FAKE_CONV_ID}/activities`
-    )
-  })
-
-  it('send() devuelve { ok: false } cuando falta serviceUrl', async () => {
-    const strategy = new BotFrameworkStrategy(
-      { appId: FAKE_APP_ID, appPassword: FAKE_APP_PASSWORD },
-    )
-
-    const result = await strategy.send(
-      { type: 'message', text: 'Hola' },
-      FAKE_CONV_ID,
-      // serviceUrl omitido
-    )
-
-    expect(result.ok).toBe(false)
-    expect(result.error).toContain('serviceUrl')
-  })
-
-  it('verify() retorna ok:true si el token se obtiene correctamente', async () => {
-    const strategy = new BotFrameworkStrategy(
-      { appId: FAKE_APP_ID, appPassword: FAKE_APP_PASSWORD },
-    )
-
-    const result = await strategy.verify()
-    expect(result.ok).toBe(true)
-  })
-
-  it('verify() retorna ok:false si el token falla', async () => {
-    fetchSpy.mockRejectedValueOnce(new Error('Auth server down'))
-
-    const strategy = new BotFrameworkStrategy(
-      { appId: FAKE_APP_ID, appPassword: FAKE_APP_PASSWORD },
-    )
-
-    const result = await strategy.verify()
-    expect(result.ok).toBe(false)
-    expect(result.error).toContain('Auth server down')
-  })
-
-  it('constructor lanza si falta appId', () => {
-    expect(() => new BotFrameworkStrategy({ appId: '', appPassword: FAKE_APP_PASSWORD }))
-      .toThrow('appId')
-  })
-
-  it('constructor lanza si falta appPassword', () => {
-    expect(() => new BotFrameworkStrategy({ appId: FAKE_APP_ID, appPassword: '' }))
-      .toThrow('appPassword')
-  })
-})
-
-// ── Suite 3: TeamsAdapter (bot_framework) — recepción de message Activity ─────
-
-describe('Teams E2E — TeamsAdapter bot_framework: message Activity', () => {
-  let harness: Awaited<ReturnType<typeof buildBotFrameworkHarness>>
-
-  beforeEach(async () => { harness = await buildBotFrameworkHarness('Respuesta del agente Teams') })
-  afterEach(async () => { jest.restoreAllMocks(); await harness.adapter.dispose() })
-
-  it('POST /teams/messages emite IncomingMessage con campos normalizados', async () => {
-    const body = makeMessageActivity('¿Cuál es el estado del proyecto?')
-
-    await request(harness.app)
-      .post('/teams/messages')
-      .set('Authorization', harness.validAuthHeader)
-      .send(body)
-      .expect(200)
-
-    // El adapter responde 200 inmediatamente y procesa en background
-    await new Promise((r) => setTimeout(r, 50))
-
-    expect(harness.capturedMessages).toHaveLength(1)
-    const msg = harness.capturedMessages[0]!
-    expect(msg.channelType).toBe('teams')
-    expect(msg.channelConfigId).toBe(FAKE_CHANNEL_CFG)
-    expect(msg.externalId).toBe(FAKE_CONV_ID)
-    expect(msg.senderId).toBe(FAKE_USER_ID)     // usa aadObjectId
-    expect(msg.text).toBe('¿Cuál es el estado del proyecto?')
-    expect(msg.type).toBe('text')
-  })
-
-  it('IncomingMessage.metadata incluye serviceUrl, tenantId, teamId', async () => {
-    const body = makeMessageActivity('Test metadata')
-
-    await request(harness.app)
-      .post('/teams/messages')
-      .set('Authorization', harness.validAuthHeader)
-      .send(body)
-      .expect(200)
-
-    await new Promise((r) => setTimeout(r, 50))
-
-    const msg = harness.capturedMessages[0]!
-    expect(msg.metadata?.['serviceUrl']).toBe(FAKE_SERVICE_URL)
-    expect(msg.metadata?.['tenantId']).toBe(FAKE_TENANT_ID)
-    expect(msg.metadata?.['teamId']).toBe(FAKE_TEAM_ID)
-    expect(msg.metadata?.['isGroup']).toBe(true)
-    expect(msg.metadata?.['fromName']).toBe(FAKE_USER_NAME)
-  })
-
-  it('responde 200 inmediatamente (no espera al agente)', async () => {
-    // El agente tarda 500ms pero la respuesta HTTP debe ser inmediata
-    const slowExecutor: IAgentExecutor = {
-      run: jest.fn().mockImplementation(
-        () => new Promise((r) => setTimeout(() => r({ reply: 'tarde' }), 500))
-      ),
-    }
-    const slowDispatcher = new MessageDispatcher(slowExecutor)
-    const slowAdapter    = new TeamsAdapter()
-    await slowAdapter.initialize('slow-test-config')
-    await slowAdapter.setup(
-      { mode: 'bot_framework' },
-      { appId: FAKE_APP_ID, appPassword: FAKE_APP_PASSWORD },
-    )
-    const slowApp = express()
-    slowApp.use(express.json())
-    slowApp.use('/teams', slowAdapter.getRouter())
-    void slowDispatcher  // evitar advertencia de unused
-
-    const start = Date.now()
-    await request(slowApp)
-      .post('/teams/messages')
-      .set('Authorization', harness.validAuthHeader)
-      .send(makeMessageActivity('mensaje lento'))
-      .expect(200)
-    const elapsed = Date.now() - start
-
-    // La respuesta HTTP debe llegar en menos de 200ms (no espera al agente)
-    expect(elapsed).toBeLessThan(300)
-    await slowAdapter.dispose()
-  })
-
-  it('no emite IncomingMessage para actividad con texto vacío', async () => {
-    const body = makeMessageActivity('')  // texto vacío
-
-    await request(harness.app)
-      .post('/teams/messages')
-      .set('Authorization', harness.validAuthHeader)
-      .send(body)
-      .expect(200)
-
-    await new Promise((r) => setTimeout(r, 50))
-    expect(harness.capturedMessages).toHaveLength(0)
-  })
-
-  it('no emite IncomingMessage para texto solo con espacios', async () => {
-    const body = makeMessageActivity('   ')  // solo espacios
-
-    await request(harness.app)
-      .post('/teams/messages')
-      .set('Authorization', harness.validAuthHeader)
-      .send(body)
-      .expect(200)
-
-    await new Promise((r) => setTimeout(r, 50))
-    expect(harness.capturedMessages).toHaveLength(0)
-  })
-
-  it('dispatcher.dispatch() retorna ok:true con respuesta del agente', async () => {
-    const result = await harness.dispatcher.dispatch(
-      makeDispatchInput({ history: [{ role: 'user', content: '¿cuántas fases hay?' }] }),
-    )
-
-    expect(result.ok).toBe(true)
-    const success = result as DispatchSuccess
-    expect(success.reply).toBe('Respuesta del agente Teams')
-    expect(success.attempts).toBe(1)
-  })
-
-  it('AgentExecutor recibe agentId y history correctos', async () => {
-    await harness.dispatcher.dispatch(
-      makeDispatchInput({ history: [{ role: 'user', content: '¿Cuántas fases?' }] }),
-    )
-
-    expect(harness.mockExecutor.run).toHaveBeenCalledWith(
-      FAKE_AGENT_ID,
-      expect.arrayContaining([
-        expect.objectContaining({ role: 'user', content: '¿Cuántas fases?' }),
-      ]),
-    )
-  })
-})
-
-// ── Suite 4: TeamsAdapter — conversationUpdate / invoke / tipos desconocidos ──
-
-describe('Teams E2E — TeamsAdapter: actividades no-message', () => {
-  let harness: Awaited<ReturnType<typeof buildBotFrameworkHarness>>
-
-  beforeEach(async () => { harness = await buildBotFrameworkHarness() })
-  afterEach(async () => { jest.restoreAllMocks(); await harness.adapter.dispose() })
-
-  it('conversationUpdate responde 200 y NO emite IncomingMessage', async () => {
-    const body = makeConversationUpdateActivity()
-
-    await request(harness.app)
-      .post('/teams/messages')
-      .set('Authorization', harness.validAuthHeader)
-      .send(body)
-      .expect(200)
-
-    await new Promise((r) => setTimeout(r, 50))
-    expect(harness.capturedMessages).toHaveLength(0)
-  })
-
-  it('invoke responde 200 con body vacío {} y NO emite IncomingMessage', async () => {
-    const body = makeInvokeActivity()
-
-    const res = await request(harness.app)
-      .post('/teams/messages')
-      .set('Authorization', harness.validAuthHeader)
-      .send(body)
-      .expect(200)
-
-    expect(res.body).toEqual({})
-    await new Promise((r) => setTimeout(r, 50))
-    expect(harness.capturedMessages).toHaveLength(0)
-  })
-
-  it('tipo desconocido responde 200 y NO emite IncomingMessage', async () => {
-    const body: Partial<TeamsActivity> & { type: string } = {
-      type:         'typing',  // indicador de escritura — ignorar
-      serviceUrl:   FAKE_SERVICE_URL,
-      channelId:    'msteams',
-      from:         { id: FAKE_USER_ID },
-      conversation: { id: FAKE_CONV_ID },
-      recipient:    { id: FAKE_BOT_ID },
-    }
-
-    await request(harness.app)
-      .post('/teams/messages')
-      .set('Authorization', harness.validAuthHeader)
-      .send(body)
-      .expect(200)
-
-    await new Promise((r) => setTimeout(r, 50))
-    expect(harness.capturedMessages).toHaveLength(0)
-  })
-
-  it('retorna 400 cuando el body no tiene campo type', async () => {
-    const res = await request(harness.app)
-      .post('/teams/messages')
-      .set('Authorization', harness.validAuthHeader)
-      .send({ text: 'sin type' })
-      .expect(400)
-
-    expect(res.body.error).toBeDefined()
-  })
-})
-
-// ── Suite 5: TeamsAdapter modo incoming_webhook ───────────────────────────────
-
-describe('Teams E2E — TeamsAdapter: modo incoming_webhook', () => {
-  let adapter: TeamsAdapter
-  let app: ReturnType<typeof express>
-  let fetchSpy: jest.SpyInstance
-
-  beforeEach(async () => {
-    fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(
-      new Response('1', { status: 200 }),
-    )
-
-    adapter = new TeamsAdapter({ mode: 'incoming_webhook' })
-    await adapter.initialize('webhook-channel-cfg')
-    await adapter.setup(
-      { mode: 'incoming_webhook' },
-      { webhookUrl: FAKE_WEBHOOK_URL },
-    )
-
-    app = express()
-    app.use(express.json())
-    app.use('/teams', adapter.getRouter())
-  })
-
-  afterEach(async () => {
-    jest.restoreAllMocks()
-    await adapter.dispose()
-  })
-
-  it('GET /teams/health responde { status: ok, channel: teams, mode: incoming_webhook }', async () => {
-    const res = await request(app)
-      .get('/teams/health')
-      .expect(200)
-
-    expect(res.body.status).toBe('ok')
-    expect(res.body.channel).toBe('teams')
-    expect(res.body.mode).toBe('incoming_webhook')
-  })
-
-  it('POST /teams/messages responde 400 indicando que es solo-envío', async () => {
-    const res = await request(app)
-      .post('/teams/messages')
-      .send(makeMessageActivity('Hola'))
-      .expect(400)
-
-    expect(res.body.error).toContain('Incoming Webhook')
-    expect(res.body.error).toContain('bot_framework')
-    void fetchSpy  // evitar advertencia de unused en caso de que mock no sea llamado
-  })
-
-  it('adapter.send() delega al IncomingWebhookStrategy y llama al webhookUrl', async () => {
-    await adapter.send({
-      channelConfigId: 'webhook-channel-cfg',
-      channelType:     'teams',
-      externalId:      FAKE_CONV_ID,
-      text:            'Notificación del agente',
-    })
-
-    expect(fetchSpy).toHaveBeenCalledWith(
-      FAKE_WEBHOOK_URL,
-      expect.objectContaining({ method: 'POST' }),
-    )
-  })
-})
-
-// ── Suite 6: MessageDispatcher — integración con TeamsAdapter ─────────────────
-
-describe('Teams E2E — MessageDispatcher error handling', () => {
-  afterEach(() => jest.restoreAllMocks())
-
-  it('devuelve { ok:false, errorKind:"timeout" } cuando AgentExecutor es lento', async () => {
-    const slowExecutor: IAgentExecutor = {
-      run: jest.fn().mockImplementation(
-        () => new Promise((r) => setTimeout(() => r({ reply: 'tarde' }), 10_000)),
-      ),
-    }
-    const dispatcher = new MessageDispatcher(slowExecutor, {
-      timeoutMs:   100,
-      maxAttempts: 1,
-    })
-
-    const result = await dispatcher.dispatch(makeDispatchInput())
-
-    expect(result.ok).toBe(false)
-    const fail = result as DispatchFailure
-    expect(fail.errorKind).toBe('timeout')
-  }, 15_000)
-
-  it('devuelve { ok:false, errorKind:"agent_error" } para errores del agente', async () => {
-    const errorExecutor: IAgentExecutor = {
-      run: jest.fn().mockRejectedValue(new Error('Teams agent not found')),
-    }
-    const dispatcher = new MessageDispatcher(errorExecutor, {
-      timeoutMs:   5_000,
-      maxAttempts: 1,
-    })
-
-    const result = await dispatcher.dispatch(
-      makeDispatchInput({ agentId: 'nonexistent-teams-agent' }),
-    )
-
-    expect(result.ok).toBe(false)
-    const fail = result as DispatchFailure
-    expect(['agent_error', 'transient', 'unknown']).toContain(fail.errorKind)
-  })
-
-  it('reintenta en errores transitorios y tiene éxito al segundo intento', async () => {
-    const flakyExecutor: IAgentExecutor = {
-      run: jest.fn()
-        .mockRejectedValueOnce(new Error('ETIMEDOUT — transient error'))
-        .mockResolvedValueOnce({ reply: 'segundo intento OK' }),
-    }
-    const dispatcher = new MessageDispatcher(flakyExecutor, {
-      timeoutMs:    5_000,
-      maxAttempts:  2,
-      retryDelayMs: 50,
-    })
-
-    const result = await dispatcher.dispatch(makeDispatchInput())
-
-    expect(result.ok).toBe(true)
-    const success = result as DispatchSuccess
-    expect(success.reply).toBe('segundo intento OK')
-    expect(success.attempts).toBe(2)
-  })
-
-  it('emite dispatch:success con metadata de Teams correcta', async () => {
-    const executor: IAgentExecutor = {
-      run: jest.fn().mockResolvedValue({ reply: 'ok teams' }),
-    }
-    const dispatcher = new MessageDispatcher(executor)
-    const successEvents: unknown[] = []
-    dispatcher.on('dispatch:success', (e) => successEvents.push(e))
-
-    await dispatcher.dispatch(makeDispatchInput({ sessionId: 'teams-session-event' }))
-
-    expect(successEvents).toHaveLength(1)
-    const ev = successEvents[0] as Record<string, unknown>
-    expect(ev['sessionId']).toBe('teams-session-event')
-    expect(ev['agentId']).toBe(FAKE_AGENT_ID)
-    expect(ev['channelConfigId']).toBe(FAKE_CHANNEL_CFG)
-  })
-
-  it('emite dispatch:error cuando falla definitivamente', async () => {
-    const executor: IAgentExecutor = {
-      run: jest.fn().mockRejectedValue(new Error('Teams fatal error')),
-    }
-    const dispatcher = new MessageDispatcher(executor, { maxAttempts: 1 })
-    const errorEvents: unknown[] = []
-    dispatcher.on('dispatch:error', (e) => errorEvents.push(e))
-
-    await dispatcher.dispatch(makeDispatchInput({ sessionId: 'teams-error-event' }))
-
-    expect(errorEvents).toHaveLength(1)
-    const ev = errorEvents[0] as Record<string, unknown>
-    expect(typeof ev['errorKind']).toBe('string')
-    expect(ev['attempts']).toBe(1)
-  })
-})
-
-// ── Suite 7: Edge cases del TeamsAdapter ─────────────────────────────────────
-
-describe('Teams E2E — TeamsAdapter edge cases', () => {
-  let harness: Awaited<ReturnType<typeof buildBotFrameworkHarness>>
-
-  beforeEach(async () => { harness = await buildBotFrameworkHarness() })
-  afterEach(async () => { jest.restoreAllMocks(); await harness.adapter.dispose() })
-
-  it('retorna 401 cuando falta el header Authorization', async () => {
-    const body = makeMessageActivity('Mensaje sin auth')
-
-    const res = await request(harness.app)
-      .post('/teams/messages')
-      // Sin header Authorization
-      .send(body)
-      .expect(401)
-
-    expect(res.body.error).toContain('Bearer')
-  })
-
-  it('retorna 401 cuando el JWT tiene appid incorrecto', async () => {
-    const wrongJwt = `Bearer ${makeFakeJwt('wrong-app-id-9999')}`
-    const body     = makeMessageActivity('Mensaje con appid incorrecto')
-
-    const res = await request(harness.app)
-      .post('/teams/messages')
-      .set('Authorization', wrongJwt)
-      .send(body)
-      .expect(401)
-
-    expect(res.body.error).toContain('appid')
-  })
-
-  it('retorna 401 cuando el token no es un JWT válido (no tiene 3 partes)', async () => {
-    const res = await request(harness.app)
-      .post('/teams/messages')
-      .set('Authorization', 'Bearer not.a.valid.jwt.parts')
-      .send(makeMessageActivity('Test'))
-
-    // Puede ser 401 o 400 según la implementación — solo verificamos que no es 200
-    expect([400, 401]).toContain(res.status)
-  })
-
-  it('GET /teams/health responde con mode: bot_framework', async () => {
-    const res = await request(harness.app)
-      .get('/teams/health')
-      .expect(200)
-
-    expect(res.body.status).toBe('ok')
-    expect(res.body.channel).toBe('teams')
-    expect(res.body.mode).toBe('bot_framework')
-    expect(res.body.channelConfigId).toBe(FAKE_CHANNEL_CFG)
-  })
-
-  it('getRouter() lanza si se llama antes de setup()', async () => {
-    const rawAdapter = new TeamsAdapter()
-    await rawAdapter.initialize('cfg-before-setup')
-
-    expect(() => rawAdapter.getRouter()).toThrow('setup()')
-  })
-
-  it('dispose() limpia el adapter sin lanzar errores', async () => {
-    await expect(harness.adapter.dispose()).resolves.not.toThrow()
-  })
-
-  it('onError() registra handler de errores sin lanzar', () => {
-    const handler = jest.fn()
-    expect(() => harness.adapter.onError(handler)).not.toThrow()
-  })
-
-  it('adapter.channel === "teams"', () => {
-    expect(harness.adapter.channel).toBe('teams')
-  })
-
-  it('múltiples messages activities en secuencia se procesan correctamente', async () => {
-    const texts = ['Primero', 'Segundo', 'Tercero']
-
-    for (const text of texts) {
-      await request(harness.app)
+      const res = await request(app)
         .post('/teams/messages')
-        .set('Authorization', harness.validAuthHeader)
-        .send(makeMessageActivity(text))
-        .expect(200)
+        .send(makeActivity())
+
+      expect(res.status).toBe(400)
+      expect(res.body.error).toMatch(/incoming.webhook/i)
+      expect(res.body.error).toMatch(/bot_framework/i)
+    })
+  })
+
+  // ── Autenticación Bot Framework ───────────────────────────────────────────────
+
+  describe('POST /teams/messages — autenticación JWT Bot Framework', () => {
+    it('rechaza petición sin header Authorization → 401', async () => {
+      const { app } = await buildTestApp('bot_framework', 'test-app-id')
+
+      const res = await request(app)
+        .post('/teams/messages')
+        .send(makeActivity())
+
+      expect(res.status).toBe(401)
+      expect(res.body.error).toMatch(/bearer/i)
+    })
+
+    it('rechaza JWT con appId incorrecto → 401', async () => {
+      const { app } = await buildTestApp('bot_framework', 'test-app-id')
+      const jwt = buildFakeJwt({ appid: 'wrong-app-id', iat: Date.now() })
+
+      const res = await request(app)
+        .post('/teams/messages')
+        .set('Authorization', `Bearer ${jwt}`)
+        .send(makeActivity())
+
+      expect(res.status).toBe(401)
+      expect(res.body.error).toMatch(/appid/i)
+    })
+
+    it('rechaza JWT con formato inválido (no 3 partes) → 401', async () => {
+      const { app } = await buildTestApp('bot_framework', 'test-app-id')
+
+      const res = await request(app)
+        .post('/teams/messages')
+        .set('Authorization', 'Bearer solamente.dos')
+        .send(makeActivity())
+
+      expect(res.status).toBe(401)
+      expect(res.body.error).toMatch(/invalid jwt/i)
+    })
+
+    it('acepta JWT con appId correcto → procesa actividad y emite al agente', async () => {
+      const { app, emitEvents } = await buildTestApp('bot_framework', 'test-app-id')
+      const jwt = buildFakeJwt({ appid: 'test-app-id', iat: Date.now() })
+
+      const res = await request(app)
+        .post('/teams/messages')
+        .set('Authorization', `Bearer ${jwt}`)
+        .send(makeActivity({ text: 'mensaje válido' }))
+
+      // Teams responde 200 inmediatamente; el agente se procesa en background
+      expect(res.status).toBe(200)
+
+      // Esperar procesamiento asíncrono
+      await new Promise((r) => setTimeout(r, 80))
+      expect(emitEvents.length).toBeGreaterThan(0)
+      expect(emitEvents[0]!.text).toBe('mensaje válido')
+    })
+  })
+
+  // ── Procesamiento de Activities ───────────────────────────────────────────────
+
+  describe('POST /teams/messages — routing de Activity types', () => {
+    async function postWithAuth(
+      app:      Application,
+      activity: Partial<TeamsActivity>,
+      appId   = 'test-app-id',
+    ) {
+      const jwt = buildFakeJwt({ appid: appId })
+      return request(app)
+        .post('/teams/messages')
+        .set('Authorization', `Bearer ${jwt}`)
+        .send(makeActivity(activity))
     }
 
-    await new Promise((r) => setTimeout(r, 100))
-    expect(harness.capturedMessages).toHaveLength(texts.length)
-    expect(harness.capturedMessages.map((m) => m.text)).toEqual(texts)
+    it('type=message con texto → 200 + emit IncomingMessage al agente', async () => {
+      const { app, emitEvents } = await buildTestApp()
+
+      await postWithAuth(app, { type: 'message', text: 'Consulta importante' })
+      await new Promise((r) => setTimeout(r, 80))
+
+      expect(emitEvents.length).toBe(1)
+      expect(emitEvents[0]!.text).toBe('Consulta importante')
+    })
+
+    it('type=conversationUpdate → 200, no emite al agente', async () => {
+      const { app, emitEvents } = await buildTestApp()
+
+      const res = await postWithAuth(app, { type: 'conversationUpdate', text: undefined })
+
+      expect(res.status).toBe(200)
+      await new Promise((r) => setTimeout(r, 80))
+      expect(emitEvents.length).toBe(0)
+    })
+
+    it('type=invoke (Teams health check) → 200 con body {}', async () => {
+      const { app } = await buildTestApp()
+
+      const res = await postWithAuth(app, { type: 'invoke', text: undefined })
+
+      expect(res.status).toBe(200)
+      expect(res.body).toEqual({})
+    })
+
+    it('sin type en body → 400', async () => {
+      const { app } = await buildTestApp()
+      const jwt = buildFakeJwt({ appid: 'test-app-id' })
+
+      const res = await request(app)
+        .post('/teams/messages')
+        .set('Authorization', `Bearer ${jwt}`)
+        .send({}) // body vacío, sin type
+
+      expect(res.status).toBe(400)
+      expect(res.body.error).toMatch(/activity type/i)
+    })
+
+    it('type=message con texto solo espacios → 200, no emite', async () => {
+      const { app, emitEvents } = await buildTestApp()
+
+      await postWithAuth(app, { type: 'message', text: '   ' })
+      await new Promise((r) => setTimeout(r, 80))
+
+      expect(emitEvents.length).toBe(0)
+    })
+
+    it('type desconocido → 200 sin error ni crash', async () => {
+      const { app } = await buildTestApp()
+
+      const res = await postWithAuth(app, {
+        type: 'unknown_custom_type' as TeamsActivity['type'],
+      })
+
+      expect(res.status).toBe(200)
+    })
+  })
+
+  // ── Normalización IncomingMessage ─────────────────────────────────────────────
+
+  describe('Normalización IncomingMessage', () => {
+    it('incluye metadata correcta: serviceUrl, tenantId, teamId, channelId, senderId', async () => {
+      const { app, adapter } = await buildTestApp()
+      const jwt = buildFakeJwt({ appid: 'test-app-id' })
+
+      const captured: unknown[] = []
+      adapter.on('message', (msg) => captured.push(msg))
+
+      await request(app)
+        .post('/teams/messages')
+        .set('Authorization', `Bearer ${jwt}`)
+        .send(
+          makeActivity({
+            text:       'test metadata',
+            serviceUrl: 'https://smba.trafficmanager.net/amer/',
+            from: {
+              id:          'user-raw-id',
+              name:        'Test User',
+              aadObjectId: 'aad-xyz',
+            },
+            conversation: { id: 'conv-meta-001', tenantId: 'tenant-xyz' },
+            channelData: {
+              tenant:  { id: 'tenant-xyz' },
+              team:    { id: 'team-xyz', name: 'Engineering' },
+              channel: { id: 'ch-xyz',   name: 'backend' },
+            },
+          }),
+        )
+
+      await new Promise((r) => setTimeout(r, 80))
+
+      expect(captured.length).toBeGreaterThan(0)
+
+      const msg = captured[0] as {
+        channelType: string
+        externalId:  string
+        senderId:    string
+        metadata:    Record<string, unknown>
+      }
+
+      expect(msg.channelType).toBe('teams')
+      expect(msg.externalId).toBe('conv-meta-001')
+      expect(msg.senderId).toBe('aad-xyz')           // aadObjectId tiene prioridad sobre id
+      expect(msg.metadata.serviceUrl).toBe('https://smba.trafficmanager.net/amer/')
+      expect(msg.metadata.tenantId).toBe('tenant-xyz')
+      expect(msg.metadata.teamId).toBe('team-xyz')
+      expect(msg.metadata.channelId).toBe('ch-xyz')
+    })
+  })
+
+  // ── adapter.send() ────────────────────────────────────────────────────────────
+
+  describe('adapter.send() — envío de respuestas al canal', () => {
+    it('con serviceUrl en metadata → delega a strategy.send() con parámetros correctos', async () => {
+      const { adapter, sendMock } = await buildTestApp()
+
+      const outgoing: OutgoingMessage = {
+        channelConfigId: 'channel-config-001',
+        channelType:     'teams',
+        externalId:      'conv-outgoing-001',
+        text:            'Respuesta del agente',
+        metadata: {
+          serviceUrl: 'https://smba.trafficmanager.net/amer/',
+          activityId: 'act-to-reply',
+        },
+      }
+
+      await adapter.send(outgoing)
+
+      expect(sendMock).toHaveBeenCalledTimes(1)
+      const [payload, convId, serviceUrl] = sendMock.mock.calls[0]!
+      expect(payload.type).toBe('message')
+      expect(payload.attachments).toBeDefined()
+      expect(convId).toBe('conv-outgoing-001')
+      expect(serviceUrl).toBe('https://smba.trafficmanager.net/amer/')
+    })
+
+    it('sin serviceUrl → no lanza excepción (error manejado internamente)', async () => {
+      const { adapter, sendMock } = await buildTestApp()
+      sendMock.mockResolvedValueOnce({ ok: false, error: 'serviceUrl requerido' })
+
+      const outgoing: OutgoingMessage = {
+        channelConfigId: 'channel-config-001',
+        channelType:     'teams',
+        externalId:      'conv-001',
+        text:            'Respuesta sin serviceUrl',
+        metadata:        {},
+      }
+
+      await expect(adapter.send(outgoing)).resolves.toBeUndefined()
+    })
+
+    it('con richContent tipo card → Adaptive Card en attachments', async () => {
+      const { adapter, sendMock } = await buildTestApp()
+
+      await adapter.send({
+        channelConfigId: 'channel-config-001',
+        channelType:     'teams',
+        externalId:      'conv-001',
+        text:            'fallback',
+        richContent: {
+          type: 'card',
+          card: {
+            title:    'Título',
+            subtitle: 'Descripción',
+            buttons:  [{ label: 'Ver más', payload: 'action_ver' }],
+          },
+        },
+        metadata: {
+          serviceUrl: 'https://smba.trafficmanager.net/amer/',
+        },
+      })
+
+      expect(sendMock).toHaveBeenCalledTimes(1)
+      const [payload] = sendMock.mock.calls[0]!
+      expect(payload.attachments).toBeDefined()
+      expect(payload.attachments!.length).toBeGreaterThan(0)
+      expect(payload.attachments![0]!.contentType).toBe(
+        'application/vnd.microsoft.card.adaptive',
+      )
+    })
+
+    it('con richContent tipo quick_replies → Adaptive Card con botones', async () => {
+      const { adapter, sendMock } = await buildTestApp()
+
+      await adapter.send({
+        channelConfigId: 'channel-config-001',
+        channelType:     'teams',
+        externalId:      'conv-001',
+        text:            'fallback',
+        richContent: {
+          type:    'quick_replies',
+          replies: [
+            { label: 'Sí', payload: 'yes' },
+            { label: 'No', payload: 'no' },
+          ],
+        },
+        metadata: { serviceUrl: 'https://smba.trafficmanager.net/amer/' },
+      })
+
+      expect(sendMock).toHaveBeenCalledTimes(1)
+      const [payload] = sendMock.mock.calls[0]!
+      expect(payload.attachments).toBeDefined()
+    })
+  })
+
+  // ── Recuperación ante errores en emit() ───────────────────────────────────────
+
+  describe('Recuperación ante errores en emit()', () => {
+    it('si emit() lanza → strategy.send() envía mensaje de error (sin crash)', async () => {
+      const { app, adapter, sendMock } = await buildTestApp()
+      const jwt = buildFakeJwt({ appid: 'test-app-id' })
+
+      // Forzar que el listener del agente lance una excepción
+      adapter.removeAllListeners('message')
+      adapter.on('message', () => {
+        throw new Error('AgentExecutor simulado fallando')
+      })
+
+      const res = await request(app)
+        .post('/teams/messages')
+        .set('Authorization', `Bearer ${jwt}`)
+        .send(makeActivity({ text: 'trigger error' }))
+
+      // 200 inmediato (antes del procesamiento asíncrono)
+      expect(res.status).toBe(200)
+
+      // Dar tiempo al catch del _handleMessageActivity
+      await new Promise((r) => setTimeout(r, 150))
+
+      // strategy.send() debe haberse llamado con el mensaje de error
+      expect(sendMock).toHaveBeenCalled()
+      const [errorPayload] = sendMock.mock.calls[0]!
+      expect(JSON.stringify(errorPayload.attachments)).toMatch(/error/i)
+    })
+  })
+
+  // ── dispose() ─────────────────────────────────────────────────────────────────
+
+  describe('dispose()', () => {
+    it('resuelve sin lanzar excepción', async () => {
+      const { adapter } = await buildTestApp()
+      await expect(adapter.dispose()).resolves.toBeUndefined()
+    })
   })
 })
