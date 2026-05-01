@@ -5,7 +5,7 @@
  *   - Socket Mode: SLACK_SOCKET_MODE=true + SLACK_APP_TOKEN=xapp-...
  *   - HTTP Mode: recibe POST en /gateway/slack/:channelId
  *
- * Secrets esperados en ChannelConfig.secretsEncrypted:
+ * Secrets esperados en ChannelConfig.credentials (cifrado en DB):
  *   {
  *     botToken:      "xoxb-...",
  *     signingSecret: "...",
@@ -20,6 +20,7 @@
  * Ref: https://slack.dev/bolt-js/
  */
 
+import { getPrisma } from '../../lib/prisma.js';
 import {
   BaseChannelAdapter,
   type IncomingMessage,
@@ -41,6 +42,7 @@ type SlackSecrets = {
   botToken:       string;
   signingSecret:  string;
   appToken?:      string;
+  socketMode?:    boolean;
 };
 
 type SlackMessageEvent = {
@@ -71,14 +73,25 @@ export class SlackAdapter extends BaseChannelAdapter {
   async initialize(channelConfigId: string): Promise<void> {
     this.channelConfigId = channelConfigId;
 
+    // Carga credenciales desde DB — mismo patrón que discord/telegram/whatsapp adapters
+    const db     = getPrisma();
+    const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } });
+    if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
+
+    // Asignar credentials ANTES de cualquier uso (send/startSocketMode lo necesita)
+    this.credentials = config.credentials as Record<string, unknown>;
+
+    const secrets = this.credentials as SlackSecrets;
     this.socketMode =
-      (this.credentials['socketMode'] as boolean | undefined) ??
+      secrets.socketMode ??
       process.env.SLACK_SOCKET_MODE === 'true';
 
     if (this.socketMode) {
       await this.startSocketMode();
     }
     // En HTTP mode no hay nada que iniciar — los mensajes llegan vía receive()
+
+    console.info(`[SlackAdapter] initialized (channelConfigId=${channelConfigId}, socketMode=${this.socketMode})`);
   }
 
   async dispose(): Promise<void> {

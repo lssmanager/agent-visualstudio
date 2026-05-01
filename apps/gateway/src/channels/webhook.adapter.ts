@@ -27,6 +27,7 @@
  *   con la respuesta del agente (push mode).
  */
 
+import { getPrisma } from '../../lib/prisma.js';
 import {
   BaseChannelAdapter,
   type IncomingMessage,
@@ -55,12 +56,20 @@ export class WebhookAdapter extends BaseChannelAdapter {
 
   async initialize(channelConfigId: string): Promise<void> {
     this.channelConfigId = channelConfigId;
-    // No hay conexión persistente — canal HTTP stateless
+
+    // Carga credenciales desde DB — mismo patrón que discord/telegram/whatsapp adapters
+    const db     = getPrisma();
+    const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } });
+    if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
+
+    this.credentials = config.credentials as Record<string, unknown>;
+
+    // Canal HTTP stateless — no hay conexión persistente que iniciar
     console.info(`[WebhookAdapter] ready (channelConfigId=${channelConfigId})`);
   }
 
   async dispose(): Promise<void> {
-    // Nada que cerrar
+    // Nada que cerrar — canal HTTP stateless
   }
 
   // ---------------------------------------------------------------------------
