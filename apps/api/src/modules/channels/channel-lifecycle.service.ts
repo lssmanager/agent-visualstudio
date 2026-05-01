@@ -1,5 +1,5 @@
 import { Injectable, Logger }    from '@nestjs/common'
-import { PrismaService }         from '../../prisma/prisma.service.js'
+import { PrismaService }         from '../../lib/prisma.service.js'
 import { GatewayService }        from '../gateway/gateway.service.js'
 import { AgentResolverService }  from '../gateway/agent-resolver.service.js'
 import {
@@ -246,7 +246,7 @@ export class ChannelLifecycleService {
     })
 
     return Promise.all(
-      channels.map((ch) => this.buildStatusDto(ch, ch.id))
+      channels.map((ch: any) => this.buildStatusDto(ch, ch.id))
     )
   }
 
@@ -260,10 +260,7 @@ export class ChannelLifecycleService {
    * para que el build no rompa.
    */
   private async callGatewayActivate(id: string): Promise<void> {
-    if (typeof (this.gateway as any).activateChannel === 'function') {
-      await (this.gateway as any).activateChannel(id)
-    }
-    // else: no-op hasta que GatewayService implemente el método
+    await this.gateway.activateChannel(id)
   }
 
   /**
@@ -271,10 +268,7 @@ export class ChannelLifecycleService {
    * Si aún no está implementado en GatewayService, actúa como no-op.
    */
   private async callGatewayDeactivate(id: string): Promise<void> {
-    if (typeof (this.gateway as any).deactivateChannel === 'function') {
-      await (this.gateway as any).deactivateChannel(id)
-    }
-    // else: no-op hasta que GatewayService implemente el método
+    await this.gateway.deactivateChannel(id)
   }
 
   // ────────────────────────────────────────────────────────────────────

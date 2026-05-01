@@ -1,7 +1,9 @@
+import { Injectable } from '@nestjs/common';
 import { gatewayMethods } from '../../../../../packages/gateway-sdk/src';
 import { studioConfig } from '../../config';
 import type { RuntimeCapabilityMatrix, SessionState } from '../../../../../packages/core-types/src';
 
+@Injectable()
 export class GatewayService {
   async call(method: string, params?: Record<string, unknown>): Promise<unknown> {
     let response: Response | null = null;
@@ -199,5 +201,43 @@ export class GatewayService {
       channel,
       ...stats,
     }));
+  }
+
+  async activateChannel(channelConfigId: string): Promise<void> {
+    await this.postChannelAction(channelConfigId, 'activate');
+  }
+
+  async deactivateChannel(channelConfigId: string): Promise<void> {
+    await this.postChannelAction(channelConfigId, 'deactivate');
+  }
+
+  private async postChannelAction(
+    channelConfigId: string,
+    action: 'activate' | 'deactivate',
+  ): Promise<void> {
+    let response: Response | null = null;
+    try {
+      response = await fetch(
+        `${studioConfig.gatewayBaseUrl}/api/channels/${encodeURIComponent(channelConfigId)}/${action}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+        },
+      );
+    } catch {
+      throw new Error(`Gateway transport unavailable for channels.${action}`);
+    }
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      let message = text || `Gateway channels.${action} failed`;
+      try {
+        const json = JSON.parse(text) as { error?: string; message?: string };
+        message = json.error ?? json.message ?? message;
+      } catch {
+        // keep fallback message
+      }
+      throw new Error(message);
+    }
   }
 }
