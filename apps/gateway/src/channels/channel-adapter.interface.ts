@@ -10,7 +10,7 @@
  *        debe ir en el adapter concreto, inyectado por constructor.
  */
 
-// ── Tipos de canal ─────────────────────────────────────────────────────────────────────────────
+// ── Tipos de canal ──────────────────────────────────────────────────────────────────────────────────
 
 /**
  * Nombres canónicos de canal — deben coincidir con
@@ -24,7 +24,7 @@ export type ChannelType =
   | 'slack'
   | 'webhook'
 
-// ── IncomingMessage ──────────────────────────────────────────────────────────────────────────
+// ── IncomingMessage ───────────────────────────────────────────────────────────────────────────
 
 /**
  * Mensaje normalizado que llega de cualquier canal externo.
@@ -34,7 +34,6 @@ export interface IncomingMessage {
   /**
    * ID del ChannelConfig en BD — necesario para que SessionManager
    * cree/recupere la GatewaySession correcta.
-   * El adapter lo rellena al recibir cualquier mensaje.
    */
   channelConfigId: string
 
@@ -62,7 +61,6 @@ export interface IncomingMessage {
   /**
    * Payload raw del canal externo.
    * Telegram: Update object. WebChat: req.body. Slack: payload completo.
-   * Preservarlo aquí evita perder información específica del canal.
    */
   metadata?: Record<string, unknown>
 
@@ -70,7 +68,7 @@ export interface IncomingMessage {
   receivedAt: string
 }
 
-// ── RichContent — tipos de contenido enriquecido ────────────────────────────────────────
+// ── RichContent ────────────────────────────────────────────────────────────────────────────
 
 export interface QuickReply {
   label: string
@@ -78,10 +76,10 @@ export interface QuickReply {
 }
 
 export interface CardContent {
-  title:    string
+  title:     string
   subtitle?: string
   imageUrl?: string
-  buttons?: QuickReply[]
+  buttons?:  QuickReply[]
 }
 
 export type RichContent =
@@ -90,7 +88,7 @@ export type RichContent =
   | { type: 'image';         url:     string; altText?: string }
   | { type: 'file';          url:     string; filename: string }
 
-// ── OutgoingMessage ────────────────────────────────────────────────────────────────────────
+// ── OutgoingMessage ──────────────────────────────────────────────────────────────────────────
 
 export interface OutgoingMessage {
   /** ID de la conversación de destino en el canal externo */
@@ -103,9 +101,8 @@ export interface OutgoingMessage {
   type?: 'text' | 'markdown' | 'card' | 'quick_replies'
 
   /**
-   * Contenido enriquecido tipado — cada adapter adapta esto
-   * al formato nativo del canal (inline keyboard en Telegram,
-   * Block Kit en Slack, etc.)
+   * Contenido enriquecido tipado — cada adapter lo adapta
+   * al formato nativo del canal.
    */
   richContent?: RichContent
 
@@ -113,74 +110,36 @@ export interface OutgoingMessage {
   metadata?: Record<string, unknown>
 }
 
-// ── IChannelAdapter ───────────────────────────────────────────────────────────────────────────
+// ── IChannelAdapter ─────────────────────────────────────────────────────────────────────────────
 
 export interface IChannelAdapter {
-  /**
-   * Tipo de canal — debe coincidir con ChannelType.
-   * Usado por ChannelRouter para lookup y por IncomingMessage.channelType.
-   */
   readonly channel: ChannelType
 
-  /**
-   * Inicializa el adapter: carga credentials del ChannelConfig,
-   * registra webhooks o abre conexiones persistentes.
-   * @param channelConfigId ID del ChannelConfig en BD
-   */
   initialize(channelConfigId: string): Promise<void>
-
-  /**
-   * Registra el handler que el gateway llama al recibir un mensaje.
-   * ChannelRouter llama a este método una vez durante el bootstrap.
-   */
   onMessage(handler: (msg: IncomingMessage) => Promise<void>): void
-
-  /**
-   * Envía una respuesta al canal externo.
-   * Implementación específica por canal.
-   */
   send(message: OutgoingMessage): Promise<void>
-
-  /**
-   * Libera recursos: cierra conexiones, cancela webhooks, purga timers.
-   * Llamado por ChannelRouter en el shutdown del gateway.
-   */
   dispose(): Promise<void>
 }
 
-// ── IHttpChannelAdapter ──────────────────────────────────────────────────────────────────────
+// ── IHttpChannelAdapter ─────────────────────────────────────────────────────────────────────────
 
 /**
- * Extensión de IChannelAdapter para canales que exponen rutas HTTP.
- * WebChatAdapter y WebhookAdapter implementan esta interfaz.
- * ChannelRouter usa duck-typing para detectar si el adapter la cumple:
- *
+ * Extensión para canales que exponen rutas HTTP.
+ * ChannelRouter usa duck-typing:
  *   if ('getRouter' in adapter) app.use(`/gateway/${adapter.channel}`, adapter.getRouter())
  */
 export interface IHttpChannelAdapter extends IChannelAdapter {
-  /**
-   * Retorna un Express Router con las rutas específicas del canal.
-   * Se monta bajo /gateway/:channel/ por el servidor del gateway.
-   */
   getRouter(): import('express').Router
 }
 
-// ── BaseChannelAdapter ───────────────────────────────────────────────────────────────────────────
+// ── BaseChannelAdapter ────────────────────────────────────────────────────────────────────────────────
 
-/**
- * Clase abstracta con comportamiento compartido.
- * Todos los adapters deben extenderla.
- *
- * INYECCIÓN DE DEPENDENCIAS:
- * El constructor acepta un objeto `deps` opcional para que los adapters
- * puedan recibir servicios (PrismaClient, logger) sin importarlos
- * directamente. Ver ejemplo en WebChatAdapter.
- */
 export abstract class BaseChannelAdapter implements IChannelAdapter {
   abstract readonly channel: ChannelType
 
   protected channelConfigId = ''
   protected credentials: Record<string, unknown> = {}
+  protected get messageHandler() { return this._messageHandler }
   private _messageHandler: ((msg: IncomingMessage) => Promise<void>) | null = null
 
   abstract initialize(channelConfigId: string): Promise<void>
@@ -193,7 +152,6 @@ export abstract class BaseChannelAdapter implements IChannelAdapter {
 
   /**
    * Emite un IncomingMessage al handler registrado.
-   * Los adapters deben llamar a this.emit(msg) al recibir mensajes.
    * SIEMPRE rellena channelConfigId y channelType antes de llamar emit().
    */
   protected async emit(msg: IncomingMessage): Promise<void> {

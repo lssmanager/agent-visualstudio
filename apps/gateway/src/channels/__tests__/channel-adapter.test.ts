@@ -16,7 +16,7 @@ import {
   type RichContent,
 } from '../channel-adapter.interface'
 
-// ── Concrete stub for testing BaseChannelAdapter ─────────────────────────────────
+// ── Concrete stub for testing BaseChannelAdapter ────────────────────
 
 class TestAdapter extends BaseChannelAdapter {
   readonly channel = 'webchat' as const satisfies ChannelType
@@ -37,12 +37,10 @@ class TestAdapter extends BaseChannelAdapter {
     this.disposed = true
   }
 
-  // Expose emit for testing
   async testEmit(msg: IncomingMessage): Promise<void> {
     return this.emit(msg)
   }
 
-  // Expose makeTimestamp for testing
   getTimestamp(): string {
     return this.makeTimestamp()
   }
@@ -61,7 +59,7 @@ function makeIncoming(overrides: Partial<IncomingMessage> = {}): IncomingMessage
   }
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────────────
+// ── Tests ────────────────────────────────────────────────────────────────────────────────────
 
 describe('BaseChannelAdapter', () => {
   let adapter: TestAdapter
@@ -69,8 +67,6 @@ describe('BaseChannelAdapter', () => {
   beforeEach(() => {
     adapter = new TestAdapter()
   })
-
-  // ── lifecycle ──
 
   it('initialize stores channelConfigId', async () => {
     await adapter.initialize('cfg-test')
@@ -86,8 +82,6 @@ describe('BaseChannelAdapter', () => {
     expect(adapter.channel).toBe('webchat')
   })
 
-  // ── onMessage + emit ──
-
   it('emit() calls registered handler with the message', async () => {
     const received: IncomingMessage[] = []
     adapter.onMessage(async (msg) => { received.push(msg) })
@@ -102,7 +96,7 @@ describe('BaseChannelAdapter', () => {
   it('emit() drops message and warns if no handler registered', async () => {
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
     const msg = makeIncoming()
-    await adapter.testEmit(msg)        // no handler registered
+    await adapter.testEmit(msg)
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('No message handler'))
     warnSpy.mockRestore()
   })
@@ -124,18 +118,14 @@ describe('BaseChannelAdapter', () => {
 
     await adapter.testEmit(makeIncoming({ text: 'hi' }))
 
-    expect(calls1).toHaveLength(0)   // first handler replaced
+    expect(calls1).toHaveLength(0)
     expect(calls2).toHaveLength(1)
   })
-
-  // ── makeTimestamp ──
 
   it('makeTimestamp() returns valid ISO 8601 string', () => {
     const ts = adapter.getTimestamp()
     expect(new Date(ts).toISOString()).toBe(ts)
   })
-
-  // ── send ──
 
   it('send() stores message in sentMessages', async () => {
     const msg: OutgoingMessage = { externalId: 'session-1', text: 'Hi there' }
@@ -145,7 +135,7 @@ describe('BaseChannelAdapter', () => {
   })
 })
 
-// ── IncomingMessage contract ──────────────────────────────────────────────────────────────
+// ── IncomingMessage contract ───────────────────────────────────────────────────────────────────────────────────────────────────
 
 describe('IncomingMessage shape', () => {
   it('accepts all required fields', () => {
@@ -174,7 +164,7 @@ describe('IncomingMessage shape', () => {
   })
 })
 
-// ── RichContent discriminated union ─────────────────────────────────────────────────────
+// ── RichContent discriminated union ─────────────────────────────────────────────────────────────────────────────────────
 
 describe('RichContent discriminated union', () => {
   it('quick_replies variant has replies array', () => {
@@ -208,7 +198,7 @@ describe('RichContent discriminated union', () => {
   })
 })
 
-// ── IHttpChannelAdapter duck-typing ────────────────────────────────────────────────────────
+// ── IHttpChannelAdapter duck-typing ────────────────────────────────────────────────────────────────────────────────────────────────
 
 describe('IHttpChannelAdapter duck-typing check', () => {
   it('adapter without getRouter does not satisfy IHttpChannelAdapter', () => {

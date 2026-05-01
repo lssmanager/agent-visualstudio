@@ -13,7 +13,7 @@
  */
 
 import { Router, type Request, type Response } from 'express';
-import { prisma } from '../../../api/src/modules/core/db/prisma.service';
+import { getPrisma } from '../../lib/prisma.js';
 import {
   BaseChannelAdapter,
   type ChannelType,
@@ -21,33 +21,30 @@ import {
   type OutgoingMessage,
 } from './channel-adapter.interface';
 
-const db = prisma as any;
-
 const TELEGRAM_API = 'https://api.telegram.org';
 
 interface TelegramCredentials {
-  botToken: string;
+  botToken:       string;
   webhookSecret?: string;
 }
 
 export class TelegramAdapter extends BaseChannelAdapter {
-  readonly channel = 'telegram' as const satisfies ChannelType;
-  private botToken = '';
+  readonly channel      = 'telegram' as const satisfies ChannelType;
+  private botToken      = '';
   private webhookSecret = '';
 
-  // ── Lifecycle ────────────────────────────────────────────────────────────
+  // ── Lifecycle ─────────────────────────────────────────────────────────────────────────────────
 
   async initialize(channelConfigId: string): Promise<void> {
     this.channelConfigId = channelConfigId;
-    const config = await db.channelConfig.findUnique({
-      where: { id: channelConfigId },
-    });
+    const db     = getPrisma();
+    const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } });
     if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
 
-    const creds = config.credentials as TelegramCredentials;
-    this.botToken = creds.botToken;
-    this.webhookSecret = creds.webhookSecret ?? '';
-    this.credentials = config.credentials as Record<string, unknown>;
+    const creds          = config.credentials as TelegramCredentials;
+    this.botToken        = creds.botToken;
+    this.webhookSecret   = creds.webhookSecret ?? '';
+    this.credentials     = config.credentials as Record<string, unknown>;
 
     console.info(`[telegram] Initialized bot for config ${channelConfigId}`);
   }
@@ -56,26 +53,21 @@ export class TelegramAdapter extends BaseChannelAdapter {
     console.info('[telegram] Adapter disposed');
   }
 
-  // ── Send ─────────────────────────────────────────────────────────────────
+  // ── Send ───────────────────────────────────────────────────────────────────────────────
 
   async send(message: OutgoingMessage): Promise<void> {
-    const chatId = message.externalId;
-    const url = `${TELEGRAM_API}/bot${this.botToken}/sendMessage`;
-
+    const url  = `${TELEGRAM_API}/bot${this.botToken}/sendMessage`;
     const body: Record<string, unknown> = {
-      chat_id: chatId,
-      text: message.text,
+      chat_id:    message.externalId,
+      text:       message.text,
       parse_mode: 'Markdown',
     };
-
-    if (message.richContent) {
-      body.reply_markup = message.richContent;
-    }
+    if (message.richContent) body.reply_markup = message.richContent;
 
     const res = await fetch(url, {
-      method: 'POST',
+      method:  'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
+      body:    JSON.stringify(body),
     });
 
     if (!res.ok) {
@@ -85,7 +77,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
     }
   }
 
-  // ── Router ───────────────────────────────────────────────────────────────
+  // ── Router ────────────────────────────────────────────────────────────────────────────
 
   getRouter(): Router {
     const router = Router();
@@ -100,17 +92,17 @@ export class TelegramAdapter extends BaseChannelAdapter {
       }
 
       const update = req.body as {
-        update_id: number;
-        message?: {
+        update_id:       number;
+        message?:        {
           message_id: number;
-          chat: { id: number };
-          from?: { id: number; username?: string };
-          text?: string;
+          chat:       { id: number };
+          from?:      { id: number; username?: string };
+          text?:      string;
         };
         callback_query?: { id: string; data?: string; message?: { chat: { id: number } } };
       };
 
-      const message = update.message;
+      const message       = update.message;
       const callbackQuery = update.callback_query;
 
       if (message?.text) {
@@ -138,15 +130,11 @@ export class TelegramAdapter extends BaseChannelAdapter {
           receivedAt:      this.makeTimestamp(),
         };
         await this.emit(msg);
-
-        await fetch(
-          `${TELEGRAM_API}/bot${this.botToken}/answerCallbackQuery`,
-          {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ callback_query_id: callbackQuery.id }),
-          },
-        );
+        await fetch(`${TELEGRAM_API}/bot${this.botToken}/answerCallbackQuery`, {
+          method:  'POST',
+          headers: { 'content-type': 'application/json' },
+          body:    JSON.stringify({ callback_query_id: callbackQuery.id }),
+        });
       }
 
       res.json({ ok: true });
@@ -158,20 +146,14 @@ export class TelegramAdapter extends BaseChannelAdapter {
         res.status(400).json({ ok: false, error: 'webhookUrl required' });
         return;
       }
-
       const body: Record<string, unknown> = { url: webhookUrl };
-      if (this.webhookSecret) {
-        body.secret_token = this.webhookSecret;
-      }
+      if (this.webhookSecret) body.secret_token = this.webhookSecret;
 
-      const apiRes = await fetch(
-        `${TELEGRAM_API}/bot${this.botToken}/setWebhook`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-        },
-      );
+      const apiRes = await fetch(`${TELEGRAM_API}/bot${this.botToken}/setWebhook`, {
+        method:  'POST',
+        headers: { 'content-type': 'application/json' },
+        body:    JSON.stringify(body),
+      });
       const data = await apiRes.json();
       res.json({ ok: true, telegram: data });
     });
@@ -182,12 +164,11 @@ export class TelegramAdapter extends BaseChannelAdapter {
   async autoSetupWebhook(): Promise<void> {
     const webhookUrl = process.env.TELEGRAM_WEBHOOK_URL;
     if (!webhookUrl) return;
-
     await fetch(`${TELEGRAM_API}/bot${this.botToken}/setWebhook`, {
-      method: 'POST',
+      method:  'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        url: `${webhookUrl}/gateway/telegram/webhook`,
+      body:    JSON.stringify({
+        url:          `${webhookUrl}/gateway/telegram/webhook`,
         secret_token: this.webhookSecret || undefined,
       }),
     });
