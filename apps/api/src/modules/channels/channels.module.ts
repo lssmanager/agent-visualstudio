@@ -1,15 +1,12 @@
-import { Module } from '@nestjs/common';
-import { ChannelsService }    from './channels.service';
-// import { ChannelsController } from './channels.controller';
-// Commented out: ChannelsController uses Express routing, not NestJS decorators
+import { Module }                    from '@nestjs/common'
+import { ChannelsController }        from './channels.controller.js'
+import { ChannelLifecycleService }   from './channel-lifecycle.service.js'
+import { GatewayModule }             from '../gateway/gateway.module.js'
 
-/**
- * ChannelsModule — ya no necesita proveer PrismaService porque PrismaModule
- * es @Global() y está disponible globalmente desde que se importa en AppModule.
- */
 @Module({
-  // controllers: [ChannelsController],
-  providers:   [ChannelsService],
-  exports:     [ChannelsService],   // para que el runtime lo inyecte
+  imports:     [GatewayModule],   // provee GatewayService + AgentResolverService
+  controllers: [ChannelsController],
+  providers:   [ChannelLifecycleService],
+  exports:     [ChannelLifecycleService],
 })
 export class ChannelsModule {}

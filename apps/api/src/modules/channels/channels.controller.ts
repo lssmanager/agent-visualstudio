@@ -1,57 +1,75 @@
-import { Router } from 'express';
+import {
+  Controller, Get, Post, Param,
+  Body, HttpCode, HttpStatus, HttpException,
+} from '@nestjs/common'
+import { ChannelLifecycleService } from './channel-lifecycle.service.js'
+import { ProvisionChannelDto }     from './dto/provision-channel.dto.js'
+import {
+  ChannelNotFoundError,
+  InvalidTransitionError,
+  ChannelAlreadyInStateError,
+  WebhookRegistrationError,
+} from './channel-lifecycle.errors.js'
 
-import { ChannelsService } from './channels.service';
+@Controller('channels')
+export class ChannelsController {
+  constructor(private readonly lifecycle: ChannelLifecycleService) {}
 
-export function registerChannelsRoutes(router: Router) {
-  const service = new ChannelsService();
+  /** GET /channels — lista todos los canales */
+  @Get()
+  listAll() {
+    return this.lifecycle.listAll()
+  }
 
-  /**
-   * GET /channels
-   * Lista todos los canales activos con conteo de sesiones.
-   */
-  router.get('/channels', async (_req, res) => {
+  /** GET /channels/:id/status — estado detallado */
+  @Get(':id/status')
+  async status(@Param('id') id: string) {
+    return this.wrap(() => this.lifecycle.status(id))
+  }
+
+  /** POST /channels — provisionar nuevo canal */
+  @Post()
+  @HttpCode(HttpStatus.CREATED)
+  async provision(@Body() dto: ProvisionChannelDto) {
+    return this.wrap(() => this.lifecycle.provision(dto))
+  }
+
+  /** POST /channels/:id/start */
+  @Post(':id/start')
+  async start(@Param('id') id: string) {
+    return this.wrap(() => this.lifecycle.start(id))
+  }
+
+  /** POST /channels/:id/stop */
+  @Post(':id/stop')
+  async stop(@Param('id') id: string) {
+    return this.wrap(() => this.lifecycle.stop(id))
+  }
+
+  /** POST /channels/:id/restart */
+  @Post(':id/restart')
+  async restart(@Param('id') id: string) {
+    return this.wrap(() => this.lifecycle.restart(id))
+  }
+
+  // Mapeo de errores de dominio → HTTP
+  private async wrap<T>(fn: () => Promise<T>): Promise<T> {
     try {
-      res.json(await service.listChannels());
+      return await fn()
     } catch (err) {
-      res.status(500).json({ ok: false, error: String(err) });
+      if (err instanceof ChannelNotFoundError) {
+        throw new HttpException(err.message, HttpStatus.NOT_FOUND)
+      }
+      if (err instanceof ChannelAlreadyInStateError) {
+        throw new HttpException(err.message, HttpStatus.CONFLICT)
+      }
+      if (err instanceof InvalidTransitionError) {
+        throw new HttpException(err.message, HttpStatus.UNPROCESSABLE_ENTITY)
+      }
+      if (err instanceof WebhookRegistrationError) {
+        throw new HttpException(err.message, HttpStatus.BAD_GATEWAY)
+      }
+      throw err
     }
-  });
-
-  /**
-   * GET /channels/:channel
-   * Detalle de un canal por nombre (e.g. "whatsapp", "web", "api").
-   */
-  router.get('/channels/:channel', async (req, res) => {
-    try {
-      const result = await service.getChannel(req.params.channel);
-      if (!result.ok) return res.status(404).json(result);
-      return res.json(result);
-    } catch (err) {
-      res.status(500).json({ ok: false, error: String(err) });
-    }
-  });
-
-  /**
-   * GET /channels/:channel/sessions
-   * Lista todas las sesiones dentro de un canal.
-   */
-  router.get('/channels/:channel/sessions', async (req, res) => {
-    try {
-      res.json(await service.getChannelSessions(req.params.channel));
-    } catch (err) {
-      res.status(500).json({ ok: false, error: String(err) });
-    }
-  });
-
-  /**
-   * POST /channels/:channel/disconnect
-   * Desconecta todas las sesiones activas de un canal.
-   */
-  router.post('/channels/:channel/disconnect', async (req, res) => {
-    try {
-      res.json(await service.disconnectChannel(req.params.channel));
-    } catch (err) {
-      res.status(500).json({ ok: false, error: String(err) });
-    }
-  });
+  }
 }
