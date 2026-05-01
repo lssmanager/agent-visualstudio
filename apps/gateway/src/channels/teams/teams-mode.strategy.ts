@@ -14,7 +14,7 @@
  *   - Bidireccional (envía y recibe)
  *   - Requiere: appId + appPassword en Azure AD
  *   - Autenticación: Bearer token via login.microsoftonline.com
- *   - Token se renueva automáticamente antes de expirar (buffer 60s)
+ *   - Token se renueva automáticamente antes de expirar
  *   - serviceUrl es dinámico por conversación (viene en cada Activity)
  *   - Respuestas van a: {serviceUrl}/v3/conversations/{conversationId}/activities
  *   - Adaptive Cards completas con acciones
@@ -25,13 +25,13 @@
  *   - IncomingWebhookStrategy
  *   - BotFrameworkStrategy
  *   - createTeamsModeStrategy (factory)
- *   - buildAdaptiveTextCard / buildAdaptiveRichCard (helpers)
  */
 
-// ── Tipos públicos ─────────────────────────────────────────────────────────
+// ── Tipos públicos ────────────────────────────────────────────────────────────
 
 export type TeamsMode = 'incoming_webhook' | 'bot_framework'
 
+/** Credenciales según el modo */
 export interface TeamsIncomingWebhookSecrets {
   webhookUrl: string
 }
@@ -45,86 +45,126 @@ export type TeamsSecrets =
   | TeamsIncomingWebhookSecrets
   | TeamsBotFrameworkSecrets
 
+/** Configuración adicional (no sensible) */
 export interface TeamsConfig {
-  mode?:          TeamsMode
-  defaultLocale?: string    // 'es-ES' | 'en-US'
-  timeoutMs?:     number    // default 10_000
+  mode:          TeamsMode
+  defaultLocale?: string   // 'es-ES' | 'en-US' — para Adaptive Cards
+  timeoutMs?:    number    // timeout de fetch a Teams API (default 10s)
 }
 
 /**
- * Subset de la Bot Framework Activity schema que el gateway necesita.
+ * Payload de una Activity de Teams (Bot Framework Activity schema).
+ * Solo los campos que el gateway necesita procesar.
  */
 export interface TeamsActivity {
-  type:        string
-  id?:         string
-  timestamp?:  string
-  serviceUrl:  string
-  channelId:   string
+  type:           string        // 'message' | 'conversationUpdate' | 'invoke' | ...
+  id?:            string        // activityId
+  timestamp?:     string        // ISO 8601
+  serviceUrl:     string        // URL dinámica del Bot Framework Service
+  channelId:      string        // siempre 'msteams'
   from: {
-    id:            string
-    name?:         string
-    aadObjectId?:  string
+    id:           string        // userId o botId
+    name?:        string
+    aadObjectId?: string        // Azure AD Object ID del usuario
   }
   conversation: {
-    id:        string
-    tenantId?: string
-    isGroup?:  boolean
+    id:           string        // conversationId
+    tenantId?:    string
+    isGroup?:     boolean
   }
   recipient: {
-    id:    string
-    name?: string
+    id:           string        // botId
+    name?:        string
   }
-  text?:        string
-  textFormat?:  'plain' | 'markdown' | 'xml'
-  attachments?: TeamsAttachment[]
+  text?:          string        // contenido del mensaje
+  textFormat?:    'plain' | 'markdown' | 'xml'
+  attachments?:   TeamsAttachment[]
   channelData?: {
-    tenant?:  { id: string }
-    team?:    { id: string; name?: string }
-    channel?: { id: string; name?: string }
+    tenant?:     { id: string }
+    team?:       { id: string; name?: string }
+    channel?:    { id: string; name?: string }
   }
-  replyToId?: string
+  replyToId?:     string        // activityId al que responde (para hilos)
 }
 
 export interface TeamsAttachment {
-  contentType:  string
-  content?:     unknown
+  contentType:  string          // 'application/vnd.microsoft.card.adaptive' | etc.
+  content?:     unknown         // Adaptive Card JSON schema
   contentUrl?:  string
   name?:        string
 }
 
+/** Mensaje de salida Teams (texto plano o Adaptive Card) */
 export interface TeamsOutgoingPayload {
   type:         'message'
   text?:        string
   attachments?: TeamsAttachment[]
+  /** Solo bot_framework: activityId al que responder en hilo */
   replyToId?:   string
 }
 
+/** Resultado de un envío Teams */
 export interface TeamsSendResult {
-  ok:          boolean
-  activityId?: string
-  error?:      string
+  ok:           boolean
+  activityId?:  string   // ID de la Activity creada por Teams
+  error?:       string
 }
 
-// ── Interfaz de estrategia ─────────────────────────────────────────────────
+// ── Interfaz de estrategia ────────────────────────────────────────────────────
 
+/**
+ * Contrato que deben implementar las dos estrategias.
+ * El TeamsAdapter (F3a-32) llama solo a estos métodos —
+ * nunca sabe si está en modo webhook o bot_framework.
+ */
 export interface ITeamsModeStrategy {
   readonly mode: TeamsMode
 
+  /**
+   * Envía un mensaje o Adaptive Card.
+   * - incoming_webhook: POST a webhookUrl con el payload
+   * - bot_framework:    POST a {serviceUrl}/v3/conversations/{id}/activities
+   */
   send(
     payload:        TeamsOutgoingPayload,
     conversationId: string,
     serviceUrl?:    string,
   ): Promise<TeamsSendResult>
 
+  /**
+   * Verifica que las credenciales son válidas.
+   * - incoming_webhook: POST mínimo al webhookUrl (texto vacío)
+   * - bot_framework:    obtener Bearer token (falla si appId/password incorrectos)
+   */
   verify(): Promise<{ ok: boolean; error?: string }>
 
+  /**
+   * Construye un Adaptive Card de texto plano (fallback universal).
+   * Ambos modos pueden enviar Adaptive Cards — este helper
+   * estandariza la creación para texto simple.
+   */
   buildTextCard(text: string): TeamsAttachment
 
+  /**
+   * Solo bot_framework: devuelve el Bearer token actual (renueva si expiró).
+   * incoming_webhook: lanza un error (no aplica).
+   */
   getBearerToken?(): Promise<string>
 }
 
-// ── Modo 1: IncomingWebhookStrategy ───────────────────────────────────────
+// ── Modo 1: IncomingWebhookStrategy ──────────────────────────────────────────
 
+/**
+ * Estrategia simple de Incoming Webhook.
+ *
+ * Microsoft Teams Incoming Webhooks aceptan:
+ *   1. Mensaje de texto: { text: "..." }
+ *   2. MessageCard legacy: { "@type": "MessageCard", ... }
+ *   3. Adaptive Card via Attachment: { type: "message", attachments: [...] }
+ *
+ * Esta implementación usa siempre Adaptive Card para consistencia
+ * con la experiencia bot_framework.
+ */
 export class IncomingWebhookStrategy implements ITeamsModeStrategy {
   readonly mode: TeamsMode = 'incoming_webhook'
 
@@ -139,12 +179,10 @@ export class IncomingWebhookStrategy implements ITeamsModeStrategy {
     this.timeoutMs  = config.timeoutMs ?? 10_000
   }
 
-  async send(
-    payload: TeamsOutgoingPayload,
-    _conversationId: string,
-    _serviceUrl?: string,
-  ): Promise<TeamsSendResult> {
+  async send(payload: TeamsOutgoingPayload): Promise<TeamsSendResult> {
+    // Incoming Webhook no usa conversationId ni serviceUrl
     const body = this._buildWebhookBody(payload)
+
     try {
       const res = await fetch(this.webhookUrl, {
         method:  'POST',
@@ -152,10 +190,13 @@ export class IncomingWebhookStrategy implements ITeamsModeStrategy {
         body:    JSON.stringify(body),
         signal:  AbortSignal.timeout(this.timeoutMs),
       })
+
+      // Teams Incoming Webhook devuelve "1" como body en éxito
       if (!res.ok) {
         const text = await res.text()
         return { ok: false, error: `HTTP ${res.status}: ${text}` }
       }
+
       return { ok: true }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -164,13 +205,11 @@ export class IncomingWebhookStrategy implements ITeamsModeStrategy {
   }
 
   async verify(): Promise<{ ok: boolean; error?: string }> {
-    const result = await this.send(
-      {
-        type:        'message',
-        attachments: [this.buildTextCard('✅ Conexión Teams verificada correctamente.')],
-      },
-      'verify',
-    )
+    // Enviar un mensaje de prueba vacío para verificar conectividad
+    const result = await this.send({
+      type: 'message',
+      attachments: [this.buildTextCard('✅ Conexión Teams verificada correctamente.')],
+    })
     return result
   }
 
@@ -178,22 +217,49 @@ export class IncomingWebhookStrategy implements ITeamsModeStrategy {
     return buildAdaptiveTextCard(text)
   }
 
+  // ── Helper privado ─────────────────────────────────────────────────────────
+
   private _buildWebhookBody(payload: TeamsOutgoingPayload): Record<string, unknown> {
+    // Si el payload tiene attachments (Adaptive Cards), usar formato de mensaje
     if (payload.attachments?.length) {
-      return { type: 'message', attachments: payload.attachments }
+      return {
+        type:        'message',
+        attachments: payload.attachments,
+      }
     }
+
+    // Texto plano: envolver en Adaptive Card para consistencia visual
     if (payload.text) {
-      return { type: 'message', attachments: [this.buildTextCard(payload.text)] }
+      return {
+        type:        'message',
+        attachments: [this.buildTextCard(payload.text)],
+      }
     }
+
     return { type: 'message', text: '' }
   }
 }
 
-// ── Modo 2: BotFrameworkStrategy ──────────────────────────────────────────
+// ── Modo 2: BotFrameworkStrategy ─────────────────────────────────────────────
 
-const TOKEN_ENDPOINT =
-  'https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token'
-
+/**
+ * Estrategia Bot Framework completa.
+ *
+ * Flujo de autenticación:
+ *   1. POST https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token
+ *      con grant_type=client_credentials, client_id=appId, client_secret=appPassword
+ *      scope=https://api.botframework.com/.default
+ *   2. Guardar access_token + expires_in (segundos)
+ *   3. Renovar cuando quedan < 60s para expirar
+ *
+ * Flujo de envío:
+ *   POST {serviceUrl}/v3/conversations/{conversationId}/activities
+ *   Authorization: Bearer {access_token}
+ *   Body: Activity JSON
+ *
+ * IMPORTANTE: serviceUrl es dinámico — viene en cada Activity entrante
+ * (body.serviceUrl). Nunca usar una URL fija de Teams.
+ */
 export class BotFrameworkStrategy implements ITeamsModeStrategy {
   readonly mode: TeamsMode = 'bot_framework'
 
@@ -202,8 +268,8 @@ export class BotFrameworkStrategy implements ITeamsModeStrategy {
   private readonly timeoutMs:   number
 
   private tokenCache: {
-    accessToken: string
-    expiresAtMs: number
+    accessToken:  string
+    expiresAtMs:  number
   } | null = null
 
   constructor(secrets: TeamsBotFrameworkSecrets, config: Partial<TeamsConfig> = {}) {
@@ -230,6 +296,7 @@ export class BotFrameworkStrategy implements ITeamsModeStrategy {
                'Debe tomarse del Activity.serviceUrl recibido en el webhook entrante.',
       }
     }
+
     if (!conversationId) {
       return { ok: false, error: '[TeamsBotFramework] conversationId es requerido' }
     }
@@ -249,8 +316,8 @@ export class BotFrameworkStrategy implements ITeamsModeStrategy {
       const res = await fetch(url, {
         method:  'POST',
         headers: {
-          Authorization:  `Bearer ${token}`,
-          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'Content-Type':  'application/json',
         },
         body:   JSON.stringify(activity),
         signal: AbortSignal.timeout(this.timeoutMs),
@@ -284,11 +351,13 @@ export class BotFrameworkStrategy implements ITeamsModeStrategy {
   }
 
   /**
-   * Obtiene el Bearer token actual, renovándolo si quedan < 60s para expirar.
+   * Obtiene el Bearer token actual, renovándolo automáticamente
+   * si ya expiró o quedan menos de 60 segundos para expirar.
+   *
    * Endpoint: https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token
    */
   async getBearerToken(): Promise<string> {
-    const RENEW_BUFFER_MS = 60_000
+    const RENEW_BUFFER_MS = 60_000  // renovar 60s antes de expirar
 
     if (
       this.tokenCache &&
@@ -304,12 +373,15 @@ export class BotFrameworkStrategy implements ITeamsModeStrategy {
       scope:         'https://api.botframework.com/.default',
     })
 
-    const res = await fetch(TOKEN_ENDPOINT, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body:    params.toString(),
-      signal:  AbortSignal.timeout(this.timeoutMs),
-    })
+    const res = await fetch(
+      'https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token',
+      {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body:    params.toString(),
+        signal:  AbortSignal.timeout(this.timeoutMs),
+      },
+    )
 
     if (!res.ok) {
       const text = await res.text()
@@ -327,42 +399,57 @@ export class BotFrameworkStrategy implements ITeamsModeStrategy {
     }
 
     this.tokenCache = {
-      accessToken: data.access_token,
-      expiresAtMs: Date.now() + data.expires_in * 1000,
+      accessToken:  data.access_token,
+      expiresAtMs:  Date.now() + data.expires_in * 1000,
     }
 
     return this.tokenCache.accessToken
   }
 
+  // ── Helper privado ─────────────────────────────────────────────────────────
+
   private _buildActivity(payload: TeamsOutgoingPayload): Record<string, unknown> {
-    const activity: Record<string, unknown> = { type: 'message' }
+    const activity: Record<string, unknown> = {
+      type: 'message',
+    }
+
     if (payload.text) {
       activity['text']       = payload.text
       activity['textFormat'] = 'markdown'
     }
+
     if (payload.attachments?.length) {
       activity['attachments'] = payload.attachments
     }
+
     if (payload.replyToId) {
       activity['replyToId'] = payload.replyToId
     }
+
     return activity
   }
 }
 
-// ── Factory ────────────────────────────────────────────────────────────────
+// ── Factory: createTeamsModeStrategy ─────────────────────────────────────────
 
 /**
- * Crea la estrategia correcta según el modo configurado.
- * Detección automática:
- *   - secrets.webhookUrl presente → incoming_webhook
- *   - secrets.appId + appPassword → bot_framework
- * config.mode tiene prioridad si está explícito.
+ * Factory que crea la estrategia correcta según el modo configurado.
+ *
+ * Uso en TeamsAdapter (F3a-32):
+ *   const strategy = createTeamsModeStrategy(config, secrets)
+ *   await strategy.verify()
+ *   await strategy.send({ type: 'message', text: '...' }, conversationId, serviceUrl)
+ *
+ * Detección automática de modo:
+ *   - Si secrets tiene 'webhookUrl' → incoming_webhook
+ *   - Si secrets tiene 'appId' y 'appPassword' → bot_framework
+ *   - config.mode tiene prioridad si está explícito
  */
 export function createTeamsModeStrategy(
   config:  Partial<TeamsConfig>,
   secrets: Record<string, unknown>,
 ): ITeamsModeStrategy {
+  // Detectar modo: config explícito tiene prioridad
   const detectedMode: TeamsMode =
     config.mode ??
     ('webhookUrl' in secrets && typeof secrets['webhookUrl'] === 'string'
@@ -382,6 +469,7 @@ export function createTeamsModeStrategy(
     )
   }
 
+  // bot_framework
   if (!secrets['appId'] || !secrets['appPassword']) {
     throw new Error(
       '[Teams] Modo bot_framework requiere secrets.appId y secrets.appPassword. ' +
@@ -398,11 +486,13 @@ export function createTeamsModeStrategy(
   )
 }
 
-// ── Helpers de Adaptive Card ───────────────────────────────────────────────
+// ── Helpers compartidos ───────────────────────────────────────────────────────
 
 /**
- * Adaptive Card mínima de texto plano (schema v1.5).
- * Soporta Markdown básico en el TextBlock.
+ * Construye un Adaptive Card mínimo de texto plano (schema v1.5).
+ * Compatible con Teams, Outlook, y otros hosts de Adaptive Cards.
+ *
+ * El texto soporta Markdown básico: **negrita**, *cursiva*, listas.
  */
 export function buildAdaptiveTextCard(text: string): TeamsAttachment {
   return {
@@ -424,8 +514,8 @@ export function buildAdaptiveTextCard(text: string): TeamsAttachment {
 }
 
 /**
- * Adaptive Card rica con título, descripción, facts, imagen y botones.
- * Usada por AgentExecutor para respuestas con richContent.
+ * Construye un Adaptive Card con título, descripción y botones de acción.
+ * Usado por el AgentExecutor para respuestas con richContent.
  */
 export function buildAdaptiveRichCard(opts: {
   title?:       string
@@ -466,10 +556,11 @@ export function buildAdaptiveRichCard(opts: {
   }
 
   if (opts.fields?.length) {
-    body.push({
+    const factSet = {
       type:  'FactSet',
       facts: opts.fields.map((f) => ({ title: f.label, value: f.value })),
-    })
+    }
+    body.push(factSet)
   }
 
   const actions = opts.buttons?.map((b) => ({
