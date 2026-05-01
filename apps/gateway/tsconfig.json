@@ -7,7 +7,8 @@
     "rootDir":                 "src",
     "baseUrl":                 ".",
     "paths": {
-      "@gateway/*": ["src/*"]
+      "@gateway/*":             ["src/*"],
+      "@agent-vs/gateway-sdk":  ["src/index.ts"]
     }
   },
   "include": ["src/**/*"],
