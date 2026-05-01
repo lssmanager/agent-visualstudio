@@ -1,5 +1,5 @@
 /**
- * telegram.adapter.ts — Adaptador Telegram Bot (grammÝY SDK)
+ * telegram.adapter.ts — Adaptador Telegram Bot (grammY SDK)
  *
  * Modos de operación (seleccionados automáticamente en initialize()):
  *
@@ -24,7 +24,7 @@
  *   - 'quick_replies' → sendMessage + InlineKeyboardMarkup
  *   - 'card'          → sendMessage con richContent como caption
  *
- * grammÝY versión mínima: 1.9.2
+ * grammY versión mínima: 1.9.2
  */
 
 import {
@@ -39,13 +39,14 @@ import { Router, type Request, type Response } from 'express';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {
   BaseChannelAdapter,
+  type ChannelType,
   type IncomingMessage,
   type OutgoingMessage,
 } from './channel-adapter.interface.js';
 
 const db = new PrismaService();
 
-// ── Tipos de credenciales ─────────────────────────────────────────────
+// ── Tipos de credenciales ──────────────────────────────────────────────────
 
 interface TelegramCredentials {
   /** Token del bot: '123456789:AAF...' */
@@ -69,7 +70,7 @@ interface TelegramCredentials {
   allowedUpdates?: string[];
 }
 
-// ── escapeMarkdownV2 (exportada para tests y uso externo) ──────────────
+// ── escapeMarkdownV2 (exportada para tests y uso externo) ──────────────────
 
 /**
  * Escapa caracteres especiales para MarkdownV2 de Telegram.
@@ -80,19 +81,19 @@ export function escapeMarkdownV2(text: string): string {
   return text.replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, (c) => `\\${c}`);
 }
 
-// ── TelegramAdapter ─────────────────────────────────────────────────
+// ── TelegramAdapter ────────────────────────────────────────────────────────
 
 export class TelegramAdapter extends BaseChannelAdapter {
-  readonly channel = 'telegram';
+  readonly channel = 'telegram' as const satisfies ChannelType;
 
   private bot: Bot | null = null;
-  private botToken = '';
+  private botToken      = '';
   private webhookSecret = '';
-  private webhookUrl = '';
-  private usePolling = false;
+  private webhookUrl    = '';
+  private usePolling    = false;
   private allowedUpdates: string[] = ['message', 'callback_query', 'edited_message'];
 
-  // ── Lifecycle ────────────────────────────────────────────────────
+  // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   async initialize(channelConfigId: string): Promise<void> {
     this.channelConfigId = channelConfigId;
@@ -115,10 +116,10 @@ export class TelegramAdapter extends BaseChannelAdapter {
       throw new Error('[telegram] botToken is required in ChannelConfig.credentials');
     }
 
-    // Crear instancia del bot con grammÝY
+    // Crear instancia del bot con grammY
     this.bot = new Bot(this.botToken);
 
-    // Registrar handlers de grammÝY
+    // Registrar handlers de grammY
     this.registerHandlers(this.bot);
 
     // Seleccionar modo de operación
@@ -137,10 +138,8 @@ export class TelegramAdapter extends BaseChannelAdapter {
     } else {
       // MODO LONG POLLING — usado en desarrollo
       this.usePolling = true;
-      // Eliminar webhook anterior si hubiera
       await this.bot.api.deleteWebhook();
 
-      // start() es no-bloqueante: lanza internamente y resolve inmediatamente
       this.bot.start({
         allowed_updates: this.allowedUpdates as any,
         onStart: (info: { username?: string }) =>
@@ -169,7 +168,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
     console.info('[telegram] Adapter disposed');
   }
 
-  // ── Handlers grammÝY ─────────────────────────────────────────────────
+  // ── Handlers grammY ────────────────────────────────────────────────────────
 
   private registerHandlers(bot: Bot): void {
     // Indicador de escritura mientras el agente procesa
@@ -180,56 +179,62 @@ export class TelegramAdapter extends BaseChannelAdapter {
       return next();
     });
 
-    // Mensajes de texto y comandos
+    // Mensajes de texto, comandos y adjuntos
     bot.on('message', async (ctx: Context) => {
-      const msg = ctx.message;
-      const text = msg.text ?? msg.caption ?? '';
+      const msg         = ctx.message;
+      const text        = msg.text ?? msg.caption ?? '';
       const attachments = this.extractAttachments(ctx) ?? [];
       if (!text && attachments.length === 0) return;
 
       const incoming: IncomingMessage = {
-        externalId:  String(msg.chat.id),
-        senderId:    String(msg.from?.id ?? msg.chat.id),
+        channelConfigId: this.channelConfigId,
+        channelType:     'telegram',
+        externalId:      String(msg.chat.id),
+        senderId:        String(msg.from?.id ?? msg.chat.id),
         text,
-        type:        text.startsWith('/')
+        type:            text.startsWith('/')
           ? 'command'
           : (text ? 'text' : 'attachment'),
         attachments,
-        metadata:    { updateId: ctx.update.update_id, raw: msg },
-        receivedAt:  this.makeTimestamp(),
+        metadata:        { updateId: ctx.update.update_id, raw: msg },
+        receivedAt:      this.makeTimestamp(),
       };
       await this.emit(incoming);
     });
 
     // Mensajes editados — re-emitir con metadata.edited = true
     bot.on('edited_message', async (ctx: Context) => {
-      const msg = ctx.editedMessage;
+      const msg  = ctx.editedMessage;
       const text = msg?.text ?? msg?.caption ?? '';
       if (!text) return;
 
       const incoming: IncomingMessage = {
-        externalId:  String(msg!.chat.id),
-        senderId:    String(msg!.from?.id ?? msg!.chat.id),
+        channelConfigId: this.channelConfigId,
+        channelType:     'telegram',
+        externalId:      String(msg!.chat.id),
+        senderId:        String(msg!.from?.id ?? msg!.chat.id),
         text,
-        type:        'text',
-        metadata:    { updateId: ctx.update.update_id, edited: true, raw: msg },
-        receivedAt:  this.makeTimestamp(),
+        type:            'text',
+        metadata:        { updateId: ctx.update.update_id, edited: true, raw: msg },
+        receivedAt:      this.makeTimestamp(),
       };
       await this.emit(incoming);
     });
 
     // Callback queries (botones inline)
     bot.on('callback_query:data', async (ctx: Context) => {
-      const cq = ctx.callbackQuery;
+      const cq     = ctx.callbackQuery;
       const chatId = cq.message?.chat.id ?? cq.from.id;
 
       const incoming: IncomingMessage = {
-        externalId:  String(chatId),
-        senderId:    String(cq.from.id),
-        text:        cq.data,
-        type:        'command',
-        metadata:    { callbackQueryId: cq.id, updateId: ctx.update.update_id, raw: cq },
-        receivedAt:  this.makeTimestamp(),
+        channelConfigId: this.channelConfigId,
+        channelType:     'telegram',
+        externalId:      String(chatId),
+        senderId:        String(cq.from.id),
+        text:            cq.data,
+        type:            'button_click',
+        metadata:        { callbackQueryId: cq.id, updateId: ctx.update.update_id, raw: cq },
+        receivedAt:      this.makeTimestamp(),
       };
       try {
         await this.emit(incoming);
@@ -239,7 +244,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
       }
     });
 
-    // Error handler global de grammÝY
+    // Error handler global de grammY
     bot.catch((err: { error: unknown; ctx: Context }) => {
       const { error, ctx: errCtx } = err as { error: unknown; ctx: Context };
       if (error instanceof GrammyError) {
@@ -261,30 +266,25 @@ export class TelegramAdapter extends BaseChannelAdapter {
     });
   }
 
-  // ── Send ───────────────────────────────────────────────────────────
+  // ── Send ───────────────────────────────────────────────────────────────────
 
   async send(message: OutgoingMessage): Promise<void> {
-    // Guard: si bot no inicializado, warn y retornar (no lanzar)
     if (!this.bot) {
       console.warn('[telegram] send() called before initialize() — message dropped');
       return;
     }
 
-    const chatId  = message.externalId;
-
-    // Construir reply_markup si richContent o quick_replies
+    const chatId      = message.externalId;
     const replyMarkup = this.buildReplyMarkup(message);
-
-    // Escapar texto para MarkdownV2 — siempre, ya que parse_mode: MarkdownV2 es invariante
-    const text = escapeMarkdownV2(message.text);
+    const text        = escapeMarkdownV2(message.text);
 
     await this.bot.api.sendMessage(chatId, text, {
       parse_mode:   'MarkdownV2',
-      reply_markup: replyMarkup,
+      reply_markup: replyMarkup as any,
     });
   }
 
-  // ── sendTyping() ─────────────────────────────────────────────────────
+  // ── sendTyping() ───────────────────────────────────────────────────────────
 
   /**
    * Envía indicador de escritura ("typing") al chat especificado.
@@ -295,7 +295,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
     await this.bot.api.sendChatAction(chatId, 'typing');
   }
 
-  // ── Router (solo modo webhook) ─────────────────────────────────────────
+  // ── Router (solo modo webhook) ─────────────────────────────────────────────
 
   getRouter(): Router {
     const router = Router();
@@ -304,7 +304,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
       throw new Error('[telegram] getRouter() called before initialize()');
     }
 
-    // Webhook handler de grammÝY con validación de secret
+    // Webhook handler de grammY con validación de secret
     const handleUpdate = webhookCallback(this.bot, 'express', {
       secretToken: this.webhookSecret || undefined,
     });
@@ -349,24 +349,19 @@ export class TelegramAdapter extends BaseChannelAdapter {
     return router;
   }
 
-  // ── Helpers privados ───────────────────────────────────────────────
+  // ── Helpers privados ───────────────────────────────────────────────────────
 
   /**
    * Construye el reply_markup para quick_replies o richContent genérico.
-   * Si message.richContent ya es un InlineKeyboardMarkup válido, lo pasa directamente.
-   * Si message.type === 'quick_replies' y richContent es un array de strings,
-   * construye un InlineKeyboard con grammÝY builder.
    */
   private buildReplyMarkup(message: OutgoingMessage): unknown {
     if (!message.richContent) return undefined;
 
+    const rc = message.richContent as Record<string, unknown>;
+
     // Si ya es un objeto con inline_keyboard → pasar directo
-    if (
-      typeof message.richContent === 'object' &&
-      message.richContent !== null &&
-      'inline_keyboard' in (message.richContent as Record<string, unknown>)
-    ) {
-      return message.richContent;
+    if (typeof rc === 'object' && rc !== null && 'inline_keyboard' in rc) {
+      return rc;
     }
 
     // Si es array → construir InlineKeyboard
@@ -385,7 +380,6 @@ export class TelegramAdapter extends BaseChannelAdapter {
 
   /**
    * Extrae adjuntos del contexto (foto, documento, voz, audio).
-   * Devuelve array vacío si no hay adjuntos.
    */
   private extractAttachments(ctx: Context): NonNullable<IncomingMessage['attachments']> {
     const msg = ctx.message;
