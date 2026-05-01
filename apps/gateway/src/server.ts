@@ -5,24 +5,29 @@
  * como por los tests de integración sin levantar el puerto.
  *
  * Rutas montadas:
- *   GET  /health                                — liveness probe
- *   GET  /static/*                              — archivos estáticos (widget JS)
- *   GET  /webchat-widget.js                     — shortcut al widget embeddable
- *   POST /gateway/telegram/:channelId           — Telegram webhook
- *   GET  /gateway/webchat/:channelId/stream     — SSE
- *   POST /gateway/webchat/:channelId/message    — inbound webchat
- *   GET  /gateway/webchat/:channelId/history    — historial de sesión
- *   POST /gateway/webchat/:channelId/session    — bootstrap sessionId
- *   POST /api/webchat/:channelId/reply          — reply interno (JWT)
- *   POST /api/channels                          — crear canal (JWT)
- *   GET  /api/channels                          — listar canales (JWT)
- *   GET  /api/channels/:id                      — detalle canal (JWT)
- *   PATCH /api/channels/:id                     — actualizar canal (JWT)
- *   DELETE /api/channels/:id                    — eliminar canal (JWT)
- *   POST /api/channels/:id/activate             — activar canal (JWT)
- *   POST /api/channels/:id/deactivate           — desactivar canal (JWT)
- *   POST /api/channels/:id/bindings             — agregar binding (JWT)
- *   DELETE /api/channels/:id/bindings/:bid      — eliminar binding (JWT)
+ *   GET  /health                                        — liveness probe
+ *   GET  /static/*                                      — archivos estáticos (widget JS)
+ *   GET  /webchat-widget.js                             — shortcut al widget embeddable
+ *   POST /gateway/telegram/:channelId                   — Telegram webhook
+ *   GET  /gateway/webchat/:channelId/stream             — SSE
+ *   POST /gateway/webchat/:channelId/message            — inbound webchat
+ *   GET  /gateway/webchat/:channelId/history            — historial de sesión
+ *   POST /gateway/webchat/:channelId/session            — bootstrap sessionId
+ *   GET  /gateway/whatsapp/:configId/qr                 — SSE stream QR (WhatsApp Baileys)
+ *   GET  /gateway/whatsapp/:configId/status             — estado del adapter
+ *   GET  /gateway/whatsapp/sessions                     — lista todas las sesiones activas
+ *   POST /gateway/whatsapp/:configId/connect            — iniciar conexión Baileys
+ *   POST /gateway/whatsapp/:configId/disconnect         — desconectar y limpiar sesión
+ *   POST /api/webchat/:channelId/reply                  — reply interno (JWT)
+ *   POST /api/channels                                  — crear canal (JWT)
+ *   GET  /api/channels                                  — listar canales (JWT)
+ *   GET  /api/channels/:id                              — detalle canal (JWT)
+ *   PATCH /api/channels/:id                             — actualizar canal (JWT)
+ *   DELETE /api/channels/:id                            — eliminar canal (JWT)
+ *   POST /api/channels/:id/activate                     — activar canal (JWT)
+ *   POST /api/channels/:id/deactivate                   — desactivar canal (JWT)
+ *   POST /api/channels/:id/bindings                     — agregar binding (JWT)
+ *   DELETE /api/channels/:id/bindings/:bid              — eliminar binding (JWT)
  *
  * Seguridad:
  *   applySecurityMiddleware() aplica Helmet, CORS, rate limiting y JWT
@@ -42,6 +47,8 @@ import { GatewayService }          from './gateway.service';
 import { telegramRouter }          from './routes/telegram';
 import { webchatGatewayRouter, webchatApiRouter } from './routes/webchat';
 import { channelsApiRouter }       from './routes/channels';
+import { whatsappBaileysRouter }   from './routes/whatsapp-baileys';     // [F3a-22]
+import { WhatsAppBaileysAdapter }  from './channels/whatsapp-baileys.adapter'; // [F3a-22]
 
 // ---------------------------------------------------------------------------
 // App factory
@@ -63,8 +70,12 @@ export function createApp(opts: AppOptions = {}): Application {
   // -------------------------------------------------------------------------
   // 1. Register channel adapters
   // -------------------------------------------------------------------------
-  if (!registry.has('telegram')) registry.register(new TelegramAdapter());
-  if (!registry.has('webchat'))  registry.register(new WebChatAdapter());
+  if (!registry.has('telegram'))          registry.register(new TelegramAdapter());
+  if (!registry.has('webchat'))           registry.register(new WebChatAdapter());
+  // [F3a-22] WhatsApp Baileys — instancia singleton en registry para uso
+  // del GatewayService al activar canales de tipo 'whatsapp-baileys'.
+  // El store (whatsappSessionStore) gestiona UNA instancia por configId.
+  if (!registry.has('whatsapp-baileys')) registry.register(new WhatsAppBaileysAdapter());
 
   // -------------------------------------------------------------------------
   // 2. Security middleware
@@ -118,6 +129,9 @@ export function createApp(opts: AppOptions = {}): Application {
 
   // WebChat SSE + inbound + history + session
   app.use('/gateway/webchat', webchatGatewayRouter(gatewayService));
+
+  // WhatsApp Baileys — QR SSE + status + connect/disconnect  [F3a-22]
+  app.use('/gateway/whatsapp', whatsappBaileysRouter());
 
   // WebChat internal reply (JWT)
   app.use('/api/webchat', webchatApiRouter(gatewayService));
