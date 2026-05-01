@@ -18,11 +18,17 @@ const mockConfig = {
   },
 }
 
-vi.mock('../../../../api/src/modules/core/db/prisma.service', () => ({
-  prisma: {
-    channelConfig: {
+/**
+ * FIX (CodeRabbit #discussion_r3172261272):
+ * La ruta anterior '../../../../api/src/modules/core/db/prisma.service' no existe
+ * y el shape { prisma: ... } no coincide con el adapter que hace new PrismaService().
+ * Corregido: apunta a '../../prisma/prisma.service.js' con { PrismaService: class }.
+ */
+vi.mock('../../prisma/prisma.service.js', () => ({
+  PrismaService: class {
+    channelConfig = {
       findUnique: vi.fn().mockResolvedValue(mockConfig),
-    },
+    }
   },
 }))
 
@@ -129,6 +135,12 @@ describe('TelegramAdapter — grammÝY SDK', () => {
     expect(mockBotStart).not.toHaveBeenCalled()
   })
 
+  /**
+   * FIX (CodeRabbit #discussion_r3171879658 + /setup under-assert):
+   * initialize() en modo webhook ya llama setWebhook una vez.
+   * Luego /setup lo vuelve a llamar → total 2 llamadas.
+   * Corregido: toHaveBeenCalledTimes(2) y mock.calls[1][0] para el segundo call.
+   */
   it('setup route registra webhook con la URL base y no arranca polling', async () => {
     mockConfig.credentials = {
       botToken:   'FAKE_TOKEN:test',
@@ -151,8 +163,9 @@ describe('TelegramAdapter — grammÝY SDK', () => {
 
     await handler(req, res)
 
-    expect(mockSetWebhook).toHaveBeenCalledOnce()
-    expect((mockSetWebhook as Mock).mock.calls[0][0]).toBe(
+    // initialize() llamó setWebhook (call 0) + /setup lo vuelve a llamar (call 1)
+    expect(mockSetWebhook).toHaveBeenCalledTimes(2)
+    expect((mockSetWebhook as Mock).mock.calls[1][0]).toBe(
       'https://agents.example.com/gateway/telegram/webhook',
     )
     expect(mockBotStart).not.toHaveBeenCalled()
@@ -280,7 +293,7 @@ describe('TelegramAdapter — grammÝY SDK', () => {
   })
 
   it('send() cuando bot === null → no lanza, solo warn', async () => {
-    // No inicializar el adapter — bot es null
+    // No inicializar el adapter — bot es null; implementación hace return+warn
     await expect(
       adapter.send({ externalId: '000', text: 'test' }),
     ).resolves.not.toThrow()
