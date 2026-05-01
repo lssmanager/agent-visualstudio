@@ -1,11 +1,15 @@
 /**
- * [F3a-01] AppModule — Módulo raíz del Gateway NestJS
+ * app.module.ts — [F3a-01] Módulo raíz del Gateway NestJS
  *
  * Arquitectura de módulos:
  *   AppModule
- *     ├─ PrismaModule          (PrismaService global)
- *     ├─ GatewayModule         (GatewayService, HealthController)
+ *     ├─ GatewayModule  (GatewayService, AgentResolverService, HealthController)
+ *     │     └─ PrismaModule  (re-exportado — AppModule lo hereda transitivamente)
  *     └─ bridge Express routes (montadas en onModuleInit, temporal)
+ *
+ * NOTA: PrismaModule NO se importa directamente aquí porque GatewayModule
+ * ya lo re-exporta. Importarlo dos veces crea dos instancias de PrismaClient
+ * en el grafo DI y puede producir errores de resolución en F3a-02/03.
  *
  * Bridge pattern:
  *   NestFactory crea la app NestJS pero el httpAdapter subyacente
@@ -22,7 +26,6 @@ import {
 } from '@nestjs/common';
 import { HttpAdapterHost } from '@nestjs/core';
 import type { Application } from 'express';
-import { PrismaModule }    from './prisma/prisma.module';
 import { GatewayModule }   from './gateway.module';
 import { PrismaService }   from './prisma/prisma.service';
 
@@ -31,8 +34,7 @@ import { createApp }       from './server';
 
 @Module({
   imports: [
-    PrismaModule,
-    GatewayModule,
+    GatewayModule,  // PrismaModule viene transitivamente desde GatewayModule
   ],
 })
 export class AppModule implements OnModuleInit {
