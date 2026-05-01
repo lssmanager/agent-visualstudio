@@ -20,26 +20,19 @@
  */
 
 import { Router } from 'express'
-import { PrismaClient } from '@prisma/client'
+import { getPrisma } from '../../lib/prisma.js'
 import { SettingsService } from './settings.service'
-
-// Singleton Prisma client — reuse the one from the server context if available
-let _prisma: PrismaClient | null = null
-function getPrisma(): PrismaClient {
-  if (!_prisma) _prisma = new PrismaClient()
-  return _prisma
-}
 
 function makeService(): SettingsService {
   return new SettingsService(getPrisma())
 }
 
 export function registerSettingsRoutes(router: Router): void {
+
   // ── GET /settings/providers ───────────────────────────────────────────────
   router.get('/settings/providers', async (_req, res) => {
     try {
-      const svc       = makeService()
-      const providers = await svc.listProviders()
+      const providers = await makeService().listProviders()
       res.json(providers)
     } catch (err) {
       console.error('[settings] listProviders error', err)
@@ -49,7 +42,7 @@ export function registerSettingsRoutes(router: Router): void {
 
   // ── PATCH /settings/providers/:providerId/key ─────────────────────────────
   router.patch('/settings/providers/:providerId/key', async (req, res) => {
-    const { providerId } = req.params
+    const { providerId } = req.params as { providerId: string }
     const { apiKey }     = req.body as { apiKey?: string }
 
     if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
@@ -58,31 +51,31 @@ export function registerSettingsRoutes(router: Router): void {
     }
 
     try {
-      await makeService().saveProviderKey(providerId, apiKey.trim())
+      await makeService().setProviderKey(providerId, apiKey.trim())
       res.json({ ok: true })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      const status = msg.includes('Unknown provider') ? 404 : 400
+      const status = msg.includes('not found') ? 404 : 400
       res.status(status).json({ error: msg })
     }
   })
 
   // ── DELETE /settings/providers/:providerId/key ────────────────────────────
   router.delete('/settings/providers/:providerId/key', async (req, res) => {
-    const { providerId } = req.params
+    const { providerId } = req.params as { providerId: string }
     try {
       await makeService().deleteProviderKey(providerId)
       res.json({ ok: true })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      const status = msg.includes('Unknown provider') ? 404 : 400
+      const status = msg.includes('not found') ? 404 : 400
       res.status(status).json({ error: msg })
     }
   })
 
   // ── POST /settings/providers/:providerId/test ─────────────────────────────
   router.post('/settings/providers/:providerId/test', async (req, res) => {
-    const { providerId } = req.params
+    const { providerId } = req.params as { providerId: string }
     const { modelId }    = req.body as { modelId?: string }
 
     if (!modelId || typeof modelId !== 'string') {
@@ -102,10 +95,10 @@ export function registerSettingsRoutes(router: Router): void {
   // ── GET /settings/n8n ─────────────────────────────────────────────────────
   router.get('/settings/n8n', async (_req, res) => {
     try {
-      const cfg = await makeService().getN8nConfig()
+      const cfg = await makeService().getN8n()
       res.json(cfg)
     } catch (err) {
-      console.error('[settings] getN8nConfig error', err)
+      console.error('[settings] getN8n error', err)
       res.status(500).json({ error: 'Failed to get n8n config' })
     }
   })
@@ -124,10 +117,10 @@ export function registerSettingsRoutes(router: Router): void {
     }
 
     try {
-      await makeService().saveN8nConfig(baseUrl.trim(), apiKey)
+      await makeService().setN8n(baseUrl.trim(), apiKey)
       res.json({ ok: true })
     } catch (err) {
-      console.error('[settings] saveN8nConfig error', err)
+      console.error('[settings] setN8n error', err)
       res.status(500).json({ error: 'Failed to save n8n config' })
     }
   })
