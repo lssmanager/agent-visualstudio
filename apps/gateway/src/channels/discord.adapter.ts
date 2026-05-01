@@ -1,16 +1,16 @@
 /**
- * discord.adapter.ts — Adaptador Discord
+ * discord.adapter.ts — Adaptador Discord (Interactions Endpoint)
  *
- * Recibe slash commands e interacciones via webhook de Discord.
- * Envía DMs y mensajes de canal usando Discord REST API.
+ * Recibe slash commands e interacciones via HTTP endpoint.
+ * Discord requiere verificación Ed25519 de cada request.
  *
- * Credentials en ChannelConfig.credentials (cifrado en DB):
+ * Credentials en ChannelConfig.credentials:
  *   { botToken, applicationId, publicKey }
  *
  * Endpoints:
- *   POST /gateway/discord/interactions — slash commands e interacciones
+ *   POST /gateway/discord/interactions — interacciones de Discord
  *
- * Inspirado en n8n DiscordTrigger y Semantic Kernel DiscordPlugin.
+ * Inspirado en n8n DiscordTrigger y Semantic Kernel Discord plugin.
  */
 
 import { createVerify } from 'node:crypto';

@@ -1,7 +1,7 @@
 /**
- * slack.adapter.ts — Canal Slack vía @slack/bolt
+ * slack.adapter.ts — Adaptador Slack
  *
- * Modo de operación: Socket Mode (no requiere URL pública) o HTTP mode.
+ * Soporta dos modos:
  *   - Socket Mode: SLACK_SOCKET_MODE=true + SLACK_APP_TOKEN=xapp-...
  *   - HTTP Mode: recibe POST en /gateway/slack/:channelId
  *
@@ -97,8 +97,8 @@ export class SlackAdapter extends BaseChannelAdapter {
       await this.boltApp.stop().catch((err: unknown) =>
         console.warn('[SlackAdapter] stop error:', err),
       );
-      this.boltApp = null;
     }
+    this.boltApp = null;
   }
 
   // ---------------------------------------------------------------------------
@@ -160,12 +160,8 @@ export class SlackAdapter extends BaseChannelAdapter {
     });
 
     if (!response.ok) {
-      throw new Error(`[SlackAdapter] send failed: HTTP ${response.status}`);
-    }
-
-    const body = (await response.json()) as { ok: boolean; error?: string };
-    if (!body.ok) {
-      throw new Error(`[SlackAdapter] Slack API error: ${body.error}`);
+      const err = await response.text();
+      throw new Error(`[SlackAdapter] send failed: ${err}`);
     }
   }
 
@@ -197,7 +193,7 @@ export class SlackAdapter extends BaseChannelAdapter {
   }
 
   // ---------------------------------------------------------------------------
-  // Socket Mode interno
+  // Socket Mode bootstrap
   // ---------------------------------------------------------------------------
 
   private async startSocketMode(): Promise<void> {
@@ -241,6 +237,6 @@ export class SlackAdapter extends BaseChannelAdapter {
 
     await app.start();
     this.boltApp = app as unknown as BoltApp;
-    console.info('[SlackAdapter] Socket Mode started');
+    console.info('[SlackAdapter] Socket Mode connected');
   }
 }
