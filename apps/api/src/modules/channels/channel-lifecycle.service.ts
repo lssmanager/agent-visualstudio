@@ -32,6 +32,10 @@ const TRANSITIONS: Record<ChannelStatus, ChannelStatus[]> = {
   error:       ['starting'],
 }
 
+// Predecesores válidos para cada operación (usados en atomic claim)
+const START_ALLOWED_STATUSES: ChannelStatus[] = ['provisioned', 'stopped', 'error']
+const STOP_ALLOWED_STATUSES:  ChannelStatus[] = ['active']
+
 // ── Servicio ────────────────────────────────────────────────────────────
 
 @Injectable()
@@ -89,36 +93,50 @@ export class ChannelLifecycleService {
 
   /**
    * Inicia un canal en estado 'provisioned', 'stopped', o 'error'.
-   * Flujo:
-   *   1. Validar transición → 'starting'
-   *   2. Persistir status='starting', isActive=true
-   *   3. Llamar GatewayService.activateChannel() (con stub de seguridad)
-   *   4a. Éxito → persistir status='active', lastStartedAt=now
-   *   4b. Fallo → persistir status='error', isActive=false, errorMessage
    *
-   * @throws InvalidTransitionError si el canal no puede hacer start desde su estado actual
+   * Flujo (atomic claim pattern — elimina TOCTOU):
+   *   1. Intentar updateMany con WHERE id=X AND status IN (allowed)
+   *      → status='starting', isActive=true
+   *   2. Si count=0: leer estado actual para lanzar error apropiado
+   *      (ChannelAlreadyInStateError si ya active/starting, InvalidTransitionError
+   *       si stopping, ChannelNotFoundError si no existe)
+   *   3. Si count=1: llamar GatewayService.activateChannel()
+   *   4a. Éxito → status='active', lastStartedAt=now
+   *   4b. Fallo → status='error', isActive=false, errorMessage
+   *
+   * @throws ChannelNotFoundError si el canal no existe
+   * @throws ChannelAlreadyInStateError si ya está 'active' o 'starting'
+   * @throws InvalidTransitionError si está en 'stopping'
+   * @throws WebhookRegistrationError si el gateway falla al activar
    */
   async start(channelConfigId: string): Promise<ChannelStatusDto> {
-    const channel = await this.loadOrThrow(channelConfigId)
+    // Atomic claim: sólo transiciona a 'starting' si el status actual lo permite
+    const claim = await this.db.channelConfig.updateMany({
+      where: {
+        id:     channelConfigId,
+        status: { in: START_ALLOWED_STATUSES },
+      },
+      data: { status: 'starting', isActive: true, errorMessage: null },
+    })
 
-    if (channel.status === 'active') {
-      throw new ChannelAlreadyInStateError(channelConfigId, 'active')
+    if (claim.count === 0) {
+      // No se pudo reclamar — diagnosticar por qué
+      const channel = await this.db.channelConfig.findUnique({
+        where: { id: channelConfigId },
+      })
+      if (!channel) throw new ChannelNotFoundError(channelConfigId)
+      if (channel.status === 'active' || channel.status === 'starting') {
+        throw new ChannelAlreadyInStateError(channelConfigId, channel.status)
+      }
+      // stopping u otro estado no permitido
+      throw new InvalidTransitionError(channelConfigId, channel.status, 'starting')
     }
 
-    this.assertTransition(channel.status as ChannelStatus, 'starting', channelConfigId)
-
-    // Marcar como 'starting'
-    await this.db.channelConfig.update({
-      where: { id: channelConfigId },
-      data:  { status: 'starting', isActive: true, errorMessage: null },
-    })
     this.resolver.invalidateCache(channelConfigId)
 
     try {
-      // Delegar al GatewayService la activación real del canal (stub-safe)
       await this.callGatewayActivate(channelConfigId)
 
-      // Marcar como 'active'
       const updated = await this.db.channelConfig.update({
         where: { id: channelConfigId },
         data:  { status: 'active', lastStartedAt: new Date() },
@@ -145,28 +163,39 @@ export class ChannelLifecycleService {
 
   /**
    * Detiene un canal en estado 'active'.
-   * Flujo:
-   *   1. Validar transición → 'stopping'
-   *   2. Persistir status='stopping', isActive=false
-   *   3. Llamar GatewayService.deactivateChannel() (con stub de seguridad)
-   *   4a. Éxito → persistir status='stopped', lastStoppedAt=now
-   *   4b. Fallo → persistir status='error', errorMessage
    *
-   * @throws InvalidTransitionError si el canal no está en estado 'active'
+   * Flujo (atomic claim pattern — simétrico a start()):
+   *   1. Intentar updateMany con WHERE id=X AND status IN ('active')
+   *      → status='stopping', isActive=false
+   *   2. Si count=0: leer estado actual para lanzar error apropiado
+   *   3. Si count=1: llamar GatewayService.deactivateChannel()
+   *   4a. Éxito → status='stopped', lastStoppedAt=now
+   *   4b. Fallo → status='error', errorMessage
+   *
+   * @throws ChannelNotFoundError si el canal no existe
+   * @throws ChannelAlreadyInStateError si ya está 'stopped' o 'stopping'
+   * @throws InvalidTransitionError si el estado no permite detener
    */
   async stop(channelConfigId: string): Promise<ChannelStatusDto> {
-    const channel = await this.loadOrThrow(channelConfigId)
+    const claim = await this.db.channelConfig.updateMany({
+      where: {
+        id:     channelConfigId,
+        status: { in: STOP_ALLOWED_STATUSES },
+      },
+      data: { status: 'stopping', isActive: false, errorMessage: null },
+    })
 
-    if (channel.status === 'stopped') {
-      throw new ChannelAlreadyInStateError(channelConfigId, 'stopped')
+    if (claim.count === 0) {
+      const channel = await this.db.channelConfig.findUnique({
+        where: { id: channelConfigId },
+      })
+      if (!channel) throw new ChannelNotFoundError(channelConfigId)
+      if (channel.status === 'stopped' || channel.status === 'stopping') {
+        throw new ChannelAlreadyInStateError(channelConfigId, channel.status)
+      }
+      throw new InvalidTransitionError(channelConfigId, channel.status, 'stopping')
     }
 
-    this.assertTransition(channel.status as ChannelStatus, 'stopping', channelConfigId)
-
-    await this.db.channelConfig.update({
-      where: { id: channelConfigId },
-      data:  { status: 'stopping', isActive: false, errorMessage: null },
-    })
     this.resolver.invalidateCache(channelConfigId)
 
     try {
@@ -251,30 +280,38 @@ export class ChannelLifecycleService {
   }
 
   // ────────────────────────────────────────────────────────────────────
-  // STUBS DE GATEWAY (safe delegation)
+  // GATEWAY DELEGATION — falla rápido si los métodos no están presentes
   // ────────────────────────────────────────────────────────────────────
 
   /**
-   * Llama gateway.activateChannel() si el método existe.
-   * Si aún no está implementado en GatewayService, actúa como no-op
-   * para que el build no rompa.
+   * Delega activación al GatewayService.
+   * Lanza un error descriptivo si activateChannel no está implementado,
+   * en lugar de silenciosamente retornar éxito (lo que permitiría persistir
+   * status='active' sin que el gateway haya activado nada real).
    */
   private async callGatewayActivate(id: string): Promise<void> {
-    if (typeof (this.gateway as any).activateChannel === 'function') {
-      await (this.gateway as any).activateChannel(id)
+    if (typeof (this.gateway as any).activateChannel !== 'function') {
+      throw new Error(
+        `[ChannelLifecycle] GatewayService is missing activateChannel() — ` +
+        `cannot activate channel "${id}". Implement GatewayService.activateChannel().`
+      )
     }
-    // else: no-op hasta que GatewayService implemente el método
+    await (this.gateway as any).activateChannel(id)
   }
 
   /**
-   * Llama gateway.deactivateChannel() si el método existe.
-   * Si aún no está implementado en GatewayService, actúa como no-op.
+   * Delega desactivación al GatewayService.
+   * Lanza un error descriptivo si deactivateChannel no está implementado,
+   * en lugar de silenciosamente retornar éxito.
    */
   private async callGatewayDeactivate(id: string): Promise<void> {
-    if (typeof (this.gateway as any).deactivateChannel === 'function') {
-      await (this.gateway as any).deactivateChannel(id)
+    if (typeof (this.gateway as any).deactivateChannel !== 'function') {
+      throw new Error(
+        `[ChannelLifecycle] GatewayService is missing deactivateChannel() — ` +
+        `cannot deactivate channel "${id}". Implement GatewayService.deactivateChannel().`
+      )
     }
-    // else: no-op hasta que GatewayService implemente el método
+    await (this.gateway as any).deactivateChannel(id)
   }
 
   // ────────────────────────────────────────────────────────────────────

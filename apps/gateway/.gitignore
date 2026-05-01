@@ -1,0 +1,22 @@
+# Build output
+dist/
+
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# WhatsApp Baileys session files (F3a-21)
+# Auth state is sensitive — never commit to VCS
+data/wa-sessions/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
