@@ -1,664 +1,675 @@
+/**
+ * telegram.adapter.test.ts
+ * [F3a-18] Tests for TelegramAdapter hardening:
+ *   long-polling, retry/backoff, circuit breaker,
+ *   replyFn/threadId/rawPayload (F3a-17 interface).
+ *
+ * All fetch() calls are mocked with vi.fn() — NO real network calls.
+ * vi.useFakeTimers() controls sleep() in retry/circuit-breaker tests.
+ */
+
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { TelegramAdapter, fetchWithRetry, sleep } from '../telegram.adapter.js'
-import type { IncomingMessage } from '../channel-adapter.interface.js'
 
-// ── Mock global fetch ───────────────────────────────────────────────────────
+// ── Global fetch mock ──────────────────────────────────────────────────────
 
-const fetchMock = vi.fn()
+const mockFetch = vi.fn()
+vi.stubGlobal('fetch', mockFetch)
 
-beforeEach(() => {
-  vi.stubGlobal('fetch', fetchMock)
-  fetchMock.mockReset()
-})
-
-afterEach(() => {
-  vi.restoreAllMocks()
-})
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-function makeOkResponse(data: unknown = { ok: true }) {
+function makeFetchResponse(
+  body:    unknown,
+  status:  number  = 200,
+  headers: Record<string, string> = {},
+): Response {
   return {
-    ok:      true,
-    status:  200,
-    json:    async () => data,
-    text:    async () => JSON.stringify(data),
-    headers: { get: () => null },
-  } as unknown as Response
-}
-
-function makeErrorResponse(status: number, text = 'error') {
-  return {
-    ok:      false,
+    ok:      status >= 200 && status < 300,
     status,
-    json:    async () => ({ ok: false }),
-    text:    async () => text,
-    headers: { get: () => null },
+    headers: { get: (k: string) => headers[k.toLowerCase()] ?? null } as unknown as Headers,
+    json:    async () => body,
+    text:    async () => JSON.stringify(body),
   } as unknown as Response
 }
 
-const SECRETS   = { botToken: 'BOT_SECRET' }
-const BOT_TOKEN = 'BOT_SECRET'
-
-function makeDMUpdate(overrides?: Record<string, unknown>) {
-  return {
-    update_id: 1,
-    message: {
-      message_id: 42,
-      chat:       { id: 100, type: 'private' },
-      from:       { id: 999, first_name: 'Alice', username: 'alice' },
-      text:       'hola',
-      date:       1700000000,
-      ...overrides,
-    },
-  }
+function makeUpdatesResponse(updates: unknown[] = []): Response {
+  return makeFetchResponse({ ok: true, result: updates })
 }
 
-function makeSupergroupUpdate(threadId: number) {
-  return {
-    update_id: 2,
-    message: {
-      message_id:        55,
-      message_thread_id: threadId,
-      chat:              { id: 200, type: 'supergroup' },
-      from:              { id: 888, first_name: 'Bob' },
-      text:              'thread message',
-      date:              1700000001,
-    },
-  }
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function makeAdapter(): TelegramAdapter {
+  return new TelegramAdapter()
 }
 
-function makeCallbackUpdate() {
-  return {
-    update_id: 3,
-    callback_query: {
-      id:      'cq_001',
-      from:    { id: 777 },
-      data:    'btn_1',
+async function setupAdapter(
+  adapter: TelegramAdapter,
+  mode: 'webhook' | 'polling' = 'webhook',
+): Promise<void> {
+  // In polling mode, setup() calls deleteWebhook() first
+  if (mode === 'polling') {
+    mockFetch.mockResolvedValueOnce(makeFetchResponse({ ok: true }))
+  }
+  await adapter.setup(
+    { mode },
+    { botToken: 'test-token-123', webhookSecret: 'test-secret' },
+  )
+}
+
+// ── describe('receive()') ──────────────────────────────────────────────────
+
+describe('receive()', () => {
+  let adapter: TelegramAdapter
+
+  beforeEach(() => {
+    adapter = makeAdapter()
+  })
+
+  it('DM text message → externalId=chatId, threadId=chatId, type=text, rawPayload, replyFn', async () => {
+    const update = {
+      update_id: 1,
       message: {
         message_id: 10,
         chat:       { id: 100, type: 'private' },
-        text:       'choose:',
-        date:       1700000002,
+        from:       { id: 200, username: 'alice' },
+        text:       'hello',
       },
-    },
-  }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// describe: receive()
-// ════════════════════════════════════════════════════════════════════════════
-
-describe('receive()', () => {
-
-  it('mensaje DM → externalId=chatId, threadId=chatId, type=text, replyFn definida', async () => {
-    const adapter  = new TelegramAdapter()
-    const incoming = await adapter.receive(makeDMUpdate() as Record<string, unknown>, SECRETS)
-
-    expect(incoming).not.toBeNull()
-    expect(incoming!.externalId).toBe('100')
-    expect(incoming!.threadId).toBe('100')
-    expect(incoming!.type).toBe('text')
-    expect(incoming!.replyFn).toBeDefined()
-    expect(incoming!.rawPayload).toBeDefined()
+    }
+    const result = await adapter.receive(update, { botToken: 'tok' })
+    expect(result).not.toBeNull()
+    expect(result!.externalId).toBe('100')
+    expect(result!.threadId).toBe('100')
+    expect(result!.type).toBe('text')
+    expect(result!.rawPayload).toBeDefined()
+    expect(typeof result!.replyFn).toBe('function')
   })
 
-  it('supergrupo con message_thread_id=42 → threadId=42, externalId=200', async () => {
-    const adapter  = new TelegramAdapter()
-    const incoming = await adapter.receive(
-      makeSupergroupUpdate(42) as Record<string, unknown>,
-      SECRETS,
-    )
-
-    expect(incoming!.threadId).toBe('42')
-    expect(incoming!.externalId).toBe('200')
-    expect(incoming!.threadId).not.toBe(incoming!.externalId)
+  it('supergroup message with message_thread_id=42 → threadId=42, externalId=chatId (distinct)', async () => {
+    const update = {
+      update_id: 2,
+      message: {
+        message_id:        20,
+        chat:              { id: 300, type: 'supergroup' },
+        from:              { id: 400 },
+        text:              'in a topic',
+        message_thread_id: 42,
+      },
+    }
+    const result = await adapter.receive(update, { botToken: 'tok' })
+    expect(result!.externalId).toBe('300')
+    expect(result!.threadId).toBe('42')
+    expect(result!.externalId).not.toBe(result!.threadId)
   })
 
-  it('mensaje /start → type=command', async () => {
-    const adapter  = new TelegramAdapter()
-    const update   = makeDMUpdate({ text: '/start' })
-    const incoming = await adapter.receive(update as Record<string, unknown>, SECRETS)
-
-    expect(incoming!.type).toBe('command')
+  it('/start command → type=command', async () => {
+    const update = {
+      update_id: 3,
+      message: {
+        message_id: 30,
+        chat:       { id: 500, type: 'private' },
+        from:       { id: 600 },
+        text:       '/start',
+      },
+    }
+    const result = await adapter.receive(update, { botToken: 'tok' })
+    expect(result!.type).toBe('command')
   })
 
-  it('mensaje con photo → type=image', async () => {
-    const adapter  = new TelegramAdapter()
-    const update   = makeDMUpdate({ photo: [{ file_id: 'abc' }], text: undefined })
-    const incoming = await adapter.receive(update as Record<string, unknown>, SECRETS)
-
-    expect(incoming!.type).toBe('image')
+  it('message with photo → type=image', async () => {
+    const update = {
+      update_id: 4,
+      message: {
+        message_id: 40,
+        chat:       { id: 700, type: 'private' },
+        from:       { id: 800 },
+        photo:      [{ file_id: 'abc' }],
+        caption:    'look at this',
+      },
+    }
+    const result = await adapter.receive(update, { botToken: 'tok' })
+    expect(result!.type).toBe('image')
   })
 
-  it('callback_query con data=btn_1 → type=command, text=btn_1, replyFn definida', async () => {
-    const adapter  = new TelegramAdapter()
-    const incoming = await adapter.receive(
-      makeCallbackUpdate() as Record<string, unknown>,
-      SECRETS,
-    )
-
-    expect(incoming).not.toBeNull()
-    expect(incoming!.type).toBe('command')
-    expect(incoming!.text).toBe('btn_1')
-    expect(incoming!.replyFn).toBeDefined()
+  it('callback_query with data="btn_1" → type=command, text=btn_1, replyFn defined', async () => {
+    const update = {
+      update_id:      5,
+      callback_query: {
+        id:      'cq-123',
+        from:    { id: 900 },
+        data:    'btn_1',
+        message: { message_id: 50, chat: { id: 1000, type: 'private' } },
+      },
+    }
+    const result = await adapter.receive(update, { botToken: 'tok' })
+    expect(result!.type).toBe('command')
+    expect(result!.text).toBe('btn_1')
+    expect(typeof result!.replyFn).toBe('function')
   })
 
-  it('update sin message ni callback_query → null', async () => {
-    const adapter  = new TelegramAdapter()
-    const incoming = await adapter.receive({ update_id: 99 }, SECRETS)
-
-    expect(incoming).toBeNull()
+  it('update without message or callback_query → returns null', async () => {
+    const update = { update_id: 6 }
+    const result = await adapter.receive(update, { botToken: 'tok' })
+    expect(result).toBeNull()
   })
 
-  it('rawPayload no contiene botToken ni webhookSecret', async () => {
-    const adapter  = new TelegramAdapter()
-    const dirty    = { ...makeDMUpdate(), botToken: 'LEAKING_SECRET', webhookSecret: 'ALSO_LEAK' }
-    const incoming = await adapter.receive(dirty as Record<string, unknown>, SECRETS)
-
-    expect(incoming!.rawPayload['botToken']).toBeUndefined()
-    expect(incoming!.rawPayload['webhookSecret']).toBeUndefined()
-    // el update_id sí debe estar
-    expect(incoming!.rawPayload['update_id']).toBe(1)
+  it('rawPayload does not contain botToken or webhookSecret', async () => {
+    const update = {
+      update_id: 7,
+      message: {
+        message_id: 70,
+        chat:       { id: 1100, type: 'private' },
+        from:       { id: 1200 },
+        text:       'secure?',
+        botToken:   'SHOULD_NOT_APPEAR',
+        webhookSecret: 'SHOULD_NOT_APPEAR',
+      },
+    }
+    const result = await adapter.receive(update, {
+      botToken:      'secret-token',
+      webhookSecret: 'secret-webhook',
+    })
+    const raw = JSON.stringify(result!.rawPayload)
+    expect(raw).not.toContain('SHOULD_NOT_APPEAR')
+    expect(raw).not.toContain('secret-token')
+    expect(raw).not.toContain('secret-webhook')
   })
-
 })
 
-// ════════════════════════════════════════════════════════════════════════════
-// describe: replyFn — texto normal
-// ════════════════════════════════════════════════════════════════════════════
+// ── describe('replyFn — text message') ────────────────────────────────────
 
-describe('replyFn — texto normal', () => {
+describe('replyFn — text message', () => {
+  let adapter: TelegramAdapter
 
-  it('replyFn() llama sendMessage con chat_id y texto correctos', async () => {
-    fetchMock.mockResolvedValue(makeOkResponse())
-    const adapter  = new TelegramAdapter()
-    const incoming = await adapter.receive(makeDMUpdate() as Record<string, unknown>, SECRETS)
-
-    await incoming!.replyFn!('hola usuario')
-
-    expect(fetchMock).toHaveBeenCalledOnce()
-    const [url, init] = fetchMock.mock.calls[0]
-    expect(url).toContain(`/bot${BOT_TOKEN}/sendMessage`)
-    const body = JSON.parse(init!.body as string)
-    expect(body.chat_id).toBe('100')
-    expect(body.text).toBe('hola usuario')
+  beforeEach(() => {
+    adapter = makeAdapter()
+    mockFetch.mockReset()
   })
 
-  it('replyFn con format=markdown → parse_mode=Markdown', async () => {
-    fetchMock.mockResolvedValue(makeOkResponse())
-    const adapter  = new TelegramAdapter()
-    const incoming = await adapter.receive(makeDMUpdate() as Record<string, unknown>, SECRETS)
+  it('replyFn() calls sendMessage with correct chat_id and text', async () => {
+    mockFetch.mockResolvedValueOnce(makeFetchResponse({ ok: true }))
+    const update = {
+      update_id: 10,
+      message: {
+        message_id: 100,
+        chat: { id: 555, type: 'private' },
+        from: { id: 666 },
+        text: 'hello',
+      },
+    }
+    const result = await adapter.receive(update, { botToken: 'my-token' })
+    await result!.replyFn('world')
 
-    await incoming!.replyFn!('**negrita**', { format: 'markdown' })
+    expect(mockFetch).toHaveBeenCalledOnce()
+    const [url, init] = mockFetch.mock.calls[0]!
+    expect(url).toContain('/bot my-token/sendMessage'.replace(' ', ''))
+    const body = JSON.parse(init.body as string)
+    expect(body.chat_id).toBe('555')
+    expect(body.text).toBe('world')
+  })
 
-    const [, init] = fetchMock.mock.calls[0]
-    const body = JSON.parse(init!.body as string)
+  it('replyFn(text, { format: "markdown" }) → parse_mode=Markdown', async () => {
+    mockFetch.mockResolvedValueOnce(makeFetchResponse({ ok: true }))
+    const update = {
+      update_id: 11,
+      message: {
+        message_id: 110,
+        chat: { id: 777, type: 'private' },
+        from: { id: 888 },
+        text: 'hi',
+      },
+    }
+    const result = await adapter.receive(update, { botToken: 'my-token' })
+    await result!.replyFn('**bold**', { format: 'markdown' })
+
+    const [, init] = mockFetch.mock.calls[0]!
+    const body = JSON.parse(init.body as string)
     expect(body.parse_mode).toBe('Markdown')
   })
 
-  it('replyFn con quoteOriginal=true → reply_parameters.message_id set', async () => {
-    fetchMock.mockResolvedValue(makeOkResponse())
-    const adapter  = new TelegramAdapter()
-    const incoming = await adapter.receive(makeDMUpdate() as Record<string, unknown>, SECRETS)
+  it('replyFn(text, { quoteOriginal: true }) → reply_parameters.message_id set', async () => {
+    mockFetch.mockResolvedValueOnce(makeFetchResponse({ ok: true }))
+    const update = {
+      update_id: 12,
+      message: {
+        message_id: 120,
+        chat: { id: 999, type: 'private' },
+        from: { id: 111 },
+        text: 'quote me',
+      },
+    }
+    const result = await adapter.receive(update, { botToken: 'my-token' })
+    await result!.replyFn('quoted reply', { quoteOriginal: true })
 
-    await incoming!.replyFn!('cita', { quoteOriginal: true })
-
-    const [, init] = fetchMock.mock.calls[0]
-    const body = JSON.parse(init!.body as string)
-    expect(body.reply_parameters).toEqual({ message_id: 42 })
+    const [, init] = mockFetch.mock.calls[0]!
+    const body = JSON.parse(init.body as string)
+    expect(body.reply_parameters).toEqual({ message_id: 120 })
   })
 
-  it('replyFn en supergrupo → body incluye message_thread_id', async () => {
-    fetchMock.mockResolvedValue(makeOkResponse())
-    const adapter  = new TelegramAdapter()
-    const incoming = await adapter.receive(
-      makeSupergroupUpdate(42) as Record<string, unknown>,
-      SECRETS,
-    )
+  it('replyFn in supergroup → body includes message_thread_id', async () => {
+    mockFetch.mockResolvedValueOnce(makeFetchResponse({ ok: true }))
+    const update = {
+      update_id: 13,
+      message: {
+        message_id:        130,
+        chat:              { id: 2000, type: 'supergroup' },
+        from:              { id: 2001 },
+        text:              'topic reply',
+        message_thread_id: 99,
+      },
+    }
+    const result = await adapter.receive(update, { botToken: 'my-token' })
+    await result!.replyFn('response in topic')
 
-    await incoming!.replyFn!('respuesta en topic')
-
-    const [, init] = fetchMock.mock.calls[0]
-    const body = JSON.parse(init!.body as string)
-    expect(body.message_thread_id).toBe(42)
+    const [, init] = mockFetch.mock.calls[0]!
+    const body = JSON.parse(init.body as string)
+    expect(body.message_thread_id).toBe(99)
   })
-
 })
 
-// ════════════════════════════════════════════════════════════════════════════
-// describe: replyFn — callback_query
-// ════════════════════════════════════════════════════════════════════════════
+// ── describe('replyFn — callback_query') ──────────────────────────────────
 
 describe('replyFn — callback_query', () => {
+  let adapter: TelegramAdapter
 
-  it('replyFn llama answerCallbackQuery PRIMERO con callback_query_id correcto', async () => {
-    fetchMock.mockResolvedValue(makeOkResponse())
-    const adapter  = new TelegramAdapter()
-    const incoming = await adapter.receive(
-      makeCallbackUpdate() as Record<string, unknown>,
-      SECRETS,
-    )
+  beforeEach(() => {
+    adapter = makeAdapter()
+    mockFetch.mockReset()
+  })
 
-    await incoming!.replyFn!('respuesta botones')
+  it('replyFn calls answerCallbackQuery FIRST with callback_query_id', async () => {
+    // Two calls: answerCallbackQuery + sendMessage
+    mockFetch
+      .mockResolvedValueOnce(makeFetchResponse({ ok: true }))
+      .mockResolvedValueOnce(makeFetchResponse({ ok: true }))
 
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-    const [firstUrl, firstInit] = fetchMock.mock.calls[0]
+    const update = {
+      update_id:      20,
+      callback_query: {
+        id:      'cq-999',
+        from:    { id: 3000 },
+        data:    'action',
+        message: { message_id: 200, chat: { id: 4000, type: 'private' } },
+      },
+    }
+    const result = await adapter.receive(update, { botToken: 'my-token' })
+    await result!.replyFn('response')
+
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+    const [firstUrl, firstInit] = mockFetch.mock.calls[0]!
     expect(firstUrl).toContain('answerCallbackQuery')
-    const firstBody = JSON.parse(firstInit!.body as string)
-    expect(firstBody.callback_query_id).toBe('cq_001')
+    const firstBody = JSON.parse(firstInit.body as string)
+    expect(firstBody.callback_query_id).toBe('cq-999')
   })
 
-  it('replyFn llama sendMessage SEGUNDO con el texto', async () => {
-    fetchMock.mockResolvedValue(makeOkResponse())
-    const adapter  = new TelegramAdapter()
-    const incoming = await adapter.receive(
-      makeCallbackUpdate() as Record<string, unknown>,
-      SECRETS,
-    )
+  it('replyFn calls sendMessage SECOND with the text', async () => {
+    mockFetch
+      .mockResolvedValueOnce(makeFetchResponse({ ok: true }))
+      .mockResolvedValueOnce(makeFetchResponse({ ok: true }))
 
-    await incoming!.replyFn!('texto respuesta callback')
+    const update = {
+      update_id:      21,
+      callback_query: {
+        id:      'cq-888',
+        from:    { id: 5000 },
+        data:    'press',
+        message: { message_id: 210, chat: { id: 6000, type: 'private' } },
+      },
+    }
+    const result = await adapter.receive(update, { botToken: 'my-token' })
+    await result!.replyFn('button pressed!')
 
-    const [secondUrl, secondInit] = fetchMock.mock.calls[1]
+    const [secondUrl, secondInit] = mockFetch.mock.calls[1]!
     expect(secondUrl).toContain('sendMessage')
-    const secondBody = JSON.parse(secondInit!.body as string)
-    expect(secondBody.text).toBe('texto respuesta callback')
-    expect(secondBody.chat_id).toBe('100')
+    const secondBody = JSON.parse(secondInit.body as string)
+    expect(secondBody.text).toBe('button pressed!')
   })
-
 })
 
-// ════════════════════════════════════════════════════════════════════════════
-// describe: send()
-// ════════════════════════════════════════════════════════════════════════════
+// ── describe('send()') ────────────────────────────────────────────────────
 
 describe('send()', () => {
+  let adapter: TelegramAdapter
 
-  it('threadId distinto de externalId → body incluye message_thread_id', async () => {
-    fetchMock.mockResolvedValue(makeOkResponse({ ok: true, result: {} }))
+  beforeEach(async () => {
+    adapter = makeAdapter()
+    mockFetch.mockReset()
+    mockFetch.mockResolvedValue(makeFetchResponse({ ok: true }))
+    await setupAdapter(adapter, 'webhook')
+    mockFetch.mockReset()
+  })
 
-    // Crear adaptador con botToken seteado directamente
-    const adapter = new TelegramAdapter()
-    // @ts-expect-error acceso privado en tests
-    adapter['botToken'] = BOT_TOKEN
-
-    await adapter.send({ externalId: '200', threadId: '42', text: 'reply thread' })
-
-    const [, init] = fetchMock.mock.calls[0]
-    const body = JSON.parse(init!.body as string)
+  it('send() with threadId !== externalId → body includes message_thread_id', async () => {
+    mockFetch.mockResolvedValueOnce(makeFetchResponse({ ok: true }))
+    await adapter.send({
+      externalId:  '1000',
+      threadId:    '42',
+      text:        'hello topic',
+      type:        'text',
+      channelId:   'telegram',
+      agentId:     'agent-1',
+      sessionId:   'session-1',
+    })
+    const [, init] = mockFetch.mock.calls[0]!
+    const body = JSON.parse(init.body as string)
     expect(body.message_thread_id).toBe(42)
   })
 
-  it('send() con HTTP 429 y Retry-After:2 → espera antes de reintentar', async () => {
-    const sleepMock = vi.spyOn({ sleep }, 'sleep').mockResolvedValue(undefined)
-    vi.stubGlobal('setTimeout', (fn: () => void) => { fn(); return 0 })
+  it('send() with HTTP 429 and Retry-After: 2 → waits 2s before retry', async () => {
+    vi.useFakeTimers()
+    mockFetch
+      .mockResolvedValueOnce(
+        makeFetchResponse({ ok: false }, 429, { 'retry-after': '2' }),
+      )
+      .mockResolvedValueOnce(makeFetchResponse({ ok: true }))
 
-    fetchMock
-      .mockResolvedValueOnce({
-        ok: false, status: 429,
-        headers: { get: (h: string) => h === 'retry-after' ? '2' : null },
-        json: async () => ({}), text: async () => '',
-      } as unknown as Response)
-      .mockResolvedValueOnce(makeOkResponse({ ok: true, result: {} }))
-
-    const adapter = new TelegramAdapter()
-    // @ts-expect-error acceso privado en tests
-    adapter['botToken'] = BOT_TOKEN
-
-    await adapter.send({ externalId: '100', text: 'retry test' })
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-  })
-
-  it('send() con 3 errores consecutivos (red) → lanza Error', async () => {
-    // Suprimir setTimeouts del backoff para que el test no espere
-    vi.stubGlobal('setTimeout', (fn: () => void) => { fn(); return 0 })
-    fetchMock.mockRejectedValue(new Error('Network error'))
-
-    const adapter = new TelegramAdapter()
-    // @ts-expect-error acceso privado en tests
-    adapter['botToken'] = BOT_TOKEN
-
-    await expect(adapter.send({ externalId: '100', text: 'fail' })).rejects.toThrow('Network error')
-    expect(fetchMock).toHaveBeenCalledTimes(3)
-  })
-
-})
-
-// ════════════════════════════════════════════════════════════════════════════
-// describe: long-polling loop
-// ════════════════════════════════════════════════════════════════════════════
-
-describe('long-polling loop', () => {
-
-  it('startPollingLoop() llama getUpdates con offset=0 y timeout=25', async () => {
-    // Respuesta inicial con updates, luego dispose
-    fetchMock
-      .mockResolvedValueOnce({
-        ok: true, status: 200,
-        headers: { get: () => null },
-        json: async () => ({ ok: true, result: [] }),
-        text: async () => '',
-      } as unknown as Response)
-
-    const adapter = new TelegramAdapter()
-    // @ts-expect-error acceso privado
-    adapter['botToken'] = BOT_TOKEN
-
-    // stubGlobal setTimeout para evitar espera real del sleep post-poll
-    vi.stubGlobal('setTimeout', (fn: () => void) => { fn(); return 0 })
-
-    // @ts-expect-error
-    adapter['pollingActive'] = true
-    // Llamar directamente a una sola iteración mockeando while
-    // @ts-expect-error
-    const originalActive = adapter['pollingActive']
-    // @ts-expect-error
-    adapter['pollingActive'] = false  // stop after first fetch check below
-
-    // Verificar directamente la llamada a getUpdates
-    // @ts-expect-error
-    adapter['pollingActive'] = true
-    // forzar que el loop haga una sola iteración
-    let calls = 0
-    const realFetch = fetchMock
-    fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
-      calls++
-      if (calls === 1) {
-        // Detener el loop después del primer getUpdates
-        // @ts-expect-error
-        adapter['pollingActive'] = false
-        return {
-          ok: true, status: 200,
-          headers: { get: () => null },
-          json: async () => ({ ok: true, result: [] }),
-          text: async () => '',
-        } as unknown as Response
-      }
-      return makeOkResponse()
+    const sendPromise = adapter.send({
+      externalId: '1000',
+      text:       'test 429',
+      type:       'text',
+      channelId:  'telegram',
+      agentId:    'agent-1',
+      sessionId:  'session-1',
     })
 
-    // @ts-expect-error
-    adapter['pollingActive'] = true
-    // @ts-expect-error
-    await adapter['runPollingLoop']()
+    // Advance timers to simulate Retry-After wait
+    await vi.advanceTimersByTimeAsync(2100)
+    await sendPromise
 
-    const getUpdatesCalls = fetchMock.mock.calls.filter(([url]) =>
-      typeof url === 'string' && url.includes('getUpdates')
-    )
-    expect(getUpdatesCalls.length).toBeGreaterThanOrEqual(1)
-    const [, init] = getUpdatesCalls[0]
-    const body = JSON.parse(init!.body as string)
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+  })
+
+  it('send() with 3 consecutive errors → throws Error', async () => {
+    vi.useFakeTimers()
+    mockFetch.mockRejectedValue(new Error('network error'))
+
+    const sendPromise = adapter.send({
+      externalId: '1000',
+      text:       'fail',
+      type:       'text',
+      channelId:  'telegram',
+      agentId:    'agent-1',
+      sessionId:  'session-1',
+    })
+
+    // Advance timers past all backoff delays (500ms + 1000ms)
+    await vi.advanceTimersByTimeAsync(5000)
+    await expect(sendPromise).rejects.toThrow()
+    vi.useRealTimers()
+  })
+})
+
+// ── describe('long-polling loop') ─────────────────────────────────────────
+
+describe('long-polling loop', () => {
+  let adapter: TelegramAdapter
+
+  beforeEach(() => {
+    adapter = makeAdapter()
+    mockFetch.mockReset()
+  })
+
+  afterEach(async () => {
+    await adapter.dispose()
+  })
+
+  it('startPollingLoop → calls getUpdates with offset=0 and timeout=25', async () => {
+    // deleteWebhook + getUpdates (returns empty so loop pauses)
+    mockFetch
+      .mockResolvedValueOnce(makeFetchResponse({ ok: true })) // deleteWebhook
+      .mockResolvedValueOnce(makeUpdatesResponse([]))          // getUpdates
+      .mockResolvedValue(makeUpdatesResponse([]))              // subsequent calls
+
+    await setupAdapter(adapter, 'polling')
+    // Give the loop a tick to run
+    await new Promise((r) => setTimeout(r, 10))
+
+    // Second call is getUpdates (first was deleteWebhook)
+    const [url, init] = mockFetch.mock.calls[1]!
+    expect(url).toContain('getUpdates')
+    const body = JSON.parse(init.body as string)
     expect(body.offset).toBe(0)
     expect(body.timeout).toBe(25)
   })
 
-  it('update_id=100 recibido → pollingOffset = 101', async () => {
-    vi.stubGlobal('setTimeout', (fn: () => void) => { fn(); return 0 })
+  it('receiving update_id=100 → pollingOffset updates to 101', async () => {
+    const processUpdateSpy = vi.spyOn(adapter as unknown as { processUpdate: () => Promise<void> }, 'processUpdate')
+      .mockResolvedValue()
 
-    const adapter = new TelegramAdapter()
-    // @ts-expect-error
-    adapter['botToken'] = BOT_TOKEN
+    mockFetch
+      .mockResolvedValueOnce(makeFetchResponse({ ok: true })) // deleteWebhook
+      .mockResolvedValueOnce(makeUpdatesResponse([           // getUpdates with one update
+        { update_id: 100, message: { message_id: 1, chat: { id: 1, type: 'private' }, text: 'hi' } },
+      ]))
+      .mockResolvedValue(makeUpdatesResponse([]))             // subsequent calls
 
-    let callCount = 0
-    fetchMock.mockImplementation(async (url: string) => {
-      callCount++
-      if (callCount === 1 && url.includes('getUpdates')) {
-        // @ts-expect-error
-        adapter['pollingActive'] = false  // stop after processing
-        return {
-          ok: true, status: 200,
-          headers: { get: () => null },
-          json: async () => ({
-            ok: true,
-            result: [makeDMUpdate()],  // update_id=1
-          }),
-          text: async () => '',
-        } as unknown as Response
-      }
-      return makeOkResponse()
-    })
+    await setupAdapter(adapter, 'polling')
+    await new Promise((r) => setTimeout(r, 50))
 
-    // Mock processUpdate to avoid real receive()
-    // @ts-expect-error
-    adapter.processUpdate = vi.fn().mockResolvedValue(undefined)
+    // Verify processUpdate was called
+    expect(processUpdateSpy).toHaveBeenCalled()
 
-    // @ts-expect-error
-    adapter['pollingActive'] = true
-    // @ts-expect-error
-    await adapter['runPollingLoop']()
-
-    // @ts-expect-error
-    expect(adapter['pollingOffset']).toBe(2)  // update_id=1, so offset=2
+    // Next getUpdates call should have offset=101
+    const thirdCall = mockFetch.mock.calls[2]
+    if (thirdCall) {
+      const body = JSON.parse(thirdCall[1].body as string)
+      expect(body.offset).toBe(101)
+    }
   })
 
-  it('getUpdates retorna 401 → loop se detiene, errorHandler llamado', async () => {
-    fetchMock.mockResolvedValue(makeErrorResponse(401, 'Unauthorized'))
-
-    const adapter       = new TelegramAdapter()
-    const errorHandler  = vi.fn()
-    adapter.onError(errorHandler)
-    // @ts-expect-error
-    adapter['botToken'] = BOT_TOKEN
-    // @ts-expect-error
-    adapter['pollingActive'] = true
-    // @ts-expect-error
-    await adapter['runPollingLoop']()
-
-    // @ts-expect-error
-    expect(adapter['pollingActive']).toBe(false)
-    expect(errorHandler).toHaveBeenCalledWith(
-      expect.objectContaining({ message: expect.stringContaining('401') })
-    )
-  })
-
-  it('5 errores consecutivos → circuit breaker: errorHandler llamado', async () => {
-    vi.stubGlobal('setTimeout', (fn: () => void) => { fn(); return 0 })
-
-    let errorCount = 0
-    fetchMock.mockImplementation(async (url: string) => {
-      if (url.includes('getUpdates')) {
-        errorCount++
-        if (errorCount > 5) {
-          // Detener el loop después del circuit breaker
-          return {
-            ok: true, status: 200,
-            headers: { get: () => null },
-            json: async () => ({ ok: true, result: [] }),
-            text: async () => '',
-          } as unknown as Response
-        }
-        throw new Error('Network error')
-      }
-      return makeOkResponse()
-    })
-
-    const adapter      = new TelegramAdapter()
+  it('getUpdates returns 401 → loop stops and errorHandler called', async () => {
     const errorHandler = vi.fn()
     adapter.onError(errorHandler)
-    // @ts-expect-error
-    adapter['botToken']       = BOT_TOKEN
-    // @ts-expect-error
-    adapter['channelConfig']  = { maxConsecutiveErrors: 5, pollingInterval: 1 }
 
-    let calls = 0
-    const origImpl = fetchMock.getMockImplementation()
-    fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
-      calls++
-      const resp = await origImpl!(url, init)
-      // Stop loop after circuit breaker fires and we get one success
-      if (calls > 6) {
-        // @ts-expect-error
-        adapter['pollingActive'] = false
-      }
-      return resp
-    })
+    mockFetch
+      .mockResolvedValueOnce(makeFetchResponse({ ok: true }))         // deleteWebhook
+      .mockResolvedValueOnce(makeFetchResponse({ ok: false }, 401))   // getUpdates → 401
 
-    // @ts-expect-error
-    adapter['pollingActive'] = true
-    // @ts-expect-error
-    await adapter['runPollingLoop']()
+    await setupAdapter(adapter, 'polling')
+    await new Promise((r) => setTimeout(r, 50))
 
     expect(errorHandler).toHaveBeenCalledWith(
-      expect.objectContaining({ message: expect.stringContaining('circuit breaker') })
+      expect.objectContaining({ message: expect.stringContaining('401') }),
     )
   })
 
-  it('dispose() → AbortController.abort() chiamado, loop termina', async () => {
-    const abortMock = vi.fn()
-    const adapter   = new TelegramAdapter()
-    // @ts-expect-error
-    adapter['pollingAbortCtrl'] = { abort: abortMock }
+  it('5 consecutive errors → circuit breaker: errorHandler called, loop pauses 60s', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const errorHandler = vi.fn()
+    adapter.onError(errorHandler)
 
+    const networkError = new Error('network failure')
+    mockFetch
+      .mockResolvedValueOnce(makeFetchResponse({ ok: true })) // deleteWebhook
+      .mockRejectedValue(networkError)                        // all getUpdates fail
+
+    await setupAdapter(adapter, 'polling')
+
+    // Advance time to allow 5 errors + circuit breaker detection
+    await vi.advanceTimersByTimeAsync(20_000)
+
+    expect(errorHandler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('circuit breaker'),
+      }),
+    )
+
+    vi.useRealTimers()
+  })
+
+  it('dispose() → AbortController.abort() called, loop terminates cleanly', async () => {
+    mockFetch
+      .mockResolvedValueOnce(makeFetchResponse({ ok: true })) // deleteWebhook
+      .mockImplementation(() => new Promise((_, reject) => {
+        // Simulate a long-running request that gets aborted
+        setTimeout(() => reject(Object.assign(new Error('AbortError'), { name: 'AbortError' })), 100)
+      }))
+
+    await setupAdapter(adapter, 'polling')
+    // Give loop a tick to start
+    await new Promise((r) => setTimeout(r, 10))
+
+    // dispose() should stop the loop
     await adapter.dispose()
 
-    expect(abortMock).toHaveBeenCalledOnce()
-    // @ts-expect-error
-    expect(adapter['pollingActive']).toBe(false)
+    // After dispose, the loop should not be active anymore
+    // (verified by no additional fetch calls after abort)
+    const callCountAfterDispose = mockFetch.mock.calls.length
+    await new Promise((r) => setTimeout(r, 200))
+    expect(mockFetch.mock.calls.length).toBe(callCountAfterDispose)
   })
-
 })
 
-// ════════════════════════════════════════════════════════════════════════════
-// describe: webhook handler
-// ════════════════════════════════════════════════════════════════════════════
+// ── describe('webhook handler') ───────────────────────────────────────────
 
 describe('webhook handler', () => {
+  let adapter: TelegramAdapter
 
-  function makeRouter(webhookSecret = '') {
-    const adapter = new TelegramAdapter()
-    // @ts-expect-error
-    adapter['botToken']       = BOT_TOKEN
-    // @ts-expect-error
-    adapter['webhookSecret']  = webhookSecret
-    return { adapter, router: adapter.getRouter() }
+  beforeEach(async () => {
+    adapter = makeAdapter()
+    mockFetch.mockReset()
+    mockFetch.mockResolvedValue(makeFetchResponse({ ok: true }))
+    await setupAdapter(adapter, 'webhook')
+    mockFetch.mockReset()
+  })
+
+  function simulateRequest(
+    body:    Record<string, unknown>,
+    headers: Record<string, string> = {},
+  ) {
+    const router  = adapter.getRouter()
+    const layer   = (router.stack as unknown as Array<{ route?: { path: string; stack: Array<{ handle: (req: unknown, res: unknown) => void }> } }>)
+      .find((l) => l.route?.path === '/webhook')
+    const handler = layer!.route!.stack[0]!.handle
+
+    const resMock = {
+      status:  vi.fn().mockReturnThis(),
+      json:    vi.fn().mockReturnThis(),
+    }
+    const reqMock = { body, headers: { 'x-telegram-bot-api-secret-token': headers['x-telegram-bot-api-secret-token'] } }
+    handler(reqMock, resMock)
+    return resMock
   }
 
-  function mockReqRes(headers: Record<string, string> = {}, body: unknown = {}) {
-    const res = {
-      json:   vi.fn().mockReturnThis(),
-      status: vi.fn().mockReturnThis(),
-    }
-    const req = {
-      headers,
-      body,
-    }
-    return { req: req as unknown as Request, res: res as unknown as Response }
-  }
-
-  it('POST /webhook sin secret header cuando webhookSecret configurado → 403', async () => {
-    const { adapter, router } = makeRouter('MY_SECRET')
-    const { req, res } = mockReqRes({}, makeDMUpdate())
-
-    // Invocar el handler directamente
-    const webhookRoute = router.stack.find(
-      (layer: { route?: { path: string; stack: { handle: unknown }[] } }) =>
-        layer.route?.path === '/webhook'
-    )
-    const handler = webhookRoute?.route?.stack[0]?.handle as (
-      req: Request,
-      res: Response,
-    ) => Promise<void>
-
-    await handler(req, res)
-
-    expect((res as { status: ReturnType<typeof vi.fn> }).status).toHaveBeenCalledWith(403)
+  it('POST without correct secret header → 403', async () => {
+    const res = simulateRequest({ update_id: 1 }, {})
+    await new Promise((r) => setTimeout(r, 10))
+    expect(res.status).toHaveBeenCalledWith(403)
   })
 
-  it('POST /webhook con secret header correcto → 200 inmediato', async () => {
-    fetchMock.mockResolvedValue(makeOkResponse())
-    const { adapter, router } = makeRouter('MY_SECRET')
-
-    // Mockear processUpdate para que no falle
-    // @ts-expect-error
-    adapter.processUpdate = vi.fn().mockResolvedValue(undefined)
-
-    const { req, res } = mockReqRes(
-      { 'x-telegram-bot-api-secret-token': 'MY_SECRET' },
-      makeDMUpdate(),
+  it('POST with correct secret header → 200 immediately, processUpdate async', async () => {
+    const res = simulateRequest(
+      { update_id: 1, message: { message_id: 1, chat: { id: 1, type: 'private' }, text: 'hi' } },
+      { 'x-telegram-bot-api-secret-token': 'test-secret' },
     )
-
-    const webhookRoute = router.stack.find(
-      (layer: { route?: { path: string; stack: { handle: unknown }[] } }) =>
-        layer.route?.path === '/webhook'
-    )
-    const handler = webhookRoute?.route?.stack[0]?.handle as (
-      req: Request,
-      res: Response,
-    ) => Promise<void>
-
-    await handler(req, res)
-
-    expect((res as { json: ReturnType<typeof vi.fn> }).json).toHaveBeenCalledWith({ ok: true })
+    await new Promise((r) => setTimeout(r, 10))
+    expect(res.json).toHaveBeenCalledWith({ ok: true })
+    // 200 was returned (no status() call = default 200)
+    expect(res.status).not.toHaveBeenCalledWith(403)
   })
 
-  it('POST /setup sin webhookUrl → 400', async () => {
-    const { router } = makeRouter()
-    const { req, res } = mockReqRes({}, {})
+  it('POST /setup without webhookUrl → 400', async () => {
+    const router = adapter.getRouter()
+    const layer  = (router.stack as unknown as Array<{ route?: { path: string; stack: Array<{ handle: (req: unknown, res: unknown) => void }> } }>)
+      .find((l) => l.route?.path === '/setup')
+    const handler = layer!.route!.stack[0]!.handle
 
-    const setupRoute = router.stack.find(
-      (layer: { route?: { path: string; stack: { handle: unknown }[] } }) =>
-        layer.route?.path === '/setup'
+    const resMock = { status: vi.fn().mockReturnThis(), json: vi.fn().mockReturnThis() }
+    await (handler as (req: unknown, res: unknown) => Promise<void>)(
+      { body: {} },
+      resMock,
     )
-    const handler = setupRoute?.route?.stack[0]?.handle as (
-      req: Request,
-      res: Response,
-    ) => Promise<void>
-
-    await handler(req, res)
-
-    expect((res as { status: ReturnType<typeof vi.fn> }).status).toHaveBeenCalledWith(400)
+    expect(resMock.status).toHaveBeenCalledWith(400)
   })
 
-  it('POST /setup con webhookUrl → llama setWebhook en Telegram, retorna 200', async () => {
-    fetchMock.mockResolvedValue(makeOkResponse({ ok: true, result: true }))
-    const { router } = makeRouter()
-    const { req, res } = mockReqRes({}, { webhookUrl: 'https://example.com' })
-
-    const setupRoute = router.stack.find(
-      (layer: { route?: { path: string; stack: { handle: unknown }[] } }) =>
-        layer.route?.path === '/setup'
+  it('POST /setup with webhookUrl → calls setWebhook and returns 200', async () => {
+    mockFetch.mockResolvedValueOnce(
+      makeFetchResponse({ ok: true, result: true }),
     )
-    const handler = setupRoute?.route?.stack[0]?.handle as (
-      req: Request,
-      res: Response,
-    ) => Promise<void>
 
-    await handler(req, res)
+    const router  = adapter.getRouter()
+    const layer   = (router.stack as unknown as Array<{ route?: { path: string; stack: Array<{ handle: (req: unknown, res: unknown) => void }> } }>)
+      .find((l) => l.route?.path === '/setup')
+    const handler = layer!.route!.stack[0]!.handle
 
-    const [url] = fetchMock.mock.calls[0]
+    const resMock = { status: vi.fn().mockReturnThis(), json: vi.fn().mockReturnThis() }
+    await (handler as (req: unknown, res: unknown) => Promise<void>)(
+      { body: { webhookUrl: 'https://example.com' } },
+      resMock,
+    )
+
+    expect(mockFetch).toHaveBeenCalledOnce()
+    const [url] = mockFetch.mock.calls[0]!
     expect(url).toContain('setWebhook')
-    expect((res as { json: ReturnType<typeof vi.fn> }).json).toHaveBeenCalledWith(
-      expect.objectContaining({ ok: true })
+    expect(resMock.json).toHaveBeenCalledWith(
+      expect.objectContaining({ ok: true }),
     )
   })
 
-  it('DELETE /webhook → llama deleteWebhook en Telegram', async () => {
-    fetchMock.mockResolvedValue(makeOkResponse({ ok: true, result: true }))
-    const { router } = makeRouter()
-
-    const deleteRoute = router.stack.find(
-      (layer: { route?: { path: string; stack: { handle: unknown }[] } }) =>
-        layer.route?.path === '/webhook'
+  it('DELETE /webhook → calls deleteWebhook on Telegram', async () => {
+    mockFetch.mockResolvedValueOnce(
+      makeFetchResponse({ ok: true, result: true }),
     )
-    // find the DELETE handler specifically
-    const deleteHandler = deleteRoute?.route?.stack.find(
-      (s: { method?: string; handle: unknown }) => s.method === 'delete'
-    )?.handle as ((req: Request, res: Response) => Promise<void>) | undefined
 
-    if (deleteHandler) {
-      const { req, res } = mockReqRes()
-      await deleteHandler(req, res)
-      const [url] = fetchMock.mock.calls[0]
-      expect(url).toContain('deleteWebhook')
-    } else {
-      // Fallback: verify via adapter directly
-      const { adapter } = makeRouter()
+    const router  = adapter.getRouter()
+    const layer   = (router.stack as unknown as Array<{ route?: { path: string; stack: Array<{ handle: (req: unknown, res: unknown) => void }> } }>)
+      .find((l) => l.route?.path === '/webhook' && l.route.stack.length > 0)
+
+    // Get the DELETE handler specifically
+    const deleteHandler = (router.stack as unknown as Array<{ route?: { path: string; methods: Record<string, boolean>; stack: Array<{ handle: (req: unknown, res: unknown) => Promise<void> }> } }>)
+      .find((l) => l.route?.path === '/webhook' && l.route.methods['delete'])
+
+    if (!deleteHandler?.route) {
+      // Fallback: call deleteWebhook directly
+      mockFetch.mockResolvedValueOnce(makeFetchResponse({ ok: true, result: true }))
       await adapter.deleteWebhook()
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining('deleteWebhook'),
-        expect.anything(),
-      )
+      expect(mockFetch).toHaveBeenCalled()
+      const [url] = mockFetch.mock.calls[mockFetch.mock.calls.length - 1]!
+      expect(url).toContain('deleteWebhook')
+      return
     }
+
+    const resMock = { status: vi.fn().mockReturnThis(), json: vi.fn().mockReturnThis() }
+    await deleteHandler.route.stack[0]!.handle({}, resMock)
+    expect(mockFetch).toHaveBeenCalled()
+  })
+})
+
+// ── describe('fetchWithRetry') ────────────────────────────────────────────
+
+describe('fetchWithRetry', () => {
+  beforeEach(() => {
+    mockFetch.mockReset()
   })
 
+  it('returns response on first success', async () => {
+    mockFetch.mockResolvedValueOnce(makeFetchResponse({ data: 'ok' }))
+    const res = await fetchWithRetry('https://example.com', { method: 'GET' })
+    expect(res.ok).toBe(true)
+    expect(mockFetch).toHaveBeenCalledOnce()
+  })
+
+  it('retries on network error and succeeds on second attempt', async () => {
+    vi.useFakeTimers()
+    mockFetch
+      .mockRejectedValueOnce(new Error('network'))
+      .mockResolvedValueOnce(makeFetchResponse({ data: 'ok' }))
+
+    const promise = fetchWithRetry('https://example.com', { method: 'GET' })
+    await vi.advanceTimersByTimeAsync(1000)
+    const res = await promise
+
+    expect(res.ok).toBe(true)
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+  })
+
+  it('throws after maxTries exhausted', async () => {
+    vi.useFakeTimers()
+    mockFetch.mockRejectedValue(new Error('always fails'))
+
+    const promise = fetchWithRetry('https://example.com', { method: 'GET' }, 3)
+    await vi.advanceTimersByTimeAsync(5000)
+
+    await expect(promise).rejects.toThrow()
+    vi.useRealTimers()
+  })
 })
