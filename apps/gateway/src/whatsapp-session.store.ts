@@ -37,7 +37,7 @@ export interface IWhatsAppAdapter {
 }
 
 interface SessionEntry {
-  adapter:    IWhatsAppAdapter
+  adapter?:   IWhatsAppAdapter
   qrBuffer:   string | null        // data-url PNG o cadena QR raw
   status:     WhatsAppSessionStatus
   sseClients: Set<Response>        // clientes SSE activos suscritos al QR
@@ -57,7 +57,6 @@ class WhatsAppSessionStore {
   getOrCreate(configId: string): SessionEntry {
     if (!this.sessions.has(configId)) {
       this.sessions.set(configId, {
-        adapter:    null as unknown as IWhatsAppAdapter, // se rellena con setAdapter()
         qrBuffer:   null,
         status:     'disconnected',
         sseClients: new Set(),
@@ -76,11 +75,12 @@ class WhatsAppSessionStore {
 
   /**
    * Registra el adapter activo para un configId.
-   * Crea la entrada si no existe.
+   * Crea la entrada si no existe y marca la sesión como reservada.
    */
   setAdapter(configId: string, adapter: IWhatsAppAdapter): void {
     const entry = this.getOrCreate(configId)
     entry.adapter = adapter
+    entry.status = 'connecting'
   }
 
   /**
@@ -172,7 +172,9 @@ class WhatsAppSessionStore {
 
   /** Lista de configIds activos en el store (útil para health/debug). */
   activeSessions(): string[] {
-    return [...this.sessions.keys()]
+    return [...this.sessions.entries()]
+      .filter(([, entry]) => !!entry.adapter)
+      .map(([configId]) => configId)
   }
 }
 
