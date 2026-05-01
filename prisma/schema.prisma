@@ -33,6 +33,14 @@
 // Enforced at two layers:
 //   1. DB layer — raw CHECK constraint added via a manual migration.
 //   2. App layer — PolicyScopeGuard in apps/api validates before upsert.
+//
+// ── F3a-06 ───────────────────────────────────────────────────────────────────
+// ChannelBinding rediseñado: scope/scopeValue/priority/enabled.
+// Regla de resolución (prioridad descendente):
+//   1. scope='user'      + scopeValue=externalUserId  (máxima prioridad)
+//   2. scope='tenant'    + scopeValue=tenantId
+//   3. scope='workspace' + scopeValue=workspaceId
+//   4. scope='default'   + scopeValue=null            (fallback)
 // ─────────────────────────────────────────────────────────────────────────────
 
 generator client {
@@ -289,20 +297,43 @@ model ChannelConfig {
   sessions GatewaySession[]
 }
 
+/**
+ * ChannelBinding — mapea un canal a un agente según scope.
+ *
+ * Regla de resolución (prioridad descendente) — F3a-06:
+ *  1. scope='user'      + scopeValue=externalUserId   (máxima prioridad)
+ *  2. scope='tenant'    + scopeValue=tenantId
+ *  3. scope='workspace' + scopeValue=workspaceId
+ *  4. scope='default'   + scopeValue=null             (fallback)
+ *
+ * Un canal DEBE tener al menos un binding con scope='default'.
+ */
 model ChannelBinding {
-  id              String        @id @default(uuid())
+  id              String        @id @default(cuid())
   channelConfigId String
-  channelConfig   ChannelConfig @relation(fields: [channelConfigId], references: [id], onDelete: Cascade)
   agentId         String
-  agent           Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  /// Level that owns this binding: 'agency' | 'department' | 'workspace' | 'agent'
-  scopeLevel      String        @default("agent")
-  /// ID of the scope entity (agencyId, departmentId, etc.)
-  scopeId         String
-  isDefault       Boolean       @default(false)
-  createdAt       DateTime      @default(now())
 
-  @@unique([channelConfigId, agentId])
+  /**
+   * Tipo de scope:
+   *   'default'   → binding de fallback (scopeValue = null)
+   *   'workspace' → scopeValue = workspaceId
+   *   'tenant'    → scopeValue = tenantId
+   *   'user'      → scopeValue = externalUserId del canal
+   */
+  scope      String
+  scopeValue String?   // null solo para scope='default'
+
+  priority   Int      @default(0)  // mayor número = mayor prioridad
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  channelConfig ChannelConfig @relation(fields: [channelConfigId], references: [id], onDelete: Cascade)
+  agent         Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([channelConfigId, scope, scopeValue])
+  @@index([channelConfigId, scope])
+  @@index([agentId])
 }
 
 model GatewaySession {

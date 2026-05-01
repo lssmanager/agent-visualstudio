@@ -27,6 +27,8 @@ import {
 import { AgentRunner }        from '@agent-vs/flow-engine';
 import type { IChannelAdapter } from './channels/channel-adapter.interface';
 import { PrismaService }       from './prisma/prisma.service';
+import { AgentResolver }       from './agent-resolver.service.js';
+import type { AgentResolutionContext } from './agent-resolver.types.js';
 
 // ---------------------------------------------------------------------------
 // Tipos internos
@@ -49,12 +51,14 @@ export class GatewayService {
   /** Exposed for webchat reply route (needs findSession) */
   readonly sessions:    SessionManager;
   private readonly agentRunner:   AgentRunner;
+  private readonly agentResolver: AgentResolver;
   private readonly configCache  = new Map<string, DecryptedChannelConfig>();
   private readonly encKey:       Buffer;
 
   constructor(private readonly db: PrismaService) {
-    this.sessions    = new SessionManager(db);
-    this.agentRunner = new AgentRunner({ db });
+    this.sessions      = new SessionManager(db);
+    this.agentRunner   = new AgentRunner({ db });
+    this.agentResolver = new AgentResolver(db as unknown as PrismaClient);
 
     const keyHex = process.env.GATEWAY_ENCRYPTION_KEY ?? '';
     if (!keyHex) {
@@ -88,6 +92,8 @@ export class GatewayService {
       console.warn(`[GatewayService] teardown error for channel ${channelConfigId}:`, err);
     });
     this.configCache.delete(channelConfigId);
+    // Invalidate agent resolution cache when channel is deactivated
+    this.agentResolver.invalidateCache(channelConfigId);
     console.info(`[GatewayService] channel ${channelConfigId} deactivated`);
   }
 
@@ -101,9 +107,10 @@ export class GatewayService {
    * Flow:
    *   rawPayload
    *     → adapter.receive()       parse channel format → IncomingMessage
-   *     → SessionManager           upsert GatewaySession, append user turn
-   *     → AgentRunner.run()        load Agent+FlowVersion, execute FlowExecutor
-   *     → recordReply()            append assistant turn, adapter.send()
+   *     → AgentResolver.resolve() ChannelBinding → agentId (F3a-06)
+   *     → SessionManager          upsert GatewaySession, append user turn
+   *     → AgentRunner.run()       load Agent+FlowVersion, execute FlowExecutor
+   *     → recordReply()           append assistant turn, adapter.send()
    */
   async dispatch(
     channelConfigId: string,
@@ -119,14 +126,25 @@ export class GatewayService {
 
     if (!incoming) return;
 
-    // 2. Persist user turn + upsert session
+    // 2. Resolve agent dynamically via ChannelBinding (F3a-06)
+    //    incoming.externalUserId is the external user identifier from the channel adapter.
+    //    workspaceId / tenantId are optional enrichments that adapters may include in metadata.
+    const resolutionCtx: AgentResolutionContext = {
+      channelConfigId,
+      externalUserId: incoming.externalUserId,
+      workspaceId:    incoming.metadata?.workspaceId as string | undefined,
+      tenantId:       incoming.metadata?.tenantId    as string | undefined,
+    };
+    const resolution = await this.agentResolver.resolve(resolutionCtx, cfg.agentId);
+
+    // 3. Persist user turn + upsert session
     const session = await this.sessions.receiveUserMessage(
       channelConfigId,
-      cfg.agentId,
+      resolution.agentId,   // dynamic — resolved from ChannelBinding
       incoming,
     );
 
-    // 3. Run agent via FlowExecutor
+    // 4. Run agent via FlowExecutor
     let replyText: string;
     try {
       const result = await this.agentRunner.run(
@@ -139,13 +157,13 @@ export class GatewayService {
       replyText = '(ocurrió un error al procesar tu mensaje)';
     }
 
-    // 4. Build outbound message
+    // 5. Build outbound message
     const outbound: OutboundMessage = {
       externalUserId: incoming.externalUserId,
       text: replyText,
     };
 
-    // 5. Persist assistant turn + send to channel
+    // 6. Persist assistant turn + send to channel
     await this.recordReply(channelConfigId, session.id, outbound);
   }
 
