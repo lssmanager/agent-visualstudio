@@ -12,12 +12,14 @@ export type {
   CapabilityScore,
   SpecialistMatch,
   BlockedStatus,
+  DelegateBlock,
 } from './hierarchy-orchestrator.js'
 
 export {
   HierarchyOrchestrator,
   tokenize,
   jaccardScore,
+  parseDelegateBlocks,
   DELEGATION_TIMEOUT_MS,
 } from './hierarchy-orchestrator.js'
 

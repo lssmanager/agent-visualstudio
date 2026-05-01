@@ -1,7 +1,7 @@
 /**
  * hierarchy-orchestrator.test.ts
  *
- * Unit tests for HierarchyOrchestrator — F1a-03
+ * Unit tests for HierarchyOrchestrator — F1a-03, F2a-05b
  *
  * Verifica:
  *  1. executorFn debe devolver AgentExecutionResult (no string).
@@ -9,6 +9,7 @@
  *  3. SubtaskResult.output es el string de respuesta, no el objeto completo.
  *  4. Si executorFn lanza, el RunStep queda en 'failed'.
  *  5. No se crean RunSteps con id='orchestrated-*' ni id=''.
+ *  6. [F2a-05b] supervisorFn recibe prompt con bloques ---DELEGATE---.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -56,6 +57,32 @@ const twoAgentHierarchy = {
   ],
 };
 
+const twoAgentHierarchyWithRoles = {
+  id:       'workspace-root',
+  name:     'Root',
+  level:    'workspace' as const,
+  children: [
+    {
+      id:    'agent-a',
+      name:  'Agent A',
+      level: 'agent' as const,
+      agentConfig: {
+        model:        'openai/gpt-4o-mini',
+        systemPrompt: 'You are a research specialist focused on data gathering and analysis.',
+      },
+    },
+    {
+      id:    'agent-b',
+      name:  'Agent B',
+      level: 'agent' as const,
+      agentConfig: {
+        model:        'openai/gpt-4o-mini',
+        systemPrompt: 'You are a writing specialist focused on clear communication.',
+      },
+    },
+  ],
+};
+
 const makePrisma = () => ({} as unknown as import('@prisma/client').PrismaClient);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -73,7 +100,31 @@ function makeExecutorFn(partial?: Partial<AgentExecutionResult>): AgentExecutorF
   } satisfies AgentExecutionResult);
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
+/**
+ * supervisorFn factory para tests F2a-05b.
+ * - Para llamadas de descomposición: retorna bloques ---DELEGATE---
+ *   que el orchestrator actual puede parsear.
+ * - Para llamadas de consolidación: retorna texto plano.
+ */
+function makeSupervisorSpy(agentIds: string[]): SupervisorFn {
+  return vi.fn().mockImplementation(async (prompt: string) => {
+    // Consolidation call — plain text response
+    if (!prompt.includes('Decompose') && !prompt.includes('Available agents')) {
+      return 'Consolidated supervisor result';
+    }
+    // Decomposition call — return ---DELEGATE--- blocks that the orchestrator can parse
+    return agentIds
+      .map(
+        (id) =>
+          `---DELEGATE---
+agentId: ${id}
+task: Task for ${id}`
+      )
+      .join('\n');
+  });
+}
+
+// ─── Tests — F1a-03 (existentes) ─────────────────────────────────────────────
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -317,5 +368,174 @@ describe('HierarchyOrchestrator — AgentExecutionResult contract', () => {
     );
     expect(calledAgents).toContain('agent-a');
     expect(calledAgents).toContain('agent-b');
+  });
+});
+
+// ─── Tests — F2a-05b: Formato ---DELEGATE--- en el prompt ────────────────────
+
+describe('HierarchyOrchestrator — F2a-05b: prompt supervisor formato ---DELEGATE---', () => {
+
+  beforeEach(() => {
+    let stepCounter = 0;
+    mockRepo.createStep.mockImplementation(() =>
+      Promise.resolve({ id: `step-${++stepCounter}` })
+    );
+  });
+
+  it('supervisorFn recibe prompt que contiene ---DELEGATE---', async () => {
+    const supervisorSpy = makeSupervisorSpy(['agent-a', 'agent-b']);
+    const orch = new HierarchyOrchestrator(
+      twoAgentHierarchy,
+      makeExecutorFn(),
+      makePrisma(),
+      supervisorSpy,
+    );
+
+    await orch.orchestrate('ws-001', 'Build a report');
+
+    // supervisorFn is called at least once for decomposition
+    const calls = (supervisorSpy as ReturnType<typeof vi.fn>).mock.calls;
+    const decompositionCall = calls.find(
+      (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('Available agents'),
+    );
+    expect(decompositionCall).toBeDefined();
+
+    const prompt = decompositionCall![0] as string;
+    expect(prompt).toContain('---DELEGATE---');
+    expect(prompt).toContain('---END---');
+  });
+
+  it('el prompt contiene los cuatro campos del bloque: TO:, TASK:, CONTEXT:, PRIORITY:', async () => {
+    const supervisorSpy = makeSupervisorSpy(['agent-a']);
+    const orch = new HierarchyOrchestrator(
+      twoAgentHierarchy,
+      makeExecutorFn(),
+      makePrisma(),
+      supervisorSpy,
+    );
+
+    await orch.orchestrate('ws-001', 'Analyze dataset');
+
+    const calls = (supervisorSpy as ReturnType<typeof vi.fn>).mock.calls;
+    const decompositionCall = calls.find(
+      (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('Available agents'),
+    );
+    const prompt = decompositionCall![0] as string;
+
+    expect(prompt).toContain('TO:');
+    expect(prompt).toContain('TASK:');
+    expect(prompt).toContain('CONTEXT:');
+    expect(prompt).toContain('PRIORITY:');
+  });
+
+  it('el prompt NO contiene "JSON array" ni "agentId"', async () => {
+    const supervisorSpy = makeSupervisorSpy(['agent-a', 'agent-b']);
+    const orch = new HierarchyOrchestrator(
+      twoAgentHierarchy,
+      makeExecutorFn(),
+      makePrisma(),
+      supervisorSpy,
+    );
+
+    await orch.orchestrate('ws-001', 'Check data');
+
+    const calls = (supervisorSpy as ReturnType<typeof vi.fn>).mock.calls;
+    const decompositionCall = calls.find(
+      (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('Available agents'),
+    );
+    const prompt = decompositionCall![0] as string;
+
+    expect(prompt).not.toContain('JSON array');
+    expect(prompt).not.toContain('"agentId"');
+  });
+
+  it('agentList incluye el campo role (no solo id y name) cuando agentConfig está presente', async () => {
+    const supervisorSpy = makeSupervisorSpy(['agent-a', 'agent-b']);
+    const orch = new HierarchyOrchestrator(
+      twoAgentHierarchyWithRoles,
+      makeExecutorFn(),
+      makePrisma(),
+      supervisorSpy,
+    );
+
+    await orch.orchestrate('ws-001', 'Research and write');
+
+    const calls = (supervisorSpy as ReturnType<typeof vi.fn>).mock.calls;
+    const decompositionCall = calls.find(
+      (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('Available agents'),
+    );
+    const prompt = decompositionCall![0] as string;
+
+    // role field present in agentList lines
+    expect(prompt).toContain('| role:');
+    // Contains part of the systemPrompt (truncated at 80 chars)
+    expect(prompt).toContain('research specialist');
+    expect(prompt).toContain('writing specialist');
+  });
+
+  it('contextHint se incluye en el prompt cuando se pasa input', async () => {
+    const supervisorSpy = makeSupervisorSpy(['agent-a']);
+    const orch = new HierarchyOrchestrator(
+      twoAgentHierarchy,
+      makeExecutorFn(),
+      makePrisma(),
+      supervisorSpy,
+    );
+
+    await orch.orchestrate('ws-001', 'Process file', { fileName: 'report.csv', rows: 500 });
+
+    const calls = (supervisorSpy as ReturnType<typeof vi.fn>).mock.calls;
+    const decompositionCall = calls.find(
+      (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('Available agents'),
+    );
+    const prompt = decompositionCall![0] as string;
+
+    expect(prompt).toContain('Input context:');
+    expect(prompt).toContain('report.csv');
+    expect(prompt).toContain('500');
+  });
+
+  it('contextHint NO aparece en el prompt cuando input es undefined', async () => {
+    const supervisorSpy = makeSupervisorSpy(['agent-a']);
+    const orch = new HierarchyOrchestrator(
+      twoAgentHierarchy,
+      makeExecutorFn(),
+      makePrisma(),
+      supervisorSpy,
+    );
+
+    // No input argument
+    await orch.orchestrate('ws-001', 'Simple task');
+
+    const calls = (supervisorSpy as ReturnType<typeof vi.fn>).mock.calls;
+    const decompositionCall = calls.find(
+      (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('Available agents'),
+    );
+    const prompt = decompositionCall![0] as string;
+
+    expect(prompt).not.toContain('Input context:');
+  });
+
+  it('agentList usa fallback "name (level)" como role cuando agentConfig no está presente', async () => {
+    const supervisorSpy = makeSupervisorSpy(['agent-a', 'agent-b']);
+    // twoAgentHierarchy has NO agentConfig on its children
+    const orch = new HierarchyOrchestrator(
+      twoAgentHierarchy,
+      makeExecutorFn(),
+      makePrisma(),
+      supervisorSpy,
+    );
+
+    await orch.orchestrate('ws-001', 'Task without roles');
+
+    const calls = (supervisorSpy as ReturnType<typeof vi.fn>).mock.calls;
+    const decompositionCall = calls.find(
+      (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('Available agents'),
+    );
+    const prompt = decompositionCall![0] as string;
+
+    // role field still present, using fallback format
+    expect(prompt).toContain('| role: Agent A (agent)');
+    expect(prompt).toContain('| role: Agent B (agent)');
   });
 });

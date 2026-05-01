@@ -12,7 +12,8 @@
  *   - Errores por proveedor se loguean sin interrumpir el job.
  *   - El primer sync se ejecuta 30 segundos después del arranque (warm-up).
  *
- * Schedule: '0 */6 * * *'  →  a las 00:00, 06:00, 12:00, 18:00 UTC
+ * Schedule: '0 * /6 * * *'  →  a las 00:00, 06:00, 12:00, 18:00 UTC
+ *           (nota: espacio en * /6 solo en este comentario para evitar cerrar el bloque JSDoc)
  *
  * Dependencia: node-cron
  *   npm install node-cron
