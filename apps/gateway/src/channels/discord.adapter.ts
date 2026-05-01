@@ -1,158 +1,168 @@
-/**
- * discord.adapter.ts — Adaptador Discord
- *
- * Recibe slash commands e interacciones via webhook de Discord.
- * Envía DMs y mensajes de canal usando Discord REST API.
- *
- * Credentials en ChannelConfig.credentials (cifrado en DB):
- *   { botToken, applicationId, publicKey }
- *
- * Endpoints:
- *   POST /gateway/discord/interactions — slash commands e interacciones
- *
- * Inspirado en n8n DiscordTrigger y Semantic Kernel DiscordPlugin.
- */
-
-import { createVerify } from 'node:crypto';
-import { Router, type Request, type Response } from 'express';
-import { getPrisma } from '../../lib/prisma.js';
 import {
   BaseChannelAdapter,
   type IncomingMessage,
   type OutgoingMessage,
-} from './channel-adapter.interface';
+} from './channel-adapter.interface.js'
 
-const DISCORD_API = 'https://discord.com/api/v10';
-
-interface DiscordCredentials {
-  botToken:       string;
-  applicationId:  string;
-  publicKey:      string;
+interface DiscordMessage {
+  id:         string
+  channel_id: string
+  author?:    { id: string; username?: string; bot?: boolean }
+  content?:   string
+  timestamp?: string
+  thread?:    { id: string; name?: string }
 }
 
-const INTERACTION_TYPE          = { PING: 1, APPLICATION_COMMAND: 2, MESSAGE_COMPONENT: 3 };
-const INTERACTION_RESPONSE_TYPE = { PONG: 1, CHANNEL_MESSAGE_WITH_SOURCE: 4 };
+interface DiscordInteraction {
+  id:          string
+  type:        number
+  token:       string
+  channel_id:  string
+  user?:       { id: string }
+  member?:     { user: { id: string } }
+  data?:       { name?: string; options?: unknown[] }
+}
 
+/**
+ * DiscordAdapter — adaptador para la Discord API (mensajes y slash commands)
+ * [F3a-17] threadId = message.thread?.id ?? message.channelId
+ */
 export class DiscordAdapter extends BaseChannelAdapter {
-  readonly channel = 'discord';
-  private botToken      = '';
-  private applicationId = '';
-  private publicKey     = '';
-
-  // ── Lifecycle ─────────────────────────────────────────────────────────────────────
+  readonly channel = 'discord'
 
   async initialize(channelConfigId: string): Promise<void> {
-    this.channelConfigId = channelConfigId;
-    const db     = getPrisma();
-    const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } });
-    if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
+    this.channelConfigId = channelConfigId
+  }
 
-    const creds          = config.credentials as DiscordCredentials;
-    this.botToken        = creds.botToken;
-    this.applicationId   = creds.applicationId;
-    this.publicKey       = creds.publicKey;
-    this.credentials     = config.credentials as Record<string, unknown>;
+  async receive(
+    rawPayload: Record<string, unknown>,
+    secrets:    Record<string, unknown>,
+  ): Promise<IncomingMessage | null> {
+    const botToken = String(secrets['botToken'] ?? secrets['bot_token'] ?? '')
 
-    console.info(`[discord] Initialized app ${this.applicationId}`);
+    // Determinar si es un message event o una interaction
+    const eventType = String(rawPayload['type'] ?? rawPayload['t'] ?? '')
+    const data      = (rawPayload['d'] ?? rawPayload) as Record<string, unknown>
+
+    if (eventType === 'INTERACTION_CREATE' || (rawPayload['type'] !== undefined && Number(rawPayload['type']) >= 1)) {
+      return this.receiveInteraction(rawPayload, data as unknown as DiscordInteraction, botToken)
+    }
+
+    return this.receiveMessage(rawPayload, data as unknown as DiscordMessage, botToken)
+  }
+
+  private async receiveMessage(
+    rawPayload: Record<string, unknown>,
+    message:    DiscordMessage,
+    botToken:   string,
+  ): Promise<IncomingMessage | null> {
+    if (!message.channel_id) return null
+    // Ignorar mensajes de bots
+    if (message.author?.bot) return null
+
+    const channelId = message.channel_id
+    // [F3a-17] threadId: thread.id si hay thread activo, sino channelId
+    const threadId  = message.thread?.id ?? channelId
+
+    let replied = false
+    const replyFn = async (replyText: string, opts?: { quoteOriginal?: boolean }) => {
+      if (replied) return
+      replied = true
+
+      // Responder al thread si hay thread activo, al canal si no
+      const targetId = message.thread?.id ?? channelId
+      const url = `https://discord.com/api/v10/channels/${targetId}/messages`
+      await fetch(url, {
+        method:  'POST',
+        headers: {
+          Authorization:  `Bot ${botToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          content:           replyText,
+          message_reference: opts?.quoteOriginal
+            ? { message_id: message.id }
+            : undefined,
+        }),
+        signal: AbortSignal.timeout(10_000),
+      })
+    }
+
+    const sanitized = this.sanitizeRawPayload(rawPayload, ['botToken', 'bot_token'])
+
+    return {
+      externalId: channelId,
+      threadId,
+      senderId:   message.author?.id ?? '',
+      text:       message.content ?? '',
+      type:       'text',
+      rawPayload: sanitized,
+      receivedAt: this.makeTimestamp(),
+      replyFn,
+    }
+  }
+
+  private async receiveInteraction(
+    rawPayload:   Record<string, unknown>,
+    interaction:  DiscordInteraction,
+    _botToken:    string,
+  ): Promise<IncomingMessage | null> {
+    if (!interaction.channel_id) return null
+
+    const channelId = interaction.channel_id
+    const threadId  = channelId  // interactions no tienen threads propios
+
+    // Discord interactions tienen su propio endpoint de reply
+    let replied = false
+    const replyFn = async (replyText: string) => {
+      if (replied) return
+      replied = true
+
+      const url = `https://discord.com/api/v10/interactions/${interaction.id}/${interaction.token}/callback`
+      await fetch(url, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 4,  // CHANNEL_MESSAGE_WITH_SOURCE
+          data: { content: replyText },
+        }),
+        signal: AbortSignal.timeout(3_000),  // Discord requiere reply en ≤3s
+      })
+    }
+
+    const sanitized = this.sanitizeRawPayload(rawPayload, ['botToken', 'bot_token'])
+    const senderId  = interaction.user?.id ?? interaction.member?.user.id ?? ''
+
+    return {
+      externalId: channelId,
+      threadId,
+      senderId,
+      text:       String(interaction.data?.name ?? ''),
+      type:       'command',
+      rawPayload: sanitized,
+      receivedAt: this.makeTimestamp(),
+      replyFn,
+    }
+  }
+
+  async send(message: OutgoingMessage, _config?: Record<string, unknown>, secrets?: Record<string, unknown>): Promise<void> {
+    const botToken = String(secrets?.['botToken'] ?? secrets?.['bot_token'] ?? '')
+    // Usar threadId si es distinto del channelId, sino usar externalId
+    const targetId = message.threadId && message.threadId !== message.externalId
+                       ? message.threadId
+                       : message.externalId
+    const url = `https://discord.com/api/v10/channels/${targetId}/messages`
+    await fetch(url, {
+      method:  'POST',
+      headers: {
+        Authorization:  `Bot ${botToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ content: message.text }),
+    })
   }
 
   async dispose(): Promise<void> {
-    console.info('[discord] Adapter disposed');
-  }
-
-  // ── Send ────────────────────────────────────────────────────────────────────────
-
-  async send(message: OutgoingMessage): Promise<void> {
-    const url  = `${DISCORD_API}/channels/${message.externalId}/messages`;
-    const body: Record<string, unknown> = { content: message.text };
-    if (message.richContent) body.embeds = [message.richContent];
-
-    const res = await fetch(url, {
-      method:  'POST',
-      headers: {
-        Authorization:  `Bot ${this.botToken}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!res.ok) {
-      const err = await res.text();
-      console.error(`[discord] send failed: ${err}`);
-      throw new Error(`Discord send failed: ${err}`);
-    }
-  }
-
-  // ── Router ────────────────────────────────────────────────────────────────────
-
-  getRouter(): Router {
-    const router = Router();
-
-    router.post('/interactions', async (req: Request, res: Response) => {
-      const timestamp = req.headers['x-signature-timestamp'] as string;
-      const sig       = req.headers['x-signature-ed25519']   as string;
-
-      if (!this._verifySignature(JSON.stringify(req.body), timestamp, sig)) {
-        res.status(401).json({ error: 'Invalid request signature' });
-        return;
-      }
-
-      const interaction = req.body as {
-        type:            number;
-        id:              string;
-        token:           string;
-        application_id:  string;
-        data?:           { name?: string; options?: Array<{ name: string; value: unknown }> };
-        member?:         { user?: { id: string; username?: string } };
-        user?:           { id: string; username?: string };
-        channel_id?:     string;
-      };
-
-      if (interaction.type === INTERACTION_TYPE.PING) {
-        res.json({ type: INTERACTION_RESPONSE_TYPE.PONG });
-        return;
-      }
-
-      if (interaction.type === INTERACTION_TYPE.APPLICATION_COMMAND) {
-        const commandName = interaction.data?.name ?? 'unknown';
-        const options     = interaction.data?.options ?? [];
-        const userInput   = (options.find((o) => o.name === 'prompt')?.value as string) ?? commandName;
-        const userId      = interaction.member?.user?.id ?? interaction.user?.id ?? interaction.id;
-        const channelId   = interaction.channel_id ?? interaction.id;
-
-        res.json({
-          type: INTERACTION_RESPONSE_TYPE.CHANNEL_MESSAGE_WITH_SOURCE,
-          data: { content: '⏳ Procesando...', flags: 64 },
-        });
-
-        const msg: IncomingMessage = {
-          externalId: channelId,
-          senderId:   userId,
-          text:       userInput,
-          type:       'command',
-          metadata:   { interactionId: interaction.id, interactionToken: interaction.token, commandName, raw: interaction },
-          receivedAt: this.makeTimestamp(),
-        };
-        this.emit(msg).catch((err) => console.error('[discord] emit error:', err));
-        return;
-      }
-
-      res.json({ type: INTERACTION_RESPONSE_TYPE.CHANNEL_MESSAGE_WITH_SOURCE,
-        data: { content: 'Interacción no soportada', flags: 64 } });
-    });
-
-    return router;
-  }
-
-  // ── Helpers ──────────────────────────────────────────────────────────────────────
-
-  private _verifySignature(body: string, timestamp: string, signature: string): boolean {
-    try {
-      const verify = createVerify('ed25519');
-      verify.update(timestamp + body);
-      return verify.verify(Buffer.from(this.publicKey, 'hex'), Buffer.from(signature, 'hex'));
-    } catch {
-      return false;
-    }
+    // noop
   }
 }

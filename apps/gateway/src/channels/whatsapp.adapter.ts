@@ -1,167 +1,117 @@
-/**
- * whatsapp.adapter.ts — Adaptador WhatsApp Cloud API (Meta)
- *
- * Recibe mensajes via webhook de Meta Webhooks.
- * Envía respuestas via WhatsApp Cloud API.
- *
- * Credentials en ChannelConfig.credentials (cifrado en DB):
- *   { accessToken, phoneNumberId, verifyToken, appSecret }
- *
- * Endpoints:
- *   GET  /gateway/whatsapp/webhook — verificación de Meta
- *   POST /gateway/whatsapp/webhook — mensajes entrantes
- *
- * Inspirado en n8n WhatsAppTrigger y Flowise WhatsAppChannel.
- */
-
-import { createHmac } from 'node:crypto';
-import { Router, type Request, type Response } from 'express';
-import { getPrisma } from '../../lib/prisma.js';
 import {
   BaseChannelAdapter,
   type IncomingMessage,
   type OutgoingMessage,
-} from './channel-adapter.interface';
+} from './channel-adapter.interface.js'
 
-const WHATSAPP_API = 'https://graph.facebook.com/v19.0';
-
-interface WhatsAppCredentials {
-  accessToken:   string;
-  phoneNumberId: string;
-  verifyToken:   string;
-  appSecret?:    string;
+interface WhatsAppMessage {
+  id:        string
+  from:      string
+  type:      string
+  timestamp: string
+  text?:     { body: string }
 }
 
-export class WhatsAppAdapter extends BaseChannelAdapter {
-  readonly channel   = 'whatsapp';
-  private accessToken   = '';
-  private phoneNumberId = '';
-  private verifyToken   = '';
-  private appSecret     = '';
+interface WhatsAppWebhookPayload {
+  object: string
+  entry?: Array<{
+    changes?: Array<{
+      value?: {
+        messages?:      WhatsAppMessage[]
+        contacts?:      Array<{ profile: { name: string }; wa_id: string }>
+        phone_number_id?: string
+      }
+    }>
+  }>
+}
 
-  // ── Lifecycle ─────────────────────────────────────────────────────────────────────
+/**
+ * WhatsAppAdapter — adaptador para la WhatsApp Cloud API (Meta)
+ * [F3a-17] Popula replyFn, threadId (=externalId, sin threads nativos), rawPayload
+ */
+export class WhatsAppAdapter extends BaseChannelAdapter {
+  readonly channel = 'whatsapp'
 
   async initialize(channelConfigId: string): Promise<void> {
-    this.channelConfigId = channelConfigId;
-    const db     = getPrisma();
-    const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } });
-    if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
+    this.channelConfigId = channelConfigId
+  }
 
-    const creds          = config.credentials as WhatsAppCredentials;
-    this.accessToken     = creds.accessToken;
-    this.phoneNumberId   = creds.phoneNumberId;
-    this.verifyToken     = creds.verifyToken;
-    this.appSecret       = creds.appSecret ?? '';
-    this.credentials     = config.credentials as Record<string, unknown>;
+  async receive(
+    rawPayload: Record<string, unknown>,
+    secrets:    Record<string, unknown>,
+  ): Promise<IncomingMessage | null> {
+    const payload     = rawPayload as unknown as WhatsAppWebhookPayload
+    const change      = payload.entry?.[0]?.changes?.[0]
+    const value       = change?.value
+    const message     = value?.messages?.[0]
 
-    console.info(`[whatsapp] Initialized for phoneNumberId ${this.phoneNumberId}`);
+    if (!message) return null
+
+    const phoneNumberId = String(value?.phone_number_id ?? secrets['phoneNumberId'] ?? '')
+    const accessToken   = String(secrets['accessToken'] ?? secrets['access_token'] ?? '')
+
+    // WhatsApp no tiene threads nativos → threadId = externalId (número del remitente)
+    const to       = message.from
+    const threadId = to
+
+    // [F3a-17] replyFn: closure con accessToken y phoneNumberId
+    let replied = false
+    const replyFn = async (replyText: string, opts?: { quoteOriginal?: boolean }) => {
+      if (replied) return
+      replied = true
+
+      const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`
+      await fetch(url, {
+        method:  'POST',
+        headers: {
+          Authorization:  `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          to,
+          type: 'text',
+          text: { body: replyText },
+          context: opts?.quoteOriginal ? { message_id: message.id } : undefined,
+        }),
+        signal: AbortSignal.timeout(10_000),
+      })
+    }
+
+    const sanitized = this.sanitizeRawPayload(rawPayload, ['accessToken', 'access_token'])
+
+    return {
+      externalId: to,
+      threadId,
+      senderId:   message.from,
+      text:       message.text?.body ?? '',
+      type:       'text',
+      rawPayload: sanitized,
+      receivedAt: this.makeTimestamp(),
+      replyFn,
+    }
+  }
+
+  async send(message: OutgoingMessage, _config?: Record<string, unknown>, secrets?: Record<string, unknown>): Promise<void> {
+    const accessToken   = String(secrets?.['accessToken'] ?? secrets?.['access_token'] ?? '')
+    const phoneNumberId = String(secrets?.['phoneNumberId'] ?? '')
+    const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`
+    await fetch(url, {
+      method:  'POST',
+      headers: {
+        Authorization:  `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to:   message.externalId,
+        type: 'text',
+        text: { body: message.text },
+      }),
+    })
   }
 
   async dispose(): Promise<void> {
-    console.info('[whatsapp] Adapter disposed');
-  }
-
-  // ── Send ────────────────────────────────────────────────────────────────────────
-
-  async send(message: OutgoingMessage): Promise<void> {
-    const url  = `${WHATSAPP_API}/${this.phoneNumberId}/messages`;
-    const body: Record<string, unknown> = {
-      messaging_product: 'whatsapp',
-      to:   message.externalId,
-      type: 'text',
-      text: { body: message.text },
-    };
-
-    if (message.richContent) {
-      body.type        = 'interactive';
-      body.interactive = message.richContent;
-      delete body.text;
-    }
-
-    const res = await fetch(url, {
-      method:  'POST',
-      headers: {
-        Authorization:  `Bearer ${this.accessToken}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!res.ok) {
-      const err = await res.text();
-      console.error(`[whatsapp] send failed: ${err}`);
-      throw new Error(`WhatsApp send failed: ${err}`);
-    }
-  }
-
-  // ── Router ────────────────────────────────────────────────────────────────────
-
-  getRouter(): Router {
-    const router = Router();
-
-    router.get('/webhook', (req: Request, res: Response) => {
-      const mode      = req.query['hub.mode'];
-      const token     = req.query['hub.verify_token'];
-      const challenge = req.query['hub.challenge'];
-
-      if (mode === 'subscribe' && token === this.verifyToken) {
-        console.info('[whatsapp] Webhook verified by Meta');
-        res.status(200).send(challenge);
-      } else {
-        res.status(403).json({ ok: false, error: 'Verification failed' });
-      }
-    });
-
-    router.post('/webhook', async (req: Request, res: Response) => {
-      if (this.appSecret) {
-        const signature = req.headers['x-hub-signature-256'] as string | undefined;
-        if (!this._validateSignature(JSON.stringify(req.body), signature)) {
-          res.status(403).json({ ok: false, error: 'Invalid signature' });
-          return;
-        }
-      }
-
-      res.json({ ok: true });
-
-      const entry   = (req.body as any)?.entry?.[0];
-      const changes = entry?.changes?.[0]?.value;
-      const messages = changes?.messages ?? [];
-
-      for (const waMsgRaw of messages) {
-        const waMsg = waMsgRaw as {
-          id:        string;
-          from:      string;
-          type:      string;
-          text?:     { body: string };
-          timestamp: string;
-        };
-
-        if (waMsg.type === 'text' && waMsg.text?.body) {
-          const msg: IncomingMessage = {
-            externalId: waMsg.from,
-            senderId:   waMsg.from,
-            text:       waMsg.text.body,
-            type:       'text',
-            metadata:   { messageId: waMsg.id, raw: waMsg },
-            receivedAt: this.makeTimestamp(),
-          };
-          await this.emit(msg).catch((err) =>
-            console.error('[whatsapp] emit error:', err),
-          );
-        }
-      }
-    });
-
-    return router;
-  }
-
-  // ── Helpers ──────────────────────────────────────────────────────────────────────
-
-  private _validateSignature(rawBody: string, signature?: string): boolean {
-    if (!signature) return false;
-    const expected =
-      'sha256=' +
-      createHmac('sha256', this.appSecret).update(rawBody, 'utf8').digest('hex');
-    return signature === expected;
+    // noop
   }
 }

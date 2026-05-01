@@ -1,172 +1,145 @@
-/**
- * telegram.adapter.ts — Adaptador Telegram Bot API
- *
- * Recibe updates via webhook (POST /gateway/telegram/webhook).
- * El token del bot y el webhook secret se leen de ChannelConfig.credentials
- * (cifrado AES-256-GCM en DB).
- *
- * Endpoints:
- *   POST /gateway/telegram/webhook  — updates de Telegram
- *   POST /gateway/telegram/setup    — registra el webhook en Telegram
- *
- * Inspirado en n8n TelegramTriggerNode y Flowise TelegramChatModel.
- */
-
-import { Router, type Request, type Response } from 'express';
-import { getPrisma } from '../../lib/prisma.js';
 import {
   BaseChannelAdapter,
   type IncomingMessage,
   type OutgoingMessage,
-} from './channel-adapter.interface';
+} from './channel-adapter.interface.js'
 
-const TELEGRAM_API = 'https://api.telegram.org';
-
-interface TelegramCredentials {
-  botToken:       string;
-  webhookSecret?: string;
+interface TelegramUpdate {
+  update_id: number
+  message?: {
+    message_id:        number
+    message_thread_id?: number
+    from?:             { id: number; username?: string; first_name?: string }
+    chat:              { id: number; type: string }
+    text?:             string
+    date:              number
+  }
+  callback_query?: {
+    id:      string
+    from:    { id: number }
+    message?: { chat: { id: number }; message_id: number }
+    data?:   string
+  }
 }
 
+/**
+ * TelegramAdapter — adaptador para Telegram Bot API
+ * [F3a-17] Popula replyFn, threadId, rawPayload en receive()
+ */
 export class TelegramAdapter extends BaseChannelAdapter {
-  readonly channel      = 'telegram';
-  private botToken      = '';
-  private webhookSecret = '';
+  readonly channel = 'telegram'
 
-  // ── Lifecycle ─────────────────────────────────────────────────────────────────────
+  private botToken = ''
 
   async initialize(channelConfigId: string): Promise<void> {
-    this.channelConfigId = channelConfigId;
-    const db     = getPrisma();
-    const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } });
-    if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
-
-    const creds          = config.credentials as TelegramCredentials;
-    this.botToken        = creds.botToken;
-    this.webhookSecret   = creds.webhookSecret ?? '';
-    this.credentials     = config.credentials as Record<string, unknown>;
-
-    console.info(`[telegram] Initialized bot for config ${channelConfigId}`);
+    this.channelConfigId = channelConfigId
   }
 
-  async dispose(): Promise<void> {
-    console.info('[telegram] Adapter disposed');
-  }
+  /**
+   * receive() parsea el webhook update de Telegram y construye IncomingMessage
+   * con los tres campos nuevos de F3a-17.
+   */
+  async receive(
+    rawPayload: Record<string, unknown>,
+    secrets:    Record<string, unknown>,
+  ): Promise<IncomingMessage | null> {
+    const update = rawPayload as unknown as TelegramUpdate
 
-  // ── Send ────────────────────────────────────────────────────────────────────────
+    if (!update.message && !update.callback_query) return null
 
-  async send(message: OutgoingMessage): Promise<void> {
-    const url  = `${TELEGRAM_API}/bot${this.botToken}/sendMessage`;
-    const body: Record<string, unknown> = {
-      chat_id:    message.externalId,
-      text:       message.text,
-      parse_mode: 'Markdown',
-    };
-    if (message.richContent) body.reply_markup = message.richContent;
+    const botToken = String(secrets['botToken'] ?? secrets['bot_token'] ?? '')
 
-    const res = await fetch(url, {
-      method:  'POST',
-      headers: { 'content-type': 'application/json' },
-      body:    JSON.stringify(body),
-    });
+    // ── Extraer campos del mensaje ────────────────────────────────────────
+    let chatId:    string
+    let senderId:  string
+    let text:      string
+    let messageId: number
+    let threadId:  string
 
-    if (!res.ok) {
-      const err = await res.text();
-      console.error(`[telegram] sendMessage failed: ${err}`);
-      throw new Error(`Telegram sendMessage failed: ${err}`);
+    if (update.message) {
+      chatId    = String(update.message.chat.id)
+      senderId  = String(update.message.from?.id ?? '')
+      text      = update.message.text ?? ''
+      messageId = update.message.message_id
+
+      // [F3a-17] threadId: message_thread_id si es supergrupo, sino chatId
+      threadId  = update.message.message_thread_id
+                    ? String(update.message.message_thread_id)
+                    : chatId
+    } else {
+      // callback_query
+      chatId    = String(update.callback_query!.message?.chat.id ?? '')
+      senderId  = String(update.callback_query!.from.id)
+      text      = update.callback_query!.data ?? ''
+      messageId = update.callback_query!.message?.message_id ?? 0
+      threadId  = chatId
+    }
+
+    // ── [F3a-17] Construir replyFn ────────────────────────────────────────
+    // Closure: captura botToken, chatId, messageId, threadId de este scope.
+    let replied = false
+    const replyFn = async (replyText: string, opts?: { format?: string; quoteOriginal?: boolean }) => {
+      if (replied) return  // idempotente
+      replied = true
+
+      const url  = `https://api.telegram.org/bot${botToken}/sendMessage`
+      const body: Record<string, unknown> = {
+        chat_id:    chatId,
+        text:       replyText,
+        parse_mode: opts?.format === 'markdown' ? 'Markdown'
+                  : opts?.format === 'html'     ? 'HTML'
+                  : undefined,
+        reply_to_message_id: opts?.quoteOriginal ? messageId : undefined,
+      }
+
+      // Si hay threadId de supergrupo, incluir message_thread_id
+      if (update.message?.message_thread_id) {
+        body['message_thread_id'] = update.message.message_thread_id
+      }
+
+      await fetch(url, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body),
+        signal:  AbortSignal.timeout(10_000),
+      })
+    }
+
+    // ── [F3a-17] Sanitizar rawPayload (eliminar token del bot) ────────────
+    const sanitized = this.sanitizeRawPayload(
+      rawPayload,
+      ['botToken', 'bot_token'],
+    )
+
+    return {
+      externalId: chatId,
+      threadId,
+      senderId,
+      text,
+      type:       'text',
+      rawPayload: sanitized,
+      receivedAt: this.makeTimestamp(),
+      replyFn,
     }
   }
 
-  // ── Router ────────────────────────────────────────────────────────────────────
-
-  getRouter(): Router {
-    const router = Router();
-
-    router.post('/webhook', async (req: Request, res: Response) => {
-      if (this.webhookSecret) {
-        const secret = req.headers['x-telegram-bot-api-secret-token'];
-        if (secret !== this.webhookSecret) {
-          res.status(403).json({ ok: false, error: 'Invalid secret' });
-          return;
-        }
-      }
-
-      const update = req.body as {
-        update_id:       number;
-        message?:        {
-          message_id: number;
-          chat:       { id: number };
-          from?:      { id: number; username?: string };
-          text?:      string;
-        };
-        callback_query?: { id: string; data?: string; message?: { chat: { id: number } } };
-      };
-
-      const message       = update.message;
-      const callbackQuery = update.callback_query;
-
-      if (message?.text) {
-        const msg: IncomingMessage = {
-          externalId: String(message.chat.id),
-          senderId:   String(message.from?.id ?? message.chat.id),
-          text:       message.text,
-          type:       message.text.startsWith('/') ? 'command' : 'text',
-          metadata:   { updateId: update.update_id, raw: message },
-          receivedAt: this.makeTimestamp(),
-        };
-        await this.emit(msg);
-      } else if (callbackQuery?.data) {
-        const chatId = callbackQuery.message?.chat.id;
-        const msg: IncomingMessage = {
-          externalId: String(chatId),
-          senderId:   String(chatId),
-          text:       callbackQuery.data,
-          type:       'command',
-          metadata:   { callbackQueryId: callbackQuery.id, raw: callbackQuery },
-          receivedAt: this.makeTimestamp(),
-        };
-        await this.emit(msg);
-        await fetch(`${TELEGRAM_API}/bot${this.botToken}/answerCallbackQuery`, {
-          method:  'POST',
-          headers: { 'content-type': 'application/json' },
-          body:    JSON.stringify({ callback_query_id: callbackQuery.id }),
-        });
-      }
-
-      res.json({ ok: true });
-    });
-
-    router.post('/setup', async (req: Request, res: Response) => {
-      const { webhookUrl } = req.body as { webhookUrl: string };
-      if (!webhookUrl) {
-        res.status(400).json({ ok: false, error: 'webhookUrl required' });
-        return;
-      }
-      const body: Record<string, unknown> = { url: webhookUrl };
-      if (this.webhookSecret) body.secret_token = this.webhookSecret;
-
-      const apiRes = await fetch(`${TELEGRAM_API}/bot${this.botToken}/setWebhook`, {
-        method:  'POST',
-        headers: { 'content-type': 'application/json' },
-        body:    JSON.stringify(body),
-      });
-      const data = await apiRes.json();
-      res.json({ ok: true, telegram: data });
-    });
-
-    return router;
+  async send(message: OutgoingMessage): Promise<void> {
+    const url  = `https://api.telegram.org/bot${this.botToken}/sendMessage`
+    const body: Record<string, unknown> = {
+      chat_id:   message.externalId,
+      text:      message.text,
+    }
+    if (message.threadId && message.threadId !== message.externalId) {
+      body['message_thread_id'] = message.threadId
+    }
+    await fetch(url, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+    })
   }
 
-  async autoSetupWebhook(): Promise<void> {
-    const webhookUrl = process.env.TELEGRAM_WEBHOOK_URL;
-    if (!webhookUrl) return;
-    await fetch(`${TELEGRAM_API}/bot${this.botToken}/setWebhook`, {
-      method:  'POST',
-      headers: { 'content-type': 'application/json' },
-      body:    JSON.stringify({
-        url:          `${webhookUrl}/gateway/telegram/webhook`,
-        secret_token: this.webhookSecret || undefined,
-      }),
-    });
-    console.info(`[telegram] Webhook registered at ${webhookUrl}/gateway/telegram/webhook`);
+  async dispose(): Promise<void> {
+    // noop
   }
 }

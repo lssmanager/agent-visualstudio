@@ -1,159 +1,70 @@
-/**
- * webhook.adapter.ts — Canal Webhook HTTP genérico
- *
- * Permite recibir mensajes vía HTTP POST desde cualquier sistema externo:
- *   n8n, Zapier, Make, formularios web, pipelines CI/CD, etc.
- *
- * Endpoint montado en: POST /gateway/webhook/:channelId
- *
- * Formato del payload entrante (flexible):
- *   {
- *     userId:  string,                       // ID del usuario/origen (requerido)
- *     text?:   string,                       // Mensaje de texto
- *     data?:   Record<string, unknown>,      // Payload arbitrario
- *     source?: string                        // Identificador del sistema origen
- *   }
- *
- * Autenticación:
- *   Opcional — si credentials.webhookSecret está configurado, se valida
- *   el header Authorization: Bearer <secret> o X-Webhook-Secret: <secret>.
- *
- * Respuesta:
- *   El adapter envía la respuesta del agente como JSON en el reply del mismo POST:
- *   { ok: true, reply: "..." }
- *
- * Outbound (send):
- *   Si credentials.replyWebhookUrl está configurado, hace POST a esa URL
- *   con la respuesta del agente (push mode).
- */
-
-import { getPrisma } from '../../lib/prisma.js';
 import {
   BaseChannelAdapter,
   type IncomingMessage,
   type OutgoingMessage,
-} from './channel-adapter.interface';
+} from './channel-adapter.interface.js'
 
-type WebhookCredentials = {
-  webhookSecret?:   string;   // Opcional: valida Authorization header
-  replyWebhookUrl?: string;   // URL a la que enviar la respuesta (push mode)
-  source?:          string;   // Identificador de origen para logging
-};
-
-type WebhookPayload = {
-  userId:  string;
-  text?:   string;
-  data?:   Record<string, unknown>;
-  source?: string;
-};
-
+/**
+ * WebhookAdapter — adaptador para webhooks genéricos (cualquier HTTP callback)
+ * [F3a-17] replyFn hace POST al callbackUrl si está en el payload.
+ *          Sin callbackUrl → replyFn = undefined → path legacy.
+ */
 export class WebhookAdapter extends BaseChannelAdapter {
-  readonly channel = 'webhook';
-
-  // ---------------------------------------------------------------------------
-  // IChannelAdapter — initialize / dispose
-  // ---------------------------------------------------------------------------
+  readonly channel = 'webhook'
 
   async initialize(channelConfigId: string): Promise<void> {
-    this.channelConfigId = channelConfigId;
-
-    // Carga credenciales desde DB — mismo patrón que discord/telegram/whatsapp adapters
-    const db     = getPrisma();
-    const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } });
-    if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
-
-    this.credentials = config.credentials as Record<string, unknown>;
-
-    // Canal HTTP stateless — no hay conexión persistente que iniciar
-    console.info(`[WebhookAdapter] ready (channelConfigId=${channelConfigId})`);
+    this.channelConfigId = channelConfigId
   }
-
-  async dispose(): Promise<void> {
-    // Nada que cerrar — canal HTTP stateless
-  }
-
-  // ---------------------------------------------------------------------------
-  // Receive — parsea payload entrante
-  // ---------------------------------------------------------------------------
 
   async receive(
     rawPayload: Record<string, unknown>,
+    _secrets:   Record<string, unknown>,
   ): Promise<IncomingMessage | null> {
-    const payload = rawPayload as WebhookPayload;
+    const text        = String(rawPayload['text'] ?? rawPayload['message'] ?? rawPayload['body'] ?? '')
+    const externalId  = String(rawPayload['sessionId'] ?? rawPayload['id'] ?? rawPayload['chatId'] ?? 'unknown')
+    const threadId    = String(rawPayload['threadId'] ?? externalId)
+    const senderId    = String(rawPayload['userId'] ?? rawPayload['senderId'] ?? externalId)
+    const callbackUrl = rawPayload['callbackUrl'] as string | undefined
 
-    if (!payload.userId) {
-      console.warn('[WebhookAdapter] received payload without userId — ignoring');
-      return null;
-    }
+    // [F3a-17] replyFn solo si hay callbackUrl en el payload
+    let replied = false
+    const replyFn = callbackUrl
+      ? async (replyText: string) => {
+          if (replied) return
+          replied = true
 
-    let text = payload.text ?? '';
-    if (!text && payload.data) {
-      text = JSON.stringify(payload.data);
-    }
-    if (!text) {
-      console.warn('[WebhookAdapter] no text or data in payload — ignoring');
-      return null;
-    }
+          await fetch(callbackUrl, {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ reply: replyText, externalId }),
+            signal:  AbortSignal.timeout(10_000),
+          })
+        }
+      : undefined   // sin callbackUrl → replyFn undefined → path legacy en dispatch()
+
+    const sanitized = this.sanitizeRawPayload(rawPayload)
 
     return {
-      externalId:  payload.userId,
-      senderId:    payload.userId,
+      externalId,
+      threadId,
+      senderId,
       text,
       type:       'text',
+      rawPayload: sanitized,
       receivedAt: this.makeTimestamp(),
-      metadata:   rawPayload,
-    };
-  }
-
-  // ---------------------------------------------------------------------------
-  // IChannelAdapter — send
-  // ---------------------------------------------------------------------------
-
-  async send(message: OutgoingMessage): Promise<void> {
-    const creds = this.credentials as WebhookCredentials;
-
-    if (creds.replyWebhookUrl) {
-      const response = await fetch(creds.replyWebhookUrl, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: message.externalId,
-          reply:  message.text,
-          ts:     new Date().toISOString(),
-        }),
-      });
-
-      if (!response.ok) {
-        console.error(
-          `[WebhookAdapter] push reply failed: HTTP ${response.status} → ${creds.replyWebhookUrl}`,
-        );
-      }
+      replyFn,
     }
-    // Sin replyWebhookUrl: la respuesta se retorna en el body del POST original
-    // (manejado por el router webhook.ts)
   }
 
-  // ---------------------------------------------------------------------------
-  // Verificación de secreto (llamar desde el router antes de dispatch)
-  // ---------------------------------------------------------------------------
+  async send(message: OutgoingMessage, _config?: Record<string, unknown>, _secrets?: Record<string, unknown>): Promise<void> {
+    // Webhook genérico no tiene un endpoint de envío fijo.
+    // El callbackUrl solo existe en el contexto de receive().
+    // Este método solo se invoca en el path legacy (sin replyFn).
+    console.warn('[WebhookAdapter] send() called on legacy path — no callbackUrl available')
+    console.warn(`[WebhookAdapter] Dropping outgoing message for externalId=${message.externalId}`)
+  }
 
-  /**
-   * Valida Authorization: Bearer <secret> o X-Webhook-Secret contra
-   * credentials.webhookSecret.
-   * Retorna true si la validación pasa o si no hay secreto configurado.
-   */
-  static verifySecret(
-    credentials:  Record<string, unknown>,
-    authHeader?:  string,
-    xSecret?:     string,
-  ): boolean {
-    const expected = (credentials as WebhookCredentials).webhookSecret;
-    if (!expected) return true;
-
-    const provided =
-      authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : xSecret;
-
-    if (!provided) return false;
-    return provided === expected;
+  async dispose(): Promise<void> {
+    // noop
   }
 }

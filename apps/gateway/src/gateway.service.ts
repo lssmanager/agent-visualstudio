@@ -1,222 +1,128 @@
+import { Injectable } from '@nestjs/common'
+import { registry, SessionManager } from '@agent-vs/gateway-sdk'
+import type {
+  IncomingMessage,
+  OutgoingMessage,
+} from './channels/channel-adapter.interface.js'
+
 /**
- * gateway.service.ts — Dispatcher central del Gateway
- *
- * Responsabilidades:
- *   1. Cargar y cachear ChannelConfig desde Prisma
- *   2. Resolver el IChannelAdapter correcto para cada canal
- *   3. Coordinar receive() → SessionManager → AgentRunner → FlowExecutor
- *   4. Coordinar FlowEngine reply → SessionManager → adapter.send()
- *   5. Ciclo de vida: activateChannel() / deactivateChannel()
- *
- * Encriptación de secretos:
- *   ChannelConfig.secretsEncrypted: JSON encriptado con AES-256-GCM.
- *   Llave: GATEWAY_ENCRYPTION_KEY (hex 64 chars = 32 bytes).
- *   Formato del buffer encriptado:
- *     [12 bytes IV][16 bytes auth tag][N bytes ciphertext]
+ * GatewayService — orquesta recepción, procesamiento y envío de mensajes.
+ * [F3a-17] dispatch() usa replyFn fast path cuando está disponible.
  */
-
-import { Injectable }      from '@nestjs/common';
-import { createDecipheriv } from 'crypto';
-import type { PrismaClient }  from '@prisma/client';
-import {
-  registry,
-  SessionManager,
-  type IncomingMessage,
-  type OutboundMessage,
-} from '@agent-vs/gateway-sdk';
-import { AgentRunner }        from '@agent-vs/flow-engine';
-import type { IChannelAdapter } from './channels/channel-adapter.interface';
-import { PrismaService }       from './prisma/prisma.service';
-
-// ---------------------------------------------------------------------------
-// Tipos internos
-// ---------------------------------------------------------------------------
-
-interface DecryptedChannelConfig {
-  id:      string;
-  agentId: string;
-  type:    string;
-  config:  Record<string, unknown>;
-  secrets: Record<string, unknown>;
-}
-
-// ---------------------------------------------------------------------------
-// GatewayService
-// ---------------------------------------------------------------------------
-
 @Injectable()
 export class GatewayService {
-  /** Exposed for webchat reply route (needs findSession) */
-  readonly sessions:    SessionManager;
-  private readonly agentRunner:   AgentRunner;
-  private readonly configCache  = new Map<string, DecryptedChannelConfig>();
-  private readonly encKey:       Buffer;
+  constructor(
+    private readonly sessions:    SessionManager,
+    private readonly agentRunner: { run(agentId: string, history: unknown[]): Promise<{ reply?: string }> },
+  ) {}
 
-  constructor(private readonly db: PrismaService) {
-    this.sessions    = new SessionManager(db);
-    this.agentRunner = new AgentRunner({ db });
+  // ── Helpers privados ────────────────────────────────────────────────────
 
-    const keyHex = process.env.GATEWAY_ENCRYPTION_KEY ?? '';
-    if (!keyHex) {
-      console.warn(
-        '[GatewayService] GATEWAY_ENCRYPTION_KEY not set — secrets decryption disabled',
-      );
-    }
-    this.encKey = Buffer.from(keyHex || '0'.repeat(64), 'hex');
+  private async loadChannelConfig(channelConfigId: string) {
+    const cfg = await registry.getChannelConfig(channelConfigId)
+    if (!cfg) throw new Error(`ChannelConfig not found: ${channelConfigId}`)
+    return cfg
   }
 
-  // -------------------------------------------------------------------------
-  // Public: lifecycle
-  // -------------------------------------------------------------------------
-
-  async activateChannel(channelConfigId: string): Promise<void> {
-    const cfg     = await this.loadChannelConfig(channelConfigId);
-    const adapter = this.resolveAdapter(cfg.type);
-    await (adapter as unknown as {
-      setup: (c: Record<string, unknown>, s: Record<string, unknown>) => Promise<void>;
-    }).setup(cfg.config, cfg.secrets);
-    console.info(`[GatewayService] channel ${channelConfigId} (${cfg.type}) activated`);
+  private resolveAdapter(channelType: string) {
+    const adapter = registry.getAdapter(channelType)
+    if (!adapter) throw new Error(`No adapter registered for channel type: ${channelType}`)
+    return adapter
   }
 
-  async deactivateChannel(channelConfigId: string): Promise<void> {
-    const cached = this.configCache.get(channelConfigId);
-    if (!cached) return;
-    const adapter = this.resolveAdapter(cached.type);
-    await (adapter as unknown as {
-      teardown: (c: Record<string, unknown>, s: Record<string, unknown>) => Promise<void>;
-    }).teardown(cached.config, cached.secrets).catch((err: unknown) => {
-      console.warn(`[GatewayService] teardown error for channel ${channelConfigId}:`, err);
-    });
-    this.configCache.delete(channelConfigId);
-    console.info(`[GatewayService] channel ${channelConfigId} deactivated`);
-  }
-
-  // -------------------------------------------------------------------------
-  // Public: message flow
-  // -------------------------------------------------------------------------
+  // ── dispatch() ──────────────────────────────────────────────────────────
 
   /**
-   * Entry point for every inbound webhook.
+   * Procesa un mensaje entrante de un canal.
    *
-   * Flow:
-   *   rawPayload
-   *     → adapter.receive()       parse channel format → IncomingMessage
-   *     → SessionManager           upsert GatewaySession, append user turn
-   *     → AgentRunner.run()        load Agent+FlowVersion, execute FlowExecutor
-   *     → recordReply()            append assistant turn, adapter.send()
+   * [F3a-17] Fast path: si incoming.replyFn está definida, la usamos
+   * directamente para responder in-band (crítico para canales con timeout
+   * de webhook como Telegram/WhatsApp, que requieren reply en ≤30s).
+   *
+   * Legacy path: si replyFn es undefined, usa la ruta antigua a través
+   * de recordReply() → adapter.send().
    */
   async dispatch(
     channelConfigId: string,
     rawPayload:      Record<string, unknown>,
   ): Promise<void> {
-    const cfg     = await this.loadChannelConfig(channelConfigId);
-    const adapter = this.resolveAdapter(cfg.type);
+    const cfg     = await this.loadChannelConfig(channelConfigId)
+    const adapter = this.resolveAdapter(cfg.type)
 
-    // 1. Parse inbound message
+    // 1. Parse inbound — receive() devuelve IncomingMessage con
+    //    replyFn, threadId y rawPayload ya populados por el adaptador
     const incoming = await (adapter as unknown as {
-      receive: (p: Record<string, unknown>, s: Record<string, unknown>) => Promise<IncomingMessage | null>;
-    }).receive(rawPayload, cfg.secrets);
+      receive: (p: Record<string, unknown>, s: Record<string, unknown>) => Promise<IncomingMessage | null>
+    }).receive(rawPayload, cfg.secrets)
 
-    if (!incoming) return;
+    if (!incoming) return
 
     // 2. Persist user turn + upsert session
     const session = await this.sessions.receiveUserMessage(
       channelConfigId,
       cfg.agentId,
       incoming,
-    );
+    )
 
     // 3. Run agent via FlowExecutor
-    let replyText: string;
+    let replyText: string
     try {
       const result = await this.agentRunner.run(
         session.agentId,
         session.history,
-      );
-      replyText = result.reply || '(sin respuesta)';
+      )
+      replyText = result.reply || '(sin respuesta)'
     } catch (err) {
-      console.error('[GatewayService] AgentRunner error:', err);
-      replyText = '(ocurrió un error al procesar tu mensaje)';
+      console.error('[GatewayService] AgentRunner error:', err)
+      replyText = '(ocurrió un error al procesar tu mensaje)'
     }
 
     // 4. Build outbound message
-    const outbound: OutboundMessage = {
-      externalUserId: incoming.externalUserId,
-      text: replyText,
-    };
+    const outgoing: OutgoingMessage = {
+      externalId: incoming.externalId,
+      threadId:   incoming.threadId !== incoming.externalId
+                    ? incoming.threadId   // preserva el thread si es distinto del chat
+                    : undefined,
+      text:       replyText,
+    }
 
-    // 5. Persist assistant turn + send to channel
-    await this.recordReply(channelConfigId, session.id, outbound);
+    // 5a. PATH RÁPIDO: replyFn disponible → reply in-band directo
+    //     El adaptador ya tiene las credenciales capturadas en el closure.
+    //     NO llamamos adapter.send() → evitamos double-send.
+    if (incoming.replyFn) {
+      await incoming.replyFn(replyText, {
+        format:        'text',
+        quoteOriginal: false,
+      })
+      // Persistir solo el texto (el envío ya ocurrió)
+      await this.sessions.recordAssistantReply(session.id, outgoing)
+      return
+    }
+
+    // 5b. PATH LEGACY: sin replyFn → ruta antigua (adapter.send() en recordReply)
+    await this.recordReply(channelConfigId, session.id, outgoing)
   }
 
+  // ── recordReply() ───────────────────────────────────────────────────────
+
   /**
-   * Called by the internal /api/webchat/:channelId/reply endpoint.
+   * [F3a-17] Actualizado para usar OutgoingMessage (era OutboundMessage).
+   *
+   * Sigue existiendo para:
+   *   1. El path legacy (canales sin replyFn)
+   *   2. El endpoint POST /webchat/:channelId/reply
    */
   async recordReply(
     channelConfigId: string,
     sessionId:       string,
-    outbound:        OutboundMessage,
+    outgoing:        OutgoingMessage,
   ): Promise<void> {
-    const cfg     = await this.loadChannelConfig(channelConfigId);
-    const adapter = this.resolveAdapter(cfg.type);
+    const cfg     = await this.loadChannelConfig(channelConfigId)
+    const adapter = this.resolveAdapter(cfg.type)
 
-    await this.sessions.recordAssistantReply(sessionId, outbound);
+    await this.sessions.recordAssistantReply(sessionId, outgoing)
     await (adapter as unknown as {
-      send: (m: OutboundMessage, c: Record<string, unknown>, s: Record<string, unknown>) => Promise<void>;
-    }).send(outbound, cfg.config, cfg.secrets);
-  }
-
-  // -------------------------------------------------------------------------
-  // Private helpers
-  // -------------------------------------------------------------------------
-
-  private async loadChannelConfig(
-    channelConfigId: string,
-  ): Promise<DecryptedChannelConfig> {
-    const cached = this.configCache.get(channelConfigId);
-    if (cached) return cached;
-
-    const row = await this.db.channelConfig.findUniqueOrThrow({
-      where: { id: channelConfigId },
-    });
-
-    const secrets = this.decrypt(row.secretsEncrypted as string | null);
-    const cfg: DecryptedChannelConfig = {
-      id:      row.id,
-      agentId: row.agentId,
-      type:    row.type,
-      config:  (row.config as Record<string, unknown>) ?? {},
-      secrets,
-    };
-    this.configCache.set(channelConfigId, cfg);
-    return cfg;
-  }
-
-  private resolveAdapter(type: string): IChannelAdapter {
-    if (registry.has(type)) {
-      return registry.get(type) as unknown as IChannelAdapter;
-    }
-    throw new Error(
-      `GatewayService: no adapter registered for channel type '${type}'. ` +
-      `Registered: ${registry.registeredTypes().join(', ') || '(none)'}`,
-    );
-  }
-
-  private decrypt(secretsEncrypted: string | null): Record<string, unknown> {
-    if (!secretsEncrypted) return {};
-    try {
-      const buf     = Buffer.from(secretsEncrypted, 'hex');
-      const iv      = buf.subarray(0, 12);
-      const authTag = buf.subarray(12, 28);
-      const cipher  = buf.subarray(28);
-
-      const decipher = createDecipheriv('aes-256-gcm', this.encKey, iv);
-      decipher.setAuthTag(authTag);
-      const decrypted = Buffer.concat([decipher.update(cipher), decipher.final()]);
-      return JSON.parse(decrypted.toString('utf8')) as Record<string, unknown>;
-    } catch (err) {
-      console.error('[GatewayService] Failed to decrypt secrets:', err);
-      return {};
-    }
+      send: (m: OutgoingMessage, c: Record<string, unknown>, s: Record<string, unknown>) => Promise<void>
+    }).send(outgoing, cfg.config, cfg.secrets)
   }
 }

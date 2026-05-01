@@ -1,135 +1,125 @@
-/**
- * webchat.adapter.ts — Adaptador WebChat (SSE + HTTP)
- *
- * Expone dos endpoints que el frontend puede consumir:
- *   POST /gateway/webchat/:sessionId/message  → mensaje entrante
- *   GET  /gateway/webchat/:sessionId/stream   → SSE de respuestas
- *
- * Inspirado en Flowise ChatFlow y n8n WebhookNode.
- */
-
-import { Router, type Request, type Response } from 'express';
-import { getPrisma } from '../../lib/prisma.js';
 import {
   BaseChannelAdapter,
   type IncomingMessage,
   type OutgoingMessage,
-} from './channel-adapter.interface';
+} from './channel-adapter.interface.js'
 
+/**
+ * Conexión WebSocket/SSE activa para una sesión de WebChat.
+ */
+export interface WebChatConnection {
+  send(data: string): void
+  close(): void
+}
+
+/**
+ * WebChatAdapter — adaptador para el canal WebChat (WebSocket / SSE)
+ * [F3a-17] replyFn emite al WebSocket/SSE de la sesión activa.
+ *          Si la sesión no está conectada, encola el reply.
+ */
 export class WebChatAdapter extends BaseChannelAdapter {
-  readonly channel = 'webchat';
+  readonly channel = 'webchat'
 
-  private readonly sseClients = new Map<string, Response[]>();
+  /** Conexiones WebSocket/SSE activas, por sessionId */
+  protected readonly activeConnections = new Map<string, WebChatConnection>()
 
-  // ── Lifecycle ─────────────────────────────────────────────────────────────────────
+  /** Replies pendientes para sesiones desconectadas, por sessionId */
+  protected readonly pendingReplies = new Map<string, string[]>()
 
   async initialize(channelConfigId: string): Promise<void> {
-    this.channelConfigId = channelConfigId;
-    const db     = getPrisma();
-    const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } });
-    if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
-    this.credentials = config.credentials as Record<string, unknown>;
-    console.info(`[webchat] Initialized for config ${channelConfigId}`);
+    this.channelConfigId = channelConfigId
+  }
+
+  /**
+   * Registra una conexión WebSocket/SSE activa para una sesión.
+   * Llamado por el WebChat controller cuando el cliente conecta.
+   */
+  registerConnection(sessionId: string, connection: WebChatConnection): void {
+    this.activeConnections.set(sessionId, connection)
+    // Vaciar replies pendientes que se acumularon mientras estaba desconectado
+    const pending = this.pendingReplies.get(sessionId)
+    if (pending?.length) {
+      for (const text of pending) {
+        connection.send(JSON.stringify({ type: 'message', text }))
+      }
+      this.pendingReplies.delete(sessionId)
+    }
+  }
+
+  /**
+   * Elimina la conexión cuando el cliente desconecta.
+   */
+  unregisterConnection(sessionId: string): void {
+    this.activeConnections.delete(sessionId)
+  }
+
+  async receive(
+    rawPayload: Record<string, unknown>,
+    _secrets:   Record<string, unknown>,
+  ): Promise<IncomingMessage | null> {
+    const sessionId = String(rawPayload['sessionId'] ?? rawPayload['session_id'] ?? '')
+    if (!sessionId) return null
+
+    const text     = String(rawPayload['text'] ?? rawPayload['message'] ?? '')
+    const senderId = String(rawPayload['userId'] ?? rawPayload['user_id'] ?? sessionId)
+
+    // WebChat: sessionId = externalId = threadId (1 sesión = 1 hilo)
+    const externalId = sessionId
+    const threadId   = sessionId
+
+    // [F3a-17] replyFn: emite al WebSocket/SSE activo o encola
+    let replied = false
+    const replyFn = async (replyText: string) => {
+      if (replied) return
+      replied = true
+
+      const connection = this.activeConnections.get(sessionId)
+      if (connection) {
+        connection.send(JSON.stringify({ type: 'message', text: replyText }))
+      } else {
+        // Sesión desconectada → encolar para cuando reconecte
+        const queue = this.pendingReplies.get(sessionId)
+        if (queue) {
+          queue.push(replyText)
+        } else {
+          this.pendingReplies.set(sessionId, [replyText])
+        }
+      }
+    }
+
+    const sanitized = this.sanitizeRawPayload(rawPayload)
+
+    return {
+      externalId,
+      threadId,
+      senderId,
+      text,
+      type:       'text',
+      rawPayload: sanitized,
+      receivedAt: this.makeTimestamp(),
+      replyFn,
+    }
+  }
+
+  async send(message: OutgoingMessage): Promise<void> {
+    const connection = this.activeConnections.get(message.externalId)
+    if (connection) {
+      connection.send(JSON.stringify({ type: 'message', text: message.text }))
+    } else {
+      const queue = this.pendingReplies.get(message.externalId)
+      if (queue) {
+        queue.push(message.text)
+      } else {
+        this.pendingReplies.set(message.externalId, [message.text])
+      }
+    }
   }
 
   async dispose(): Promise<void> {
-    for (const [sessionId, clients] of this.sseClients) {
-      clients.forEach((res) => res.end());
-      console.info(`[webchat] Closed ${clients.length} SSE streams for session ${sessionId}`);
+    for (const conn of this.activeConnections.values()) {
+      conn.close()
     }
-    this.sseClients.clear();
-  }
-
-  // ── Send ────────────────────────────────────────────────────────────────────────
-
-  async send(message: OutgoingMessage): Promise<void> {
-    const db      = getPrisma();
-    const clients = this.sseClients.get(message.externalId) ?? [];
-    const payload = JSON.stringify({
-      type:        'message',
-      text:        message.text,
-      richContent: message.richContent ?? null,
-      metadata:    message.metadata    ?? {},
-      ts:          new Date().toISOString(),
-    });
-
-    if (clients.length === 0) {
-      await db.gatewaySession.update({
-        where: {
-          channelConfigId_externalId: {
-            channelConfigId: this.channelConfigId,
-            externalId:      message.externalId,
-          },
-        },
-        data: {
-          contextWindow:  { push: { role: 'assistant', content: message.text } } as any,
-          lastActivityAt: new Date(),
-        },
-      });
-      return;
-    }
-
-    clients.forEach((res) => { res.write(`data: ${payload}\n\n`); });
-  }
-
-  // ── Express Router ────────────────────────────────────────────────────────────────
-
-  getRouter(): Router {
-    const router = Router();
-
-    router.post('/:sessionId/message', async (req: Request, res: Response) => {
-      const { sessionId } = req.params;
-      const { text, metadata } = req.body as { text: string; metadata?: Record<string, unknown> };
-
-      if (!text?.trim()) {
-        res.status(400).json({ ok: false, error: 'text is required' });
-        return;
-      }
-
-      const msg: IncomingMessage = {
-        externalId: sessionId,
-        senderId:   sessionId,
-        text:       text.trim(),
-        type:       'text',
-        metadata,
-        receivedAt: this.makeTimestamp(),
-      };
-
-      await this.emit(msg);
-      res.json({ ok: true });
-    });
-
-    router.get('/:sessionId/stream', (req: Request, res: Response) => {
-      const { sessionId } = req.params;
-
-      res.setHeader('Content-Type',    'text/event-stream');
-      res.setHeader('Cache-Control',   'no-cache');
-      res.setHeader('Connection',      'keep-alive');
-      res.setHeader('X-Accel-Buffering', 'no');
-      res.flushHeaders();
-
-      if (!this.sseClients.has(sessionId)) this.sseClients.set(sessionId, []);
-      this.sseClients.get(sessionId)!.push(res);
-
-      const heartbeat = setInterval(() => { res.write(': heartbeat\n\n'); }, 25_000);
-
-      req.on('close', () => {
-        clearInterval(heartbeat);
-        const list = this.sseClients.get(sessionId) ?? [];
-        const idx  = list.indexOf(res);
-        if (idx !== -1) list.splice(idx, 1);
-      });
-    });
-
-    router.get('/:sessionId/history', async (req: Request, res: Response) => {
-      const { sessionId } = req.params;
-      const db      = getPrisma();
-      const session = await db.gatewaySession.findFirst({
-        where: { channelConfigId: this.channelConfigId, externalId: sessionId },
-      });
-      res.json({ ok: true, history: (session?.contextWindow as unknown[]) ?? [] });
-    });
-
-    return router;
+    this.activeConnections.clear()
+    this.pendingReplies.clear()
   }
 }
