@@ -23,7 +23,7 @@ export interface IncomingMessage {
   /** Texto plano del mensaje */
   text: string;
   /** Tipo de mensaje */
-  type: 'text' | 'image' | 'audio' | 'file' | 'command';
+  type: 'text' | 'image' | 'audio' | 'file' | 'command' | 'attachment';
   /** Adjuntos opcionales (URLs u objetos) */
   attachments?: Array<{ type: string; url?: string; data?: unknown }>;
   /** Metadatos específicos del canal (raw payload) */

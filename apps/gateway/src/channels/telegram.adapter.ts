@@ -36,14 +36,14 @@ import {
   type Context,
 } from 'grammy';
 import { Router, type Request, type Response } from 'express';
-import { prisma } from '../../../api/src/modules/core/db/prisma.service.js';
+import { PrismaService } from '../prisma/prisma.service.js';
 import {
   BaseChannelAdapter,
   type IncomingMessage,
   type OutgoingMessage,
 } from './channel-adapter.interface.js';
 
-const db = prisma as any;
+const db = new PrismaService();
 
 // ── Tipos de credenciales ─────────────────────────────────────────────
 
@@ -143,9 +143,9 @@ export class TelegramAdapter extends BaseChannelAdapter {
       // start() es no-bloqueante: lanza internamente y resolve inmediatamente
       this.bot.start({
         allowed_updates: this.allowedUpdates as any,
-        onStart: (info) =>
+        onStart: (info: { username?: string }) =>
           console.info(`[telegram] Long polling started as @${info.username}`),
-      }).catch((err) =>
+      }).catch((err: unknown) =>
         console.error('[telegram] Polling error:', err),
       );
     }
@@ -173,7 +173,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
 
   private registerHandlers(bot: Bot): void {
     // Indicador de escritura mientras el agente procesa
-    bot.use(async (ctx, next) => {
+    bot.use(async (ctx: Context, next: () => Promise<void>) => {
       if (ctx.chat) {
         await ctx.replyWithChatAction('typing').catch(() => {/* ignorar si falla */});
       }
@@ -181,17 +181,20 @@ export class TelegramAdapter extends BaseChannelAdapter {
     });
 
     // Mensajes de texto y comandos
-    bot.on('message', async (ctx) => {
+    bot.on('message', async (ctx: Context) => {
       const msg = ctx.message;
       const text = msg.text ?? msg.caption ?? '';
-      if (!text) return; // foto/doc sin caption → ignorar
+      const attachments = this.extractAttachments(ctx) ?? [];
+      if (!text && attachments.length === 0) return;
 
       const incoming: IncomingMessage = {
         externalId:  String(msg.chat.id),
         senderId:    String(msg.from?.id ?? msg.chat.id),
         text,
-        type:        text.startsWith('/') ? 'command' : 'text',
-        attachments: this.extractAttachments(ctx),
+        type:        text.startsWith('/')
+          ? 'command'
+          : (text ? 'text' : 'attachment'),
+        attachments,
         metadata:    { updateId: ctx.update.update_id, raw: msg },
         receivedAt:  this.makeTimestamp(),
       };
@@ -199,7 +202,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
     });
 
     // Mensajes editados — re-emitir con metadata.edited = true
-    bot.on('edited_message', async (ctx) => {
+    bot.on('edited_message', async (ctx: Context) => {
       const msg = ctx.editedMessage;
       const text = msg?.text ?? msg?.caption ?? '';
       if (!text) return;
@@ -216,7 +219,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
     });
 
     // Callback queries (botones inline)
-    bot.on('callback_query:data', async (ctx) => {
+    bot.on('callback_query:data', async (ctx: Context) => {
       const cq = ctx.callbackQuery;
       const chatId = cq.message?.chat.id ?? cq.from.id;
 
@@ -228,24 +231,26 @@ export class TelegramAdapter extends BaseChannelAdapter {
         metadata:    { callbackQueryId: cq.id, updateId: ctx.update.update_id, raw: cq },
         receivedAt:  this.makeTimestamp(),
       };
-      await this.emit(incoming);
-
-      // Quitar el spinner de Telegram
-      await ctx.answerCallbackQuery().catch(() => {});
+      try {
+        await this.emit(incoming);
+      } finally {
+        // Quitar el spinner de Telegram siempre, incluso si emit() falla
+        await ctx.answerCallbackQuery().catch(() => {});
+      }
     });
 
     // Error handler global de grammÝY
-    bot.catch((err) => {
-      const { error, ctx: errCtx } = err;
+    bot.catch((err: { error: unknown; ctx: Context }) => {
+      const { error, ctx: errCtx } = err as { error: unknown; ctx: Context };
       if (error instanceof GrammyError) {
         console.error(
           `[telegram] GrammyError (update ${errCtx.update.update_id}):`,
-          error.description,
+          (error as GrammyError).description,
         );
       } else if (error instanceof HttpError) {
         console.error(
           `[telegram] HttpError (update ${errCtx.update.update_id}):`,
-          error.message,
+          (error as HttpError).message,
         );
       } else {
         console.error(
@@ -329,6 +334,11 @@ export class TelegramAdapter extends BaseChannelAdapter {
             allowed_updates: this.allowedUpdates as any,
           },
         );
+        this.webhookUrl = url;
+        if (this.usePolling && this.bot) {
+          await this.bot.stop().catch(() => {});
+        }
+        this.usePolling = false;
         res.json({ ok: true, webhookRegistered: `${url}/gateway/telegram/webhook` });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -377,7 +387,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
    * Extrae adjuntos del contexto (foto, documento, voz, audio).
    * Devuelve array vacío si no hay adjuntos.
    */
-  private extractAttachments(ctx: Context): IncomingMessage['attachments'] {
+  private extractAttachments(ctx: Context): NonNullable<IncomingMessage['attachments']> {
     const msg = ctx.message;
     if (!msg) return [];
 

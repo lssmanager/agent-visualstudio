@@ -44,6 +44,20 @@ const mockBotOn = vi.fn((filter: string, handler: (ctx: any) => Promise<void>) =
   registeredHandlers.set(filter, handler)
 })
 
+function getRouteHandler(
+  router: ReturnType<TelegramAdapter['getRouter']>,
+  method: 'post' | 'get',
+  path: string,
+): (req: any, res: any) => Promise<void> {
+  const layer = (router as any).stack.find((entry: any) =>
+    entry.route?.path === path && entry.route.methods?.[method],
+  )
+  if (!layer) {
+    throw new Error(`Route not found: ${method.toUpperCase()} ${path}`)
+  }
+  return layer.route.stack[0].handle
+}
+
 vi.mock('grammy', async () => {
   class FakeBot {
     api = {
@@ -115,6 +129,35 @@ describe('TelegramAdapter — grammÝY SDK', () => {
     expect(mockBotStart).not.toHaveBeenCalled()
   })
 
+  it('setup route registra webhook con la URL base y no arranca polling', async () => {
+    mockConfig.credentials = {
+      botToken:   'FAKE_TOKEN:test',
+      webhookUrl: 'https://agents.example.com',
+    } as any
+    await adapter.initialize('cfg-tg-1')
+
+    const router = adapter.getRouter()
+    const handler = getRouteHandler(router, 'post', '/setup')
+
+    const req = {
+      body: { webhookUrl: 'https://agents.example.com' },
+    }
+    const res = {
+      statusCode: 200,
+      body: null as any,
+      status(code: number) { this.statusCode = code; return this },
+      json(payload: any) { this.body = payload; return this },
+    }
+
+    await handler(req, res)
+
+    expect(mockSetWebhook).toHaveBeenCalledOnce()
+    expect((mockSetWebhook as Mock).mock.calls[0][0]).toBe(
+      'https://agents.example.com/gateway/telegram/webhook',
+    )
+    expect(mockBotStart).not.toHaveBeenCalled()
+  })
+
   it('registra handlers para message, edited_message y callback_query:data', async () => {
     await adapter.initialize('cfg-tg-1')
     // Los handlers se registran con los filtros broad que usa grammÝY
@@ -164,6 +207,26 @@ describe('TelegramAdapter — grammÝY SDK', () => {
     })
 
     expect(received?.type).toBe('command')
+  })
+
+  it('message solo con adjuntos → type es "attachment"', async () => {
+    await adapter.initialize('cfg-tg-1')
+    let received: any = null
+    adapter.onMessage(async (msg) => { received = msg })
+
+    const handler = registeredHandlers.get('message')!
+    await handler({
+      update: { update_id: 101 },
+      message: {
+        message_id: 12,
+        chat:       { id: 88, type: 'private' },
+        from:       { id: 99 },
+        photo:      [{ file_id: 'photo-1' }],
+      },
+    })
+
+    expect(received?.type).toBe('attachment')
+    expect(received?.attachments?.length).toBeGreaterThan(0)
   })
 
   it('edited_message → metadata.edited === true', async () => {
@@ -229,6 +292,29 @@ describe('TelegramAdapter — grammÝY SDK', () => {
     await adapter.initialize('cfg-tg-1')
     await adapter.sendTyping('777')
     expect(mockSendChatAction).toHaveBeenCalledWith('777', 'typing')
+  })
+
+  it('callback_query siempre llama answerCallbackQuery aunque emit() falle', async () => {
+    await adapter.initialize('cfg-tg-1')
+    adapter.onMessage(async () => {
+      throw new Error('boom')
+    })
+
+    const answerCallbackQuery = vi.fn().mockResolvedValue(true)
+
+    const handler = registeredHandlers.get('callback_query:data')!
+    await expect(handler({
+      update: { update_id: 222 },
+      callbackQuery: {
+        id: 'cq-1',
+        from: { id: 777 },
+        data: 'pressed',
+        message: { chat: { id: 888 } },
+      },
+      answerCallbackQuery,
+    })).rejects.toThrow('boom')
+
+    expect(answerCallbackQuery).toHaveBeenCalledOnce()
   })
 
   // ── dispose() ─────────────────────────────────────────────────────────────
