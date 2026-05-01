@@ -7,7 +7,7 @@
  * Skills (F1b-08):    Skill + AgentSkill
  */
 
-// ── Jerarquía ──────────────────────────────────────────────────────────────────
+// ── Jerarquía ──────────────────────────────────────────────────────────────────────────────
 
 export { AgencyRepository } from './agency.repository'
 export type {
@@ -35,9 +35,10 @@ export type {
   CreateAgentInput,
   UpdateAgentInput,
   FindAgentsOptions,
+  PropagateHook,          // [F2b-04] hook type para inyección desde service layer
 } from './agent.repository'
 
-// ── Ejecución ────────────────────────────────────────────────────────────────
+// ── Ejecución ────────────────────────────────────────────────────────────────────────
 
 export { RunRepository } from './run.repository'
 export type {
@@ -54,7 +55,7 @@ export type {
   FindStepsOptions,
 } from './run-step.repository'
 
-// ── Gateway / Conversaciones ─────────────────────────────────────────────
+// ── Gateway / Conversaciones ───────────────────────────────────────────────
 
 export { ConversationMessageRepository } from './conversation-message.repository'
 export type {
@@ -63,7 +64,7 @@ export type {
   MessageRole,
 } from './conversation-message.repository'
 
-// ── Skills ───────────────────────────────────────────────────────────────────
+// ── Skills ─────────────────────────────────────────────────────────────────────────────
 
 export { SkillRepository } from './skill.repository.js'
 export type {
