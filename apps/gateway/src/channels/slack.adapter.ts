@@ -1,19 +1,22 @@
 /**
- * slack.adapter.ts — Adaptador Slack
+ * slack.adapter.ts — F3a-28
  *
- * Soporta dos modos:
+ * Adaptador Slack completo:
  *   - Socket Mode: SLACK_SOCKET_MODE=true + SLACK_APP_TOKEN=xapp-...
- *   - HTTP Mode: recibe POST en /gateway/slack/:channelId
+ *   - HTTP Mode:   recibe POST en /gateway/slack/:channelId
+ *   - Slash commands: /ask <prompt>, /status
+ *   - OAuth flow: SlackOAuthHandler.handleCallback()
+ *   - replied=true SOLO tras res.ok (fix #182)
+ *   - verifySignature() obligatorio en receiveHttp() (fix #178 reforzado)
  *
- * Secrets esperados en ChannelConfig.secrets (cifrado en DB), NO de env global:
+ * Secrets esperados en ChannelConfig.credentials:
  *   {
  *     botToken:      "xoxb-...",
- *     signingSecret: "...",     // OBLIGATORIO — sin él se lanza Error
- *     appToken?:     "xapp-..." // solo Socket Mode
+ *     signingSecret: "...",       // OBLIGATORIO — lanzar Error si falta
+ *     appToken?:     "xapp-...", // Solo Socket Mode
+ *     oauthClientId?:     string,
+ *     oauthClientSecret?: string,
  *   }
- *
- * FIX #178: verifySignature() recibe signingSecret explícito (no SLACK_SIGNING_SECRET env).
- *           initialize() lanza Error si signingSecret está ausente o vacío.
  *
  * Ref: https://slack.dev/bolt-js/
  */
@@ -26,7 +29,8 @@ import {
   type OutgoingMessage,
 } from './channel-adapter.interface';
 
-// Tipos Bolt importados dinámicamente para lazy-load
+// ── Tipos internos ──────────────────────────────────────────────────────────
+
 type BoltApp = {
   client: {
     chat: {
@@ -38,10 +42,12 @@ type BoltApp = {
 };
 
 type SlackSecrets = {
-  botToken:       string;
-  signingSecret:  string;
-  appToken?:      string;
-  socketMode?:    boolean;
+  botToken:           string;
+  signingSecret:      string;
+  appToken?:          string;
+  socketMode?:        boolean;
+  oauthClientId?:     string;
+  oauthClientSecret?: string;
 };
 
 type SlackMessageEvent = {
@@ -58,6 +64,18 @@ type SlackEventPayload = {
   event?:     SlackMessageEvent;
   challenge?: string;
 };
+
+/** Payload de un slash command Slack (POST form-urlencoded). */
+export type SlackSlashPayload = {
+  command:      string;   // e.g. '/ask'
+  text:         string;   // argumentos del comando
+  user_id:      string;
+  channel_id:   string;
+  team_id?:     string;
+  response_url: string;
+};
+
+// ── SlackAdapter ────────────────────────────────────────────────────────────
 
 export class SlackAdapter extends BaseChannelAdapter {
   readonly channel = 'slack' as const satisfies ChannelType;
@@ -80,19 +98,12 @@ export class SlackAdapter extends BaseChannelAdapter {
 
     const secrets = this.credentials as SlackSecrets;
 
-    // FIX #178: lanzar Error (no console.warn) si signingSecret no está configurado.
-    // El secret DEBE venir de channelConfig.credentials (cifrado en DB), nunca de env global.
+    // Validar signingSecret obligatorio (fix #178)
     if (!secrets.signingSecret) {
       throw new Error(
-        `[SlackAdapter] ChannelConfig ${channelConfigId} is missing secrets.signingSecret. ` +
-        'Configure it in ChannelConfig.credentials. ' +
-        'Do NOT use the SLACK_SIGNING_SECRET environment variable — use per-channel secrets.',
-      );
-    }
-
-    if (!secrets.botToken) {
-      throw new Error(
-        `[SlackAdapter] ChannelConfig ${channelConfigId} is missing secrets.botToken.`,
+        `[SlackAdapter] signingSecret is required in ChannelConfig.credentials ` +
+        `(channelConfigId=${channelConfigId}). ` +
+        `Set it in the channel configuration, not as a global env var.`,
       );
     }
 
@@ -104,7 +115,9 @@ export class SlackAdapter extends BaseChannelAdapter {
       await this.startSocketMode();
     }
 
-    console.info(`[SlackAdapter] initialized (channelConfigId=${channelConfigId}, socketMode=${this.socketMode})`);
+    console.info(
+      `[SlackAdapter] initialized (channelConfigId=${channelConfigId}, socketMode=${this.socketMode})`,
+    );
   }
 
   async dispose(): Promise<void> {
@@ -117,9 +130,16 @@ export class SlackAdapter extends BaseChannelAdapter {
   }
 
   // ---------------------------------------------------------------------------
-  // Receive (HTTP mode)
+  // Receive — HTTP mode (Events API)
   // ---------------------------------------------------------------------------
 
+  /**
+   * Procesa el body ya parseado de un evento Slack Events API.
+   * Para URL_VERIFICATION devuelve null — el caller debe responder con challenge.
+   * Para mensajes de bot (bot_id presente) devuelve null para evitar loops.
+   *
+   * @param rawPayload  Body JSON de la petición ya parseado
+   */
   async receive(
     rawPayload: Record<string, unknown>,
   ): Promise<IncomingMessage | null> {
@@ -135,8 +155,8 @@ export class SlackAdapter extends BaseChannelAdapter {
     return {
       channelConfigId: this.channelConfigId,
       channelType:     'slack',
-      externalUserId:  event.user,
       externalId:      event.channel,
+      externalUserId:  event.user,
       senderId:        event.user,
       text:            event.text ?? '',
       type:            'text',
@@ -145,10 +165,98 @@ export class SlackAdapter extends BaseChannelAdapter {
     };
   }
 
+  /**
+   * Procesa una petición HTTP de Slack verificando la firma HMAC antes de parsear.
+   * Este método debe usarse en lugar de receive() en el router HTTP.
+   *
+   * @param rawBody    Body raw de la petición como string (antes de parsear)
+   * @param timestamp  Header X-Slack-Request-Timestamp
+   * @param signature  Header X-Slack-Signature
+   * @returns          IncomingMessage | null, igual que receive()
+   * @throws           Error si la firma no es válida
+   */
+  async receiveHttp(
+    rawBody:   string,
+    timestamp: string,
+    signature: string,
+  ): Promise<IncomingMessage | null> {
+    const secrets = this.credentials as SlackSecrets;
+
+    const valid = await SlackAdapter.verifySignature(
+      secrets.signingSecret,
+      timestamp,
+      signature,
+      rawBody,
+    );
+
+    if (!valid) {
+      throw new Error(`[SlackAdapter] Invalid Slack signature (channelConfigId=${this.channelConfigId})`);
+    }
+
+    const payload = JSON.parse(rawBody) as Record<string, unknown>;
+    return this.receive(payload);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Slash commands
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Procesa un slash command Slack (/ask, /status).
+   * Los slash commands llegan como form-urlencoded — parsear antes de llamar.
+   *
+   * El caller debe responder HTTP 200 con el texto devuelto en ≤ 3 s.
+   * Para respuestas largas, usar response_url con delayed_response.
+   *
+   * @param payload     Payload del slash command parseado
+   * @param runAgent    Función que ejecuta el agente y devuelve la respuesta
+   * @param getStatus   Función que devuelve el estado del canal
+   * @returns           Texto de respuesta para enviar en el body HTTP
+   */
+  async handleSlashCommand(
+    payload:   SlackSlashPayload,
+    runAgent:  (userId: string, channelId: string, prompt: string) => Promise<string>,
+    getStatus: (channelId: string) => Promise<string>,
+  ): Promise<string> {
+    const command = payload.command.toLowerCase().replace(/^\//, '');
+    const text    = payload.text.trim();
+
+    switch (command) {
+      case 'ask': {
+        if (!text) {
+          return 'Debes proporcionar un prompt. Uso: `/ask <tu pregunta>`';
+        }
+        try {
+          const reply = await runAgent(payload.user_id, payload.channel_id, text);
+          return reply.slice(0, 3000); // Slack permite hasta 3000 chars en respuesta directa
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error('[SlackAdapter] /ask error:', msg);
+          return `Error al procesar tu pregunta: ${msg}`;
+        }
+      }
+
+      case 'status': {
+        return getStatus(payload.channel_id);
+      }
+
+      default:
+        return `Comando desconocido: \`/${command}\`. Comandos disponibles: \`/ask\`, \`/status\``;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // IChannelAdapter — send
   // ---------------------------------------------------------------------------
 
+  /**
+   * Envía un mensaje a un canal Slack.
+   * En Socket Mode usa el cliente Bolt; en HTTP Mode usa la Web API directamente.
+   *
+   * replied=true SOLO después de confirmar res.ok (fix #182).
+   *
+   * @throws Error si el envío falla
+   */
   async send(message: OutgoingMessage): Promise<void> {
     const secrets    = this.credentials as SlackSecrets;
     const isMarkdown = message.type === 'markdown';
@@ -175,25 +283,26 @@ export class SlackAdapter extends BaseChannelAdapter {
       }),
     });
 
-    // FIX #182: verificar res.ok ANTES de considerar la entrega exitosa
+    // replied=true SOLO después de res.ok (fix #182)
     if (!response.ok) {
       const err = await response.text();
-      throw new Error(`[SlackAdapter] send failed: HTTP ${response.status} — ${err}`);
+      throw new Error(`[SlackAdapter] send failed (${response.status}): ${err}`);
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Slack signature verification (HMAC-SHA256)
-  // FIX #178: recibe signingSecret explícito — NO lee de env global
+  // Verificación de firma HMAC-SHA256
   // ---------------------------------------------------------------------------
 
   /**
-   * Verifica la firma Slack (X-Slack-Signature) del request entrante.
+   * Verifica la firma HMAC-SHA256 de una petición Slack.
+   * Rechaza peticiones con timestamp > 5 minutos para prevenir replay attacks.
    *
-   * @param signingSecret  Secret obtenido de ChannelConfig.secrets.signingSecret (nunca de env)
-   * @param timestamp      Valor del header X-Slack-Request-Timestamp
-   * @param signature      Valor del header X-Slack-Signature
-   * @param rawBody        Body del request como string sin parsear
+   * @param signingSecret  Secret desde ChannelConfig.credentials.signingSecret
+   * @param timestamp      Header X-Slack-Request-Timestamp
+   * @param signature      Header X-Slack-Signature
+   * @param rawBody        Body raw de la petición como string
+   * @returns              true si la firma es válida
    */
   static async verifySignature(
     signingSecret: string,
@@ -201,13 +310,6 @@ export class SlackAdapter extends BaseChannelAdapter {
     signature:     string,
     rawBody:       string,
   ): Promise<boolean> {
-    if (!signingSecret) {
-      throw new Error(
-        '[SlackAdapter.verifySignature] signingSecret is empty. ' +
-        'Pass channelConfig.secrets.signingSecret explicitly.',
-      );
-    }
-
     const ts = parseInt(timestamp, 10);
     if (Math.abs(Date.now() / 1000 - ts) > 300) return false;
 
@@ -244,7 +346,7 @@ export class SlackAdapter extends BaseChannelAdapter {
 
     const app = new App({
       token:         secrets.botToken,
-      signingSecret: secrets.signingSecret, // siempre del DB, nunca de env
+      signingSecret: secrets.signingSecret,
       appToken:      secrets.appToken,
       socketMode:    true,
       logLevel:      LogLevel.WARN,
@@ -257,8 +359,8 @@ export class SlackAdapter extends BaseChannelAdapter {
       const incoming: IncomingMessage = {
         channelConfigId: this.channelConfigId,
         channelType:     'slack',
-        externalUserId:  msg.user,
         externalId:      msg.channel ?? '',
+        externalUserId:  msg.user,
         senderId:        msg.user,
         text:            msg.text ?? '',
         type:            'text',
@@ -272,5 +374,77 @@ export class SlackAdapter extends BaseChannelAdapter {
     await app.start();
     this.boltApp = app as unknown as BoltApp;
     console.info('[SlackAdapter] Socket Mode connected');
+  }
+}
+
+// ── SlackOAuthHandler ────────────────────────────────────────────────────────
+
+/**
+ * Maneja el OAuth 2.0 flow de Slack para instalación de la app en workspaces.
+ *
+ * @example
+ * const handler = new SlackOAuthHandler(clientId, clientSecret, redirectUri);
+ * // En el router:
+ * app.get('/slack/oauth/callback', async (req, res) => {
+ *   const result = await handler.handleCallback(req.query.code as string);
+ *   res.redirect(result.success ? '/success' : '/error');
+ * });
+ */
+export class SlackOAuthHandler {
+  constructor(
+    private readonly clientId:     string,
+    private readonly clientSecret: string,
+    private readonly redirectUri:  string,
+  ) {}
+
+  /**
+   * Intercambia el code OAuth por tokens de acceso.
+   * Devuelve los tokens para persistir en ChannelConfig.credentials.
+   *
+   * @param code  Código de autorización de Slack (query param `code`)
+   * @throws      Error si el intercambio falla
+   */
+  async handleCallback(code: string): Promise<{
+    success:      boolean;
+    accessToken?: string;
+    botUserId?:   string;
+    teamId?:      string;
+    teamName?:    string;
+    error?:       string;
+  }> {
+    const params = new URLSearchParams({
+      client_id:     this.clientId,
+      client_secret: this.clientSecret,
+      code,
+      redirect_uri:  this.redirectUri,
+    });
+
+    const res = await fetch('https://slack.com/api/oauth.v2.access', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body:    params.toString(),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`[SlackOAuthHandler] oauth.v2.access failed (${res.status}): ${err}`);
+    }
+
+    const data = await res.json() as Record<string, unknown>;
+
+    if (!data['ok']) {
+      return { success: false, error: String(data['error'] ?? 'unknown_error') };
+    }
+
+    const authedUser = data['authed_user'] as Record<string, string> | undefined;
+    const team       = data['team']        as Record<string, string> | undefined;
+
+    return {
+      success:     true,
+      accessToken: String(data['access_token'] ?? authedUser?.['access_token'] ?? ''),
+      botUserId:   String(data['bot_user_id'] ?? ''),
+      teamId:      team?.['id']   ?? '',
+      teamName:    team?.['name'] ?? '',
+    };
   }
 }
