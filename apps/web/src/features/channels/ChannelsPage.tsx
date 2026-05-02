@@ -4,6 +4,8 @@
  *
  * Layout: sidebar lista (izquierda) + panel detalle/creación (derecha).
  * Importable en App.tsx como ruta /channels.
+ *
+ * F3a-36: pasa patchChannel y testChannel a ChannelDetail.
  */
 import React, { useState } from 'react';
 import { useChannels }        from './useChannels';
@@ -30,6 +32,8 @@ export default function ChannelsPage() {
     deleteChannel,
     addBinding,
     removeBinding,
+    patchChannel,
+    testChannel,
   } = useChannels();
 
   const [showCreate, setShowCreate] = useState(false);
@@ -42,7 +46,7 @@ export default function ChannelsPage() {
       setShowCreate(false);
     } catch (e) {
       setCreateErr(e instanceof Error ? e.message : 'Error al crear canal');
-      throw e; // para que el panel muestre el error inline
+      throw e;
     }
   }
 
@@ -61,7 +65,6 @@ export default function ChannelsPage() {
           </button>
         </div>
 
-        {/* Loading skeleton */}
         {loading && (
           <div className="channels-page__skeleton">
             {[1, 2, 3].map(i => (
@@ -70,14 +73,12 @@ export default function ChannelsPage() {
           </div>
         )}
 
-        {/* Error */}
         {!loading && error && (
           <div className="channels-page__error">
             <p>{error}</p>
           </div>
         )}
 
-        {/* Empty state */}
         {!loading && !error && channels.length === 0 && (
           <div className="channels-page__empty">
             <p>No hay canales configurados.</p>
@@ -90,7 +91,6 @@ export default function ChannelsPage() {
           </div>
         )}
 
-        {/* Lista */}
         {!loading && channels.length > 0 && (
           <ul className="channels-page__list" role="list">
             {channels.map(ch => (
@@ -125,6 +125,8 @@ export default function ChannelsPage() {
             onDeactivate={deactivateChannel}
             onAddBinding={addBinding}
             onRemoveBinding={removeBinding}
+            onPatchChannel={patchChannel}
+            onTestChannel={testChannel}
             gatewayUrl={GATEWAY_URL}
           />
         )}
