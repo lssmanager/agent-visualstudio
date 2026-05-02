@@ -1,4 +1,4 @@
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────────
 // prisma/schema.prisma
 // Agent Visual Studio — Full Platform Schema — Versión F0 (canónica)
 //
@@ -11,29 +11,29 @@
 // Audit:        AuditEvent
 // Settings:     SystemConfig  (single-tenant admin keys — plaintext, same trust as .env)
 //
-// ── D-15 ─────────────────────────────────────────────────────────────────────
+// ── D-15 ───────────────────────────────────────────────────────────────────────────────
 // GatewaySession.messageHistory ELIMINADO.
 // Reemplazado por activeContextJson Json? (contexto activo de la sesión)
 // + modelo ConversationMessage (historial append-only, indexado).
 //
-// ── D-24d ────────────────────────────────────────────────────────────────────
+// ── D-24d ──────────────────────────────────────────────────────────────────────────
 // isLevelOrchestrator Boolean @default(false) en Agent, Workspace, Department.
 // Solo UN agente/workspace/department por scope puede tener isLevelOrchestrator=true.
-// Prisma no puede expresar "@@unique donde el valor sea true";
+// Prisma no puede expresar "​​@@unique donde el valor sea true";
 // por eso el partial unique index se aplica vía SQL raw en la migración:
 //   CREATE UNIQUE INDEX "agent_one_orchestrator_per_workspace"
 //     ON "Agent" ("workspaceId") WHERE "isLevelOrchestrator" = true;
 //   (ídem para Workspace y Department — ver C-20 en Plan Maestro)
 //
-// ── D-07 ─────────────────────────────────────────────────────────────────────
+// ── D-07 ─────────────────────────────────────────────────────────────────────────────────
 // Flow.agentId: el ownership real es Flow → Agent → Workspace → Department → Agency.
 //
-// ── Exactly-one-FK invariant on Policy tables ────────────────────────────────
+// ── Exactly-one-FK invariant on Policy tables ────────────────────────────────────────
 // BudgetPolicy and ModelPolicy each belong to exactly ONE scope level.
 // Enforced at two layers:
 //   1. DB layer — raw CHECK constraint added via a manual migration.
 //   2. App layer — PolicyScopeGuard in apps/api validates before upsert.
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────────
 
 generator client {
   provider = "prisma-client-js"
@@ -44,7 +44,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ─── Hierarchy ────────────────────────────────────────────────────────────────
+// ─── Hierarchy ──────────────────────────────────────────────────────────────────────────────
 
 model Agency {
   id           String       @id @default(uuid())
@@ -103,6 +103,7 @@ model Workspace {
   updatedAt    DateTime   @updatedAt
 
   agents       Agent[]
+  channelConfigs ChannelConfig[]
   budgetPolicy BudgetPolicy? @relation("WorkspaceBudget")
   modelPolicy  ModelPolicy?  @relation("WorkspaceModel")
 
@@ -155,7 +156,7 @@ model Subagent {
   @@unique([agentId, slug])
 }
 
-// ─── Skills / Tools ──────────────────────────────────────────────────────────
+// ─── Skills / Tools ────────────────────────────────────────────────────────────────────────────
 
 model Skill {
   id          String   @id @default(uuid())
@@ -195,7 +196,7 @@ model SubagentSkill {
   @@id([subagentId, skillId])
 }
 
-// ─── Flows ───────────────────────────────────────────────────────────────────
+// ─── Flows ──────────────────────────────────────────────────────────────────────────────────
 
 model Flow {
   id          String   @id @default(uuid())
@@ -214,7 +215,7 @@ model Flow {
   runs Run[]
 }
 
-// ─── Runs ────────────────────────────────────────────────────────────────────
+// ─── Runs ────────────────────────────────────────────────────────────────────────────────────
 
 model Run {
   id           String    @id @default(uuid())
@@ -291,17 +292,29 @@ enum BotStatus {
   webhook_error
 }
 
-// ─── Gateway / Channels ──────────────────────────────────────────────────────
+// ─── Gateway / Channels ─────────────────────────────────────────────────────────────────────
 
 model ChannelConfig {
-  id               String  @id @default(uuid())
+  id               String      @id @default(uuid())
   type             ChannelType
   name             String
-  /// AES-256-GCM encrypted secrets (CHANNEL_SECRET env key)
+  /// FIX #173 (Opción A): workspaceId — requerido por GatewayService.dispatch()
+  workspaceId      String
+  workspace        Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// AES-256-GCM encrypted secrets (GATEWAY_ENCRYPTION_KEY env key)
   secretsEncrypted String      @db.Text
   /// Non-sensitive config: { webhookPath, parseMode, allowedOrigins, ... }
   config           Json
   isActive         Boolean     @default(false)
+  /// FIX #173 (Opción A): Estado de lifecycle — usado por ChannelLifecycleService.
+  /// Valores: provisioned | starting | active | stopping | stopped | error
+  status           String      @default("provisioned")
+  /// FIX #173: Último error de lifecycle (start/stop fallido)
+  errorMessage     String?     @db.Text
+  /// FIX #173: Timestamp del último start() exitoso
+  lastStartedAt    DateTime?
+  /// FIX #173: Timestamp del último stop() exitoso
+  lastStoppedAt    DateTime?
   /// Estado operacional del bot/webhook — actualizado por el adapter manager.
   botStatus        BotStatus   @default(initializing)
   /// Detalle del último error o aviso (stack trace, mensaje Telegram API, etc.)
@@ -313,6 +326,9 @@ model ChannelConfig {
 
   bindings ChannelBinding[]
   sessions GatewaySession[]
+
+  @@index([workspaceId, status])
+  @@index([type, isActive])
 }
 
 model ChannelBinding {
@@ -325,6 +341,9 @@ model ChannelBinding {
   scopeLevel      String        @default("agent")
   /// ID of the scope entity (agencyId, departmentId, etc.)
   scopeId         String
+  /// FIX: campos reales usados por makeBindingResolver en discord.commands.ts
+  externalChannelId String?
+  externalGuildId   String?
   isDefault       Boolean       @default(false)
   createdAt       DateTime      @default(now())
 
@@ -383,7 +402,7 @@ model ConversationMessage {
   @@index([scopeId, createdAt])
 }
 
-// ─── n8n Integration ─────────────────────────────────────────────────────────
+// ─── n8n Integration ─────────────────────────────────────────────────────────────────────────────
 
 model N8nConnection {
   id              String   @id @default(uuid())
@@ -416,7 +435,7 @@ model N8nWorkflow {
   @@unique([connectionId, n8nWorkflowId])
 }
 
-// ─── Provider Credentials ────────────────────────────────────────────────────
+// ─── Provider Credentials ────────────────────────────────────────────────────────────────────────────
 
 model ProviderCredential {
   id               String    @id @default(uuid())
@@ -438,7 +457,7 @@ model ProviderCredential {
   @@index([agencyId, type, isActive])
 }
 
-// ─── Model Catalog ────────────────────────────────────────────────────────────
+// ─── Model Catalog ─────────────────────────────────────────────────────────────────────────────
 
 model ModelCatalogEntry {
   id           String             @id @default(uuid())
@@ -458,7 +477,7 @@ model ModelCatalogEntry {
   @@index([modelId])
 }
 
-// ─── Budget / Model Policies ─────────────────────────────────────────────────
+// ─── Budget / Model Policies ──────────────────────────────────────────────────────────────────────
 
 model BudgetPolicy {
   id         String   @id @default(uuid())
@@ -499,7 +518,7 @@ model ModelPolicy {
   agent      Agent?      @relation("AgentModel",      fields: [agentId],      references: [id], onDelete: Cascade)
 }
 
-// ─── Audit ───────────────────────────────────────────────────────────────────
+// ─── Audit ────────────────────────────────────────────────────────────────────────────────────
 
 model AuditEvent {
   id        String   @id @default(uuid())
@@ -515,7 +534,7 @@ model AuditEvent {
   @@index([userId, createdAt])
 }
 
-// ─── System Config (single-tenant settings) ──────────────────────────────────
+// ─── System Config (single-tenant settings) ──────────────────────────────────────────────
 //
 // Almacena API keys y URLs configuradas desde Settings UI.
 // Sin cifrado — mismo nivel de confianza que process.env / .env en disco.

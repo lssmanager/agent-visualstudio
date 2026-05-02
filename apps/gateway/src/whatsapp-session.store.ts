@@ -1,8 +1,12 @@
-﻿/**
+/**
  * whatsapp-session.store.ts — [F3a-22]
  *
  * Store en memoria para sesiones WhatsApp Baileys.
  * Exporta la clase (para typing en DI) y el singleton whatsappSessionStore.
+ *
+ * FIX #177: getOrCreate() es ahora async y usa un Map de Promises como lock
+ * para prevenir la race condition TOCTOU donde dos requests simultáneos para
+ * el mismo configId crean entradas duplicadas o inicializan el adapter dos veces.
  */
 
 import type { Response } from 'express'
@@ -32,18 +36,42 @@ export interface SessionEntry {
 }
 
 export class WhatsAppSessionStore {
-  private readonly sessions = new Map<string, SessionEntry>()
+  private readonly sessions       = new Map<string, SessionEntry>()
+  /** FIX #177: lock de creaciones en curso para prevenir race conditions */
+  private readonly _creationLocks = new Map<string, Promise<SessionEntry>>()
 
-  getOrCreate(configId: string): SessionEntry {
-    if (!this.sessions.has(configId)) {
-      this.sessions.set(configId, {
-        adapter: null as unknown as IWhatsAppAdapter,
-        qrBuffer: null,
-        status: 'disconnected',
-        sseClients: new Set(),
-      })
-    }
-    return this.sessions.get(configId)!
+  /**
+   * Retorna la sesión existente o crea una nueva de forma thread-safe.
+   * Si dos llamadas concurrentes llegan con el mismo configId mientras la
+   * entrada aún no existe, ambas reciben la misma Promise — la creación
+   * solo ocurre una vez.
+   */
+  async getOrCreate(configId: string): Promise<SessionEntry> {
+    // Fast path: ya existe
+    const existing = this.sessions.get(configId)
+    if (existing) return existing
+
+    // Lock path: si hay una creación en curso, devolver la misma Promise
+    const inFlight = this._creationLocks.get(configId)
+    if (inFlight) return inFlight
+
+    // Crear la entrada y registrar el lock
+    const creation = Promise.resolve().then(() => {
+      // Double-check tras await (otro contexto pudo haber completado)
+      if (!this.sessions.has(configId)) {
+        this.sessions.set(configId, {
+          adapter:    null as unknown as IWhatsAppAdapter,
+          qrBuffer:   null,
+          status:     'disconnected',
+          sseClients: new Set(),
+        })
+      }
+      this._creationLocks.delete(configId)
+      return this.sessions.get(configId)!
+    })
+
+    this._creationLocks.set(configId, creation)
+    return creation
   }
 
   get(configId: string): SessionEntry | undefined {
@@ -54,8 +82,8 @@ export class WhatsAppSessionStore {
     return this.sessions.has(configId)
   }
 
-  setAdapter(configId: string, adapter: IWhatsAppAdapter): void {
-    const entry = this.getOrCreate(configId)
+  async setAdapter(configId: string, adapter: IWhatsAppAdapter): Promise<void> {
+    const entry = await this.getOrCreate(configId)
     entry.adapter = adapter
   }
 
@@ -85,6 +113,7 @@ export class WhatsAppSessionStore {
     }
     entry.sseClients.clear()
     this.sessions.delete(configId)
+    this._creationLocks.delete(configId)
   }
 
   /**
@@ -96,8 +125,8 @@ export class WhatsAppSessionStore {
     this.remove(configId)
   }
 
-  addSseClient(configId: string, res: Response): void {
-    const entry = this.getOrCreate(configId)
+  async addSseClient(configId: string, res: Response): Promise<void> {
+    const entry = await this.getOrCreate(configId)
     entry.sseClients.add(res)
     this.sendSseEvent(res, { event: 'status', data: entry.status })
     if (entry.qrBuffer) {
@@ -122,6 +151,11 @@ export class WhatsAppSessionStore {
 
   activeSessions(): string[] {
     return [...this.sessions.keys()]
+  }
+
+  /** Retorna el número de creaciones en curso (para diagnóstico/tests) */
+  get pendingCreations(): number {
+    return this._creationLocks.size
   }
 }
 
