@@ -3,20 +3,17 @@
  * Página principal de gestión de canales.
  *
  * Layout: sidebar lista (izquierda) + panel detalle/creación (derecha).
- * Importable en App.tsx como ruta /channels.
- *
- * F3a-36: pasa patchChannel y testChannel a ChannelDetail.
  */
-import React, { useState } from 'react';
-import { useChannels }        from './useChannels';
-import { ChannelCard }        from './components/ChannelCard';
-import { ChannelDetail }      from './components/ChannelDetail';
-import { CreateChannelPanel } from './components/CreateChannelPanel';
-import type { CreateChannelPayload } from './types';
+import React, { useState } from 'react'
+import { useChannels } from './useChannels'
+import { ChannelCard } from './components/ChannelCard'
+import { ChannelDetail } from './components/ChannelDetail'
+import { CreateChannelPanel } from './components/CreateChannelPanel'
+import type { CreateChannelPayload } from './types'
 
 const GATEWAY_URL =
   (import.meta as { env: Record<string, string> }).env.VITE_GATEWAY_URL ??
-  (typeof window !== 'undefined' ? window.location.origin : '');
+  (typeof window !== 'undefined' ? window.location.origin : '')
 
 export default function ChannelsPage() {
   const {
@@ -34,31 +31,31 @@ export default function ChannelsPage() {
     removeBinding,
     patchChannel,
     testChannel,
-  } = useChannels();
+    requestWhatsAppQr,
+  } = useChannels()
 
-  const [showCreate, setShowCreate] = useState(false);
-  const [createErr,  setCreateErr]  = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false)
+  const [createErr, setCreateErr] = useState<string | null>(null)
 
   async function handleCreate(payload: CreateChannelPayload) {
-    setCreateErr(null);
+    setCreateErr(null)
     try {
-      await createChannel(payload);
-      setShowCreate(false);
+      await createChannel(payload)
+      setShowCreate(false)
     } catch (e) {
-      setCreateErr(e instanceof Error ? e.message : 'Error al crear canal');
-      throw e;
+      setCreateErr(e instanceof Error ? e.message : 'Error al crear canal')
+      throw e
     }
   }
 
   return (
     <div className="channels-page">
-      {/* ── Sidebar lista ─────────────────────────────────────── */}
       <aside className="channels-page__sidebar">
         <div className="channels-page__sidebar-header">
           <h1 className="channels-page__title">Canales</h1>
           <button
             className="channels-page__new-btn"
-            onClick={() => { setShowCreate(true); setSelectedId(null); }}
+            onClick={() => { setShowCreate(true); setSelectedId(null) }}
             aria-label="Nuevo canal"
           >
             + Nuevo
@@ -67,25 +64,16 @@ export default function ChannelsPage() {
 
         {loading && (
           <div className="channels-page__skeleton">
-            {[1, 2, 3].map(i => (
-              <div key={i} className="channels-page__skeleton-card" />
-            ))}
+            {[1, 2, 3].map(i => <div key={i} className="channels-page__skeleton-card" />)}
           </div>
         )}
 
-        {!loading && error && (
-          <div className="channels-page__error">
-            <p>{error}</p>
-          </div>
-        )}
+        {!loading && error && <div className="channels-page__error"><p>{error}</p></div>}
 
         {!loading && !error && channels.length === 0 && (
           <div className="channels-page__empty">
             <p>No hay canales configurados.</p>
-            <button
-              className="channels-page__empty-cta"
-              onClick={() => setShowCreate(true)}
-            >
+            <button className="channels-page__empty-cta" onClick={() => setShowCreate(true)}>
               Crear primer canal
             </button>
           </div>
@@ -98,7 +86,7 @@ export default function ChannelsPage() {
                 <ChannelCard
                   channel={ch}
                   isSelected={selectedId === ch.id}
-                  onSelect={id => { setSelectedId(id); setShowCreate(false); }}
+                  onSelect={id => { setSelectedId(id); setShowCreate(false) }}
                   onActivate={activateChannel}
                   onDeactivate={deactivateChannel}
                   onDelete={deleteChannel}
@@ -109,7 +97,6 @@ export default function ChannelsPage() {
         )}
       </aside>
 
-      {/* ── Panel principal ───────────────────────────────────── */}
       <main className="channels-page__main">
         {showCreate && (
           <CreateChannelPanel
@@ -127,6 +114,7 @@ export default function ChannelsPage() {
             onRemoveBinding={removeBinding}
             onPatchChannel={patchChannel}
             onTestChannel={testChannel}
+            onRequestNewQr={requestWhatsAppQr}
             gatewayUrl={GATEWAY_URL}
           />
         )}
@@ -137,10 +125,8 @@ export default function ChannelsPage() {
           </div>
         )}
 
-        {createErr && (
-          <p className="channels-page__create-err">{createErr}</p>
-        )}
+        {createErr && <p className="channels-page__create-err">{createErr}</p>}
       </main>
     </div>
-  );
+  )
 }
