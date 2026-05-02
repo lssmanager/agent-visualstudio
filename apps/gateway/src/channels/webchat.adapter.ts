@@ -29,7 +29,7 @@ import {
 
 const db = new PrismaService()
 
-// ── Tipos de frame ──────────────────────────────────────────────────────
+// ── Tipos de frame ──────────────────────────────────────────
 
 type ClientFrame =
   | { type: 'message'; text: string; metadata?: Record<string, unknown> }
@@ -50,7 +50,7 @@ interface HistoryEntry {
   ts?: string
 }
 
-// ── Conexión activa ─────────────────────────────────────────────────────
+// ── Conexión activa ───────────────────────────────────────
 
 interface ActiveConnection {
   ws:          WebSocket
@@ -59,7 +59,7 @@ interface ActiveConnection {
   connectedAt: number
 }
 
-// ── WebChatAdapter ──────────────────────────────────────────────────────
+// ── WebChatAdapter ───────────────────────────────────────
 
 export class WebChatAdapter extends BaseChannelAdapter {
   readonly channel = 'webchat'
@@ -70,16 +70,16 @@ export class WebChatAdapter extends BaseChannelAdapter {
   // sessionId → lista de conexiones activas (multi-tab support)
   private readonly connections = new Map<string, ActiveConnection[]>()
 
-  // ── Lifecycle ─────────────────────────────────────────────────────────
+  // ── Lifecycle ────────────────────────────────────────────
 
   /**
-   * initialize() adjunta un WebSocketServer al httpServer de Fastify/Express.
+   * Adjunta un `WebSocketServer` al `httpServer` de Fastify/Express.
    *
-   * @param channelConfigId  ID del ChannelConfig en DB
-   * @param httpServer       http.Server de la app — se pasa como segundo arg
-   *                         desde gateway.service.ts o server.ts al instanciar
-   *                         el adaptador. Ej:
-   *                           adapter.initialize(configId, app.server)
+   * @param channelConfigId  UUID del `ChannelConfig` en Prisma.
+   * @param httpServer       `http.Server` de la app — se pasa como segundo
+   *                         argumento desde `gateway.service.ts` o `server.ts`.
+   *                         Ejemplo: `adapter.initialize(configId, app.server)`
+   * @throws {Error} Si el `ChannelConfig` no existe en base de datos.
    */
   async initialize(
     channelConfigId: string,
@@ -134,7 +134,7 @@ export class WebChatAdapter extends BaseChannelAdapter {
     console.info('[webchat] WebSocketServer closed')
   }
 
-  // ── send() — enviar respuesta al cliente ──────────────────────────────
+  // ── send() — enviar respuesta al cliente ───────────────────────
 
   async send(message: OutgoingMessage): Promise<void> {
     const conns = this.connections.get(message.externalId) ?? []
@@ -170,8 +170,25 @@ export class WebChatAdapter extends BaseChannelAdapter {
     }
   }
 
-  // ── sendTyping() — helper para typing indicator ───────────────────────
+  // ── sendTyping() ─────────────────────────────────────────────
 
+  /**
+   * Envía un frame `typing` a todas las conexiones WebSocket activas de la sesión.
+   *
+   * Es un helper **no bloqueante** para el indicador de "escribiendo...": no
+   * persiste estado en BD ni en el `Map` de conexiones. Si el cliente no está
+   * conectado en el momento de la llamada, el frame se descarta silenciosamente
+   * sin lanzar error.
+   *
+   * @remarks
+   * Multi-tab: si el mismo `sessionId` tiene N pestañas abiertas, el frame
+   * se envía a **todas** las conexiones OPEN de esa sesión.
+   * Solo se envía a conexiones en estado `WebSocket.OPEN` — las cerradas
+   * o en proceso de cierre se omiten sin error.
+   *
+   * @param sessionId  `externalId` de la sesión activa (clave del Map interno).
+   * @param status     `'start'` para mostrar el indicador, `'stop'` para ocultarlo.
+   */
   sendTyping(sessionId: string, status: 'start' | 'stop'): void {
     const conns = this.connections.get(sessionId) ?? []
     const frame = JSON.stringify({ type: 'typing', status } satisfies ServerFrame)
@@ -182,7 +199,7 @@ export class WebChatAdapter extends BaseChannelAdapter {
     }
   }
 
-  // ── handleConnection() ────────────────────────────────────────────────
+  // ── handleConnection() ──────────────────────────────────────
 
   private handleConnection(ws: WebSocket, req: HttpIncomingMessage): void {
     // Parsear query string: ?sessionId=...&agentId=...
@@ -257,7 +274,7 @@ export class WebChatAdapter extends BaseChannelAdapter {
     })
   }
 
-  // ── handleMessage() ───────────────────────────────────────────────────
+  // ── handleMessage() ───────────────────────────────────────
 
   private async handleMessage(
     conn: ActiveConnection,
@@ -331,7 +348,7 @@ export class WebChatAdapter extends BaseChannelAdapter {
     }
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────
+  // ── Helpers ──────────────────────────────────────────────
 
   private sendFrame(ws: WebSocket, frame: ServerFrame): void {
     if (ws.readyState === WebSocket.OPEN) {
@@ -407,8 +424,28 @@ export class WebChatAdapter extends BaseChannelAdapter {
     }
   }
 
-  // ── Métricas (opcional, para observabilidad) ──────────────────────────
+  // ── Métricas ─────────────────────────────────────────────────
 
+  /**
+   * Devuelve métricas de observabilidad del adaptador WebChat.
+   *
+   * Útil para endpoints de health-check o dashboards de monitoreo.
+   *
+   * @returns Objeto con dos contadores:
+   * - `activeSessions`   — número de `sessionId` distintos con al menos
+   *   1 conexión WebSocket viva en el `Map` interno.
+   * - `totalConnections` — suma total de conexiones WS abiertas en **todas**
+   *   las sesiones. Debido al soporte multi-tab, un mismo `sessionId` puede
+   *   tener N conexiones simultáneas, por lo que siempre se cumple:
+   *   `totalConnections >= activeSessions`.
+   *
+   * @example
+   * ```ts
+   * // En un health endpoint:
+   * const { activeSessions, totalConnections } = webchatAdapter.getStats()
+   * // activeSessions=3, totalConnections=5 → una sesión tiene 3 pestañas abiertas
+   * ```
+   */
   getStats(): { activeSessions: number; totalConnections: number } {
     let totalConnections = 0
     for (const conns of this.connections.values()) {
