@@ -1,8 +1,13 @@
 /**
  * Tests for ProfilePropagatorService.propagateUp() — F2b-01
  *
- * Verifica que propagateUp() solo propaga al orchestratorId de cada nivel
- * y nunca itera sobre colecciones de agentes (D-24f).
+ * Verifica que propagateUp() solo propaga al orchestrador de cada nivel
+ * (identificado por isLevelOrchestrator: true en Agent) y nunca itera
+ * sobre colecciones de agentes (D-24f).
+ *
+ * AUDIT-08 (#165): mock actualizado — orchestratorId NO existe en
+ * Workspace/Department/Agency. Se usa agent.findFirst con
+ * isLevelOrchestrator: true para cada nivel jerárquico.
  *
  * Usa Prisma completamente mockeado con jest.fn() — no instancia real.
  */
@@ -10,7 +15,7 @@
 import { ProfilePropagatorService } from '../profile-propagator.service'
 import type { PropagateProfileInput, ResolvedProfile } from '../profile-propagator.service'
 
-// ── Helpers para construir mocks ──────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────
 
 const NOW = new Date('2024-01-01T00:00:00.000Z')
 
@@ -30,150 +35,201 @@ function makeResolvedProfile(agentId: string, version = 1): ResolvedProfile {
 
 const INPUT: PropagateProfileInput = { systemPrompt: 'test prompt' }
 
-// ── Mock factory ─────────────────────────────────────────────────────────
+/** Objeto de perfil plano devuelto por agentProfile.upsert mock */
+function makeFlatProfile(agentId: string) {
+  return {
+    systemPrompt:   'test prompt',
+    persona:        {},
+    knowledgeBase:  [],
+    responseFormat: null,
+    contextWindow:  8192,
+    memoryEnabled:  false,
+    version:        1,
+    propagatedAt:   NOW,
+  }
+}
 
-function buildPrismaMock(overrides: {
-  agent?:       { workspaceId: string } | null
-  workspace?:   { id: string; orchestratorId: string | null; departmentId: string | null } | null
-  department?:  { id: string; orchestratorId: string | null; agencyId: string | null } | null
-  agency?:      { id: string; orchestratorId: string | null } | null
+// ── Mock factory ──────────────────────────────────────────────────────────
+
+/**
+ * Construye el mock de Prisma siguiendo el schema canónico:
+ *   - workspace/department/agency NO tienen orchestratorId
+ *   - El orchestrador de cada nivel se obtiene via agent.findFirst({ isLevelOrchestrator: true })
+ *
+ * wsOrchAgent / depOrchAgent / agcOrchAgent: { id } del agente orchestrador de cada nivel,
+ * o null si el nivel no tiene orchestrador.
+ */
+function buildPrismaMock(opts: {
+  /** workspaceId del agente fuente */
+  sourceAgentWorkspaceId: string | null
+  /** Workspace sin orchestratorId — solo id + departmentId */
+  workspace?:   { id: string; departmentId: string | null } | null
+  /** Department sin orchestratorId — solo id + agencyId */
+  department?:  { id: string; agencyId: string | null } | null
+  /** Agency sin orchestratorId — solo id */
+  agency?:      { id: string } | null
+  /** Orchestrador del nivel workspace (agent con isLevelOrchestrator: true) */
+  wsOrchAgent?:  { id: string } | null
+  /** Orchestrador del nivel department */
+  depOrchAgent?: { id: string } | null
+  /** Orchestrador del nivel agency */
+  agcOrchAgent?: { id: string } | null
+  /** Perfil plano para agentProfile.upsert */
   agentProfile?: unknown
 }) {
+  // agent.findFirst devuelve el orchestrador según el nivel (orden de llamadas)
+  const findFirstQueue: ({ id: string } | null)[] = [
+    opts.wsOrchAgent  ?? null,
+    opts.depOrchAgent ?? null,
+    opts.agcOrchAgent ?? null,
+  ]
+  let findFirstCallIdx = 0
+
   return {
     agent: {
-      findUnique: jest.fn().mockResolvedValue(overrides.agent ?? null),
+      /**
+       * findUnique: primera llamada = agente fuente (devuelve workspaceId),
+       * llamadas subsecuentes = dentro de propagate() para validar orchestrador.
+       */
+      findUnique: jest.fn().mockImplementation(({ where }: { where: { id: string } }) => {
+        // devolver un objeto genérico que incluya workspaceId para la primera llamada
+        if (where.id && opts.sourceAgentWorkspaceId !== null) {
+          return Promise.resolve({ id: where.id, workspaceId: opts.sourceAgentWorkspaceId, name: where.id })
+        }
+        return Promise.resolve(null)
+      }),
+      /**
+       * findFirst: devuelve el orchestrador de cada nivel en orden
+       * workspace → department → agency, según las llamadas secuenciales.
+       */
+      findFirst: jest.fn().mockImplementation(() => {
+        const result = findFirstQueue[findFirstCallIdx] ?? null
+        findFirstCallIdx++
+        return Promise.resolve(result)
+      }),
     },
     workspace: {
-      findUnique: jest.fn().mockResolvedValue(overrides.workspace ?? null),
+      findUnique: jest.fn().mockResolvedValue(
+        opts.workspace !== undefined ? opts.workspace : null
+      ),
     },
     department: {
-      findUnique: jest.fn().mockResolvedValue(overrides.department ?? null),
+      findUnique: jest.fn().mockResolvedValue(
+        opts.department !== undefined ? opts.department : null
+      ),
     },
     agency: {
-      findUnique: jest.fn().mockResolvedValue(overrides.agency ?? null),
+      findUnique: jest.fn().mockResolvedValue(
+        opts.agency !== undefined ? opts.agency : null
+      ),
     },
     agentProfile: {
-      findUnique: jest.fn().mockResolvedValue(overrides.agentProfile ?? null),
+      findUnique: jest.fn().mockResolvedValue(opts.agentProfile ?? null),
       upsert:     jest.fn(),
     },
   }
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────
+// ── Tests ───────────────────────────────────────────────────────────────
 
 describe('ProfilePropagatorService.propagateUp()', () => {
-  const AGENT_ID = 'agent-1'
-  const WS_ORCH  = 'ws-orchestrator'
-  const DEP_ORCH = 'dep-orchestrator'
-  const AGC_ORCH = 'agc-orchestrator'
+  const AGENT_ID  = 'agent-1'
+  const WS_ID     = 'ws-1'
+  const WS_ORCH   = 'ws-orchestrator'
+  const DEP_ID    = 'dep-1'
+  const DEP_ORCH  = 'dep-orchestrator'
+  const AGC_ID    = 'agc-1'
+  const AGC_ORCH  = 'agc-orchestrator'
 
-  // ── Case 1: propaga al workspace orchestrator cuando existe y es distinto al agentId ──
-  it('propaga al orchestratorId del workspace cuando existe y es distinto al agentId', async () => {
+  // ── Case 1: propaga al orchestrador del workspace ────────────────────────────
+  it('propaga al orchestrador del workspace (isLevelOrchestrator) cuando existe y es distinto al agentId', async () => {
     const prisma = buildPrismaMock({
-      agent:        { workspaceId: 'ws-1' },
-      workspace:    { id: 'ws-1', orchestratorId: WS_ORCH, departmentId: null },
-      agentProfile: null,
+      sourceAgentWorkspaceId: WS_ID,
+      workspace:   { id: WS_ID, departmentId: null },
+      wsOrchAgent: { id: WS_ORCH },
     })
-    // Mock the profile returned by upsert (used internally by propagate())
-    prisma.agentProfile.upsert.mockResolvedValue({
-      systemPrompt: 'test prompt', persona: {}, knowledgeBase: [],
-      responseFormat: null, contextWindow: 8192, memoryEnabled: false,
-      version: 1, propagatedAt: NOW,
-    })
-    // propagate() calls agent.findUnique too — make it return valid agent for orchestrator
-    prisma.agent.findUnique
-      .mockResolvedValueOnce({ workspaceId: 'ws-1' })  // call for agentId
-      .mockResolvedValueOnce({ id: WS_ORCH, name: 'WS Orch' }) // call inside propagate()
+    prisma.agentProfile.upsert.mockResolvedValue(makeFlatProfile(WS_ORCH))
 
     const svc = new ProfilePropagatorService(prisma as never)
     const result = await svc.propagateUp(AGENT_ID, INPUT)
 
     expect(result.updated).toHaveLength(1)
-    expect(result.updated[0].agentId).toBe(WS_ORCH)
+    expect(result.updated[0]!.agentId).toBe(WS_ORCH)
     expect(result.skipped).toHaveLength(0)
+    // Verificar que se usó agent.findFirst (NO workspace.select{orchestratorId})
+    expect(prisma.agent.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ isLevelOrchestrator: true }) })
+    )
   })
 
-  // ── Case 2: propaga a workspace + department + agency cuando todos tienen orchestratorId ──
-  it('propaga a workspace, department y agency cuando todos tienen orchestratorId', async () => {
+  // ── Case 2: propaga a workspace + department + agency ────────────────────
+  it('propaga a workspace, department y agency cuando todos tienen orchestrador', async () => {
     const prisma = buildPrismaMock({
-      agent:      { workspaceId: 'ws-1' },
-      workspace:  { id: 'ws-1', orchestratorId: WS_ORCH,  departmentId: 'dep-1' },
-      department: { id: 'dep-1', orchestratorId: DEP_ORCH, agencyId: 'agc-1' },
-      agency:     { id: 'agc-1', orchestratorId: AGC_ORCH },
+      sourceAgentWorkspaceId: WS_ID,
+      workspace:    { id: WS_ID,  departmentId: DEP_ID },
+      department:   { id: DEP_ID, agencyId: AGC_ID },
+      wsOrchAgent:  { id: WS_ORCH  },
+      depOrchAgent: { id: DEP_ORCH },
+      agcOrchAgent: { id: AGC_ORCH },
     })
-
-    const mockUpsert = (agentId: string) => ({
-      systemPrompt: 'prompt', persona: {}, knowledgeBase: [],
-      responseFormat: null, contextWindow: 8192, memoryEnabled: false,
-      version: 1, propagatedAt: NOW,
-    })
-
-    // agent.findUnique: first call = source agent, subsequent = inside propagate() per orchestrator
-    prisma.agent.findUnique
-      .mockResolvedValueOnce({ workspaceId: 'ws-1' })          // propagateUp source
-      .mockResolvedValueOnce({ id: WS_ORCH,  name: 'WS Orch' })  // inside propagate(WS_ORCH)
-      .mockResolvedValueOnce({ id: DEP_ORCH, name: 'Dep Orch' }) // inside propagate(DEP_ORCH)
-      .mockResolvedValueOnce({ id: AGC_ORCH, name: 'Agc Orch' }) // inside propagate(AGC_ORCH)
 
     prisma.agentProfile.upsert
-      .mockResolvedValueOnce(mockUpsert(WS_ORCH))
-      .mockResolvedValueOnce(mockUpsert(DEP_ORCH))
-      .mockResolvedValueOnce(mockUpsert(AGC_ORCH))
+      .mockResolvedValueOnce(makeFlatProfile(WS_ORCH))
+      .mockResolvedValueOnce(makeFlatProfile(DEP_ORCH))
+      .mockResolvedValueOnce(makeFlatProfile(AGC_ORCH))
 
     const svc = new ProfilePropagatorService(prisma as never)
     const result = await svc.propagateUp(AGENT_ID, INPUT)
 
     expect(result.updated).toHaveLength(3)
-    expect(result.updated[0].agentId).toBe(WS_ORCH)
-    expect(result.updated[1].agentId).toBe(DEP_ORCH)
-    expect(result.updated[2].agentId).toBe(AGC_ORCH)
+    expect(result.updated[0]!.agentId).toBe(WS_ORCH)
+    expect(result.updated[1]!.agentId).toBe(DEP_ORCH)
+    expect(result.updated[2]!.agentId).toBe(AGC_ORCH)
     expect(result.skipped).toHaveLength(0)
+    // agent.findFirst debe haberse llamado 3 veces (ws + dep + agc)
+    expect(prisma.agent.findFirst).toHaveBeenCalledTimes(3)
   })
 
-  // ── Case 3: añade a skipped cuando workspace.orchestratorId es null ──
-  it('añade a skipped cuando workspace.orchestratorId es null', async () => {
+  // ── Case 3: skipped cuando no hay orchestrador en workspace ───────────────
+  it('añade a skipped cuando no hay Agent con isLevelOrchestrator=true en el workspace', async () => {
     const prisma = buildPrismaMock({
-      agent:     { workspaceId: 'ws-1' },
-      workspace: { id: 'ws-1', orchestratorId: null, departmentId: null },
+      sourceAgentWorkspaceId: WS_ID,
+      workspace:   { id: WS_ID, departmentId: null },
+      wsOrchAgent: null,  // ningún agente con isLevelOrchestrator en este workspace
     })
-    prisma.agent.findUnique.mockResolvedValueOnce({ workspaceId: 'ws-1' })
 
     const svc = new ProfilePropagatorService(prisma as never)
     const result = await svc.propagateUp(AGENT_ID, INPUT)
 
     expect(result.updated).toHaveLength(0)
-    expect(result.skipped).toContain('workspace:ws-1')
+    expect(result.skipped).toContain(`workspace:${WS_ID}`)
   })
 
-  // ── Case 4: añade a skipped cuando workspace.orchestratorId === agentId (anti-loop) ──
-  it('añade a skipped cuando workspace.orchestratorId === agentId (anti-loop)', async () => {
+  // ── Case 4: anti-loop cuando el orchestrador ES el agentId fuente ────────
+  it('añade a skipped cuando agent.findFirst devuelve el mismo agentId (anti-loop)', async () => {
     const prisma = buildPrismaMock({
-      agent:     { workspaceId: 'ws-1' },
-      workspace: { id: 'ws-1', orchestratorId: AGENT_ID, departmentId: null },
+      sourceAgentWorkspaceId: WS_ID,
+      workspace:   { id: WS_ID, departmentId: null },
+      wsOrchAgent: { id: AGENT_ID },  // orchestrador === agente fuente → loop
     })
-    prisma.agent.findUnique.mockResolvedValueOnce({ workspaceId: 'ws-1' })
 
     const svc = new ProfilePropagatorService(prisma as never)
     const result = await svc.propagateUp(AGENT_ID, INPUT)
 
     expect(result.updated).toHaveLength(0)
-    expect(result.skipped).toContain('workspace:ws-1')
+    expect(result.skipped).toContain(`workspace:${WS_ID}`)
+    // NO debe llamar a agentProfile.upsert (no se propagó)
+    expect(prisma.agentProfile.upsert).not.toHaveBeenCalled()
   })
 
-  // ── Case 5: no propaga a niveles intermedios ausentes (workspace sin departmentId) ──
+  // ── Case 5: workspace sin departmentId — no llama a department ni agency ──
   it('no propaga a department ni agency cuando workspace.departmentId es null', async () => {
     const prisma = buildPrismaMock({
-      agent:     { workspaceId: 'ws-1' },
-      workspace: { id: 'ws-1', orchestratorId: WS_ORCH, departmentId: null },
+      sourceAgentWorkspaceId: WS_ID,
+      workspace:   { id: WS_ID, departmentId: null },
+      wsOrchAgent: { id: WS_ORCH },
     })
-    prisma.agent.findUnique
-      .mockResolvedValueOnce({ workspaceId: 'ws-1' })
-      .mockResolvedValueOnce({ id: WS_ORCH, name: 'WS Orch' })
-    prisma.agentProfile.upsert.mockResolvedValueOnce({
-      systemPrompt: 'prompt', persona: {}, knowledgeBase: [],
-      responseFormat: null, contextWindow: 8192, memoryEnabled: false,
-      version: 1, propagatedAt: NOW,
-    })
+    prisma.agentProfile.upsert.mockResolvedValueOnce(makeFlatProfile(WS_ORCH))
 
     const svc = new ProfilePropagatorService(prisma as never)
     const result = await svc.propagateUp(AGENT_ID, INPUT)
@@ -181,11 +237,13 @@ describe('ProfilePropagatorService.propagateUp()', () => {
     expect(result.updated).toHaveLength(1)
     expect(prisma.department.findUnique).not.toHaveBeenCalled()
     expect(prisma.agency.findUnique).not.toHaveBeenCalled()
+    // agent.findFirst solo se llamó 1 vez (solo nivel workspace)
+    expect(prisma.agent.findFirst).toHaveBeenCalledTimes(1)
   })
 
-  // ── Case 6: lanza Error si el agente no existe en BD ──
+  // ── Case 6: lanza Error si el agente no existe ────────────────────────
   it('lanza Error si el agente no existe en BD', async () => {
-    const prisma = buildPrismaMock({ agent: null })
+    const prisma = buildPrismaMock({ sourceAgentWorkspaceId: null })
     prisma.agent.findUnique.mockResolvedValueOnce(null)
 
     const svc = new ProfilePropagatorService(prisma as never)
@@ -194,36 +252,52 @@ describe('ProfilePropagatorService.propagateUp()', () => {
     )
   })
 
-  // ── Case 7: updated contiene los ResolvedProfile en orden workspace → department → agency ──
+  // ── Case 7: orden correcto workspace → department → agency ───────────────
   it('updated contiene ResolvedProfile en orden: workspace → department → agency', async () => {
     const prisma = buildPrismaMock({
-      agent:      { workspaceId: 'ws-1' },
-      workspace:  { id: 'ws-1', orchestratorId: WS_ORCH,  departmentId: 'dep-1' },
-      department: { id: 'dep-1', orchestratorId: DEP_ORCH, agencyId: 'agc-1' },
-      agency:     { id: 'agc-1', orchestratorId: AGC_ORCH },
-    })
-
-    prisma.agent.findUnique
-      .mockResolvedValueOnce({ workspaceId: 'ws-1' })
-      .mockResolvedValueOnce({ id: WS_ORCH,  name: 'WS Orch' })
-      .mockResolvedValueOnce({ id: DEP_ORCH, name: 'Dep Orch' })
-      .mockResolvedValueOnce({ id: AGC_ORCH, name: 'Agc Orch' })
-
-    const makeProfile = (id: string) => ({
-      systemPrompt: `${id} prompt`, persona: {}, knowledgeBase: [],
-      responseFormat: null, contextWindow: 8192, memoryEnabled: false,
-      version: 1, propagatedAt: NOW,
+      sourceAgentWorkspaceId: WS_ID,
+      workspace:    { id: WS_ID,  departmentId: DEP_ID },
+      department:   { id: DEP_ID, agencyId: AGC_ID },
+      wsOrchAgent:  { id: WS_ORCH  },
+      depOrchAgent: { id: DEP_ORCH },
+      agcOrchAgent: { id: AGC_ORCH },
     })
 
     prisma.agentProfile.upsert
-      .mockResolvedValueOnce(makeProfile(WS_ORCH))
-      .mockResolvedValueOnce(makeProfile(DEP_ORCH))
-      .mockResolvedValueOnce(makeProfile(AGC_ORCH))
+      .mockResolvedValueOnce(makeFlatProfile(WS_ORCH))
+      .mockResolvedValueOnce(makeFlatProfile(DEP_ORCH))
+      .mockResolvedValueOnce(makeFlatProfile(AGC_ORCH))
 
     const svc = new ProfilePropagatorService(prisma as never)
     const result = await svc.propagateUp(AGENT_ID, INPUT)
 
     const ids = result.updated.map((p) => p.agentId)
     expect(ids).toEqual([WS_ORCH, DEP_ORCH, AGC_ORCH])
+  })
+
+  // ── Case 8: workspace/department/agency NO tienen orchestratorId en el mock ──
+  it('los modelos Workspace/Department/Agency en el mock no tienen orchestratorId (schema canónico)', async () => {
+    const prisma = buildPrismaMock({
+      sourceAgentWorkspaceId: WS_ID,
+      workspace:    { id: WS_ID,  departmentId: DEP_ID },
+      department:   { id: DEP_ID, agencyId: AGC_ID },
+      wsOrchAgent:  { id: WS_ORCH },
+    })
+    prisma.agentProfile.upsert.mockResolvedValueOnce(makeFlatProfile(WS_ORCH))
+
+    const svc = new ProfilePropagatorService(prisma as never)
+    await svc.propagateUp(AGENT_ID, INPUT)
+
+    // Verificar que workspace no expone orchestratorId
+    const wsCall = (prisma.workspace.findUnique as jest.Mock).mock.results[0]?.value
+    const wsResult = await wsCall
+    expect(wsResult).not.toHaveProperty('orchestratorId')
+
+    // Verificar que se llamó agent.findFirst con isLevelOrchestrator
+    expect(prisma.agent.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ isLevelOrchestrator: true }),
+      })
+    )
   })
 })
