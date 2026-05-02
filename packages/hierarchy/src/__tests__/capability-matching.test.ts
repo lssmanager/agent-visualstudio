@@ -6,17 +6,20 @@
  *   - jaccardScore(): retorna 0..1, caso vacío retorna 0
  *   - findSpecialistWithCapability() con profiles mock en BD
  *   - findSpecialistWithCapability() sin profiles en BD (profileFound: false)
+ *   - isFallback semántico: true cuando ningún agente supera el threshold
  *
  * Estos tests usan mocks de PrismaClient y no requieren BD real.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   tokenize,
   jaccardScore,
   HierarchyOrchestrator,
   type HierarchyNode,
   type AgentExecutorFn,
+  type SpecialistMatch,
+  type HierarchyTask,
 } from '../hierarchy-orchestrator.js'
 import type { PrismaClient } from '@prisma/client'
 
@@ -121,6 +124,19 @@ function makeAgent(id: string, name: string): HierarchyNode {
 /** AgentExecutorFn stub — nunca debería llamarse en estos tests */
 const stubExecutor: AgentExecutorFn = vi.fn().mockResolvedValue({ response: 'ok' })
 
+/**
+ * Helper para acceder a findSpecialistWithCapability() (privado) vía cast.
+ * Permite testing unitario puro sin invocar orchestrate() completo.
+ */
+function getFindSpecialist(orchestrator: HierarchyOrchestrator) {
+  return (orchestrator as unknown as {
+    findSpecialistWithCapability: (
+      taskDescription: string,
+      candidates?: HierarchyNode[],
+    ) => Promise<SpecialistMatch>
+  }).findSpecialistWithCapability.bind(orchestrator)
+}
+
 describe('findSpecialistWithCapability() — via decomposeTasks() fallback', () => {
   it('asigna el task al agente con mayor afinidad semántica (con profiles en BD)', async () => {
     const agentA = makeAgent('agent-a', 'Legal Agent')
@@ -159,7 +175,7 @@ describe('findSpecialistWithCapability() — via decomposeTasks() fallback', () 
     // Llamar decomposeTasks indirectamente vía orchestrate() mocked
     // Accedemos al método privado via cast para testing unitario
     const decomposeTasksFn = (orchestrator as never as {
-      decomposeTasks: (task: string, input?: Record<string, unknown>) => Promise<import('../hierarchy-orchestrator.js').HierarchyTask[]>
+      decomposeTasks: (task: string, input?: Record<string, unknown>) => Promise<HierarchyTask[]>
     }).decomposeTasks.bind(orchestrator)
 
     const subtasks = await decomposeTasksFn('draft legal contract for the acquisition')
@@ -189,7 +205,7 @@ describe('findSpecialistWithCapability() — via decomposeTasks() fallback', () 
     )
 
     const decomposeTasksFn = (orchestrator as never as {
-      decomposeTasks: (task: string) => Promise<import('../hierarchy-orchestrator.js').HierarchyTask[]>
+      decomposeTasks: (task: string) => Promise<HierarchyTask[]>
     }).decomposeTasks.bind(orchestrator)
 
     // No debe lanzar — debe devolver un subtask válido
@@ -215,7 +231,7 @@ describe('findSpecialistWithCapability() — via decomposeTasks() fallback', () 
     const orchestrator = new HierarchyOrchestrator(hierarchy, stubExecutor, prisma)
 
     const decomposeTasksFn = (orchestrator as never as {
-      decomposeTasks: (task: string) => Promise<import('../hierarchy-orchestrator.js').HierarchyTask[]>
+      decomposeTasks: (task: string) => Promise<HierarchyTask[]>
     }).decomposeTasks.bind(orchestrator)
 
     await decomposeTasksFn('any task')
@@ -227,5 +243,95 @@ describe('findSpecialistWithCapability() — via decomposeTasks() fallback', () 
     expect(callArg.where.agentId.in).toEqual(
       expect.arrayContaining(['agent-1', 'agent-2', 'agent-3'])
     )
+  })
+})
+
+// ── isFallback behavior ───────────────────────────────────────────────────────
+
+describe('isFallback behavior', () => {
+  it('returns isFallback=true when no agent meets the score threshold', async () => {
+    // Arrange: agentes con capabilities completamente distintos a la query
+    const agentBilling  = makeAgent('agent-billing',  'Billing Agent')
+    const agentDefault  = makeAgent('agent-default',  'Default Agent')
+
+    const prisma = buildPrismaMock([
+      {
+        agentId:       'agent-billing',
+        systemPrompt:  'billing invoices payments receipts accounts',
+        persona:       {},
+        knowledgeBase: [],
+      },
+      {
+        agentId:       'agent-default',
+        systemPrompt:  '',
+        persona:       {},
+        knowledgeBase: [],
+      },
+    ])
+
+    const hierarchy: HierarchyNode = {
+      id:       'ws-fallback',
+      name:     'Test Workspace',
+      level:    'workspace',
+      children: [agentBilling, agentDefault],
+    }
+
+    const orchestrator = new HierarchyOrchestrator(hierarchy, stubExecutor, prisma)
+    const findSpecialist = getFindSpecialist(orchestrator)
+
+    // Act: query completamente dispar — nada debería superar el threshold MIN_SCORE=0.05
+    const result = await findSpecialist(
+      'quantum physics research neutron star astrophysics',
+      [agentBilling, agentDefault],
+    )
+
+    // Assert — criterio de calidad AUDIT-29:
+    expect(result).toBeDefined()
+    expect(result.isFallback).toBe(true)
+    // El nodo devuelto debe ser uno de los candidatos (el de mayor score, aunque sea 0)
+    expect(['agent-billing', 'agent-default']).toContain(result.node.id)
+  })
+
+  it('returns isFallback=false when a qualified agent is found', async () => {
+    // Arrange: agente con alta afinidad semántica para la query
+    const agentBilling  = makeAgent('agent-billing',  'Billing Agent')
+    const agentDefault  = makeAgent('agent-default',  'Default Agent')
+
+    const prisma = buildPrismaMock([
+      {
+        agentId:       'agent-billing',
+        // systemPrompt con tokens que coinciden directamente con la query
+        systemPrompt:  'billing invoices payments invoice help assistance support',
+        persona:       {},
+        knowledgeBase: [],
+      },
+      {
+        agentId:       'agent-default',
+        systemPrompt:  '',
+        persona:       {},
+        knowledgeBase: [],
+      },
+    ])
+
+    const hierarchy: HierarchyNode = {
+      id:       'ws-match',
+      name:     'Test Workspace',
+      level:    'workspace',
+      children: [agentBilling, agentDefault],
+    }
+
+    const orchestrator = new HierarchyOrchestrator(hierarchy, stubExecutor, prisma)
+    const findSpecialist = getFindSpecialist(orchestrator)
+
+    // Act: query con tokens que coinciden directamente con el systemPrompt del billing agent
+    const result = await findSpecialist(
+      'help with my invoice billing payments',
+      [agentBilling, agentDefault],
+    )
+
+    // Assert — criterio de calidad AUDIT-29:
+    expect(result).toBeDefined()
+    expect(result.isFallback).toBe(false)
+    expect(result.node.id).toBe('agent-billing')
   })
 })
