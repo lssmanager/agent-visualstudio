@@ -24,6 +24,31 @@ import {
   buildStatusChangeEvent,
 } from '../../run-engine/src/events/index.js'
 
+// ── Constantes de módulo — se instancian UNA SOLA VEZ al importar ───────────
+
+/**
+ * Palabras vacías filtradas antes del cálculo de score de capacidades.
+ * Definida a nivel de módulo para evitar recronstrucción en cada llamada
+ * a tokenize() — crítico en flows de alta frecuencia con múltiples candidatos.
+ */
+const STOPWORDS_SET = new Set([
+  'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to',
+  'for', 'of', 'with', 'by', 'from', 'as', 'is', 'are', 'was',
+  'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did',
+  'will', 'would', 'could', 'should', 'may', 'might', 'must',
+  'this', 'that', 'these', 'those', 'it', 'its', 'you', 'your',
+  'we', 'our', 'they', 'their', 'he', 'she', 'his', 'her',
+  'el', 'la', 'los', 'las', 'un', 'una', 'de', 'en', 'con', 'por',
+  'para', 'que', 'es', 'son', 'tiene', 'este', 'esta',
+])
+
+/**
+ * Regex de tokenización — extrae tokens alfanuméricos (incluyendo chars
+ * acentuados en español). Definida a nivel de módulo para evitar
+ * recompilación en cada invocación de tokenize().
+ */
+const TOKEN_SPLIT_RE = /[^a-záéíóúüñ\w]+/gi
+
 // ── Tipos públicos ───────────────────────────────────────────────────────────────────────────────
 
 export type HierarchyLevel = 'agency' | 'department' | 'workspace' | 'agent' | 'subagent'
@@ -260,24 +285,16 @@ const DEFAULT_OPTIONS: Required<OrchestratorOptions> = {
 
 /**
  * Tokeniza texto en un Set de palabras lowercase sin stopwords.
+ *
+ * Usa STOPWORDS_SET y TOKEN_SPLIT_RE definidas a nivel de módulo
+ * para evitar re-instanciación en flows de alta frecuencia (AUDIT-27).
  */
 export function tokenize(text: string): Set<string> {
-  const STOPWORDS = new Set([
-    'the','a','an','and','or','but','in','on','at','to',
-    'for','of','with','by','from','as','is','are','was',
-    'be','been','have','has','had','do','does','did',
-    'will','would','could','should','may','might','must',
-    'this','that','these','those','it','its','you','your',
-    'we','our','they','their','he','she','his','her',
-    'el','la','los','las','un','una','de','en','con','por',
-    'para','que','es','son','tiene','este','esta',
-  ])
   return new Set(
     text
       .toLowerCase()
-      .replace(/[^a-záéíóúüñ\w\s]/gi, ' ')
-      .split(/\s+/)
-      .filter((w) => w.length >= 3 && !STOPWORDS.has(w)),
+      .split(TOKEN_SPLIT_RE)
+      .filter((w) => w.length >= 3 && !STOPWORDS_SET.has(w)),
   )
 }
 
