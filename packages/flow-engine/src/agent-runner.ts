@@ -9,7 +9,7 @@
  * Integrado con ModelPolicyResolver via LLMStepExecutor.
  * Para runs sin Flow (conversación directa), usa un nodo sintético.
  */
-import type { PrismaClient } from '@prisma/client'
+import type { PrismaClient, ChannelKind } from '@prisma/client'
 import type { ILLMProvider } from './llm-provider.js'
 import { LLMStepExecutor } from './llm-step-executor.js'
 import type { StepExecutionContext } from './llm-step-executor.js'
@@ -34,7 +34,8 @@ export interface RunInput {
   agentId?:    string
   flowId?:     string
   sessionId?:  string
-  channelKind?: string
+  /** AUDIT-30: tipado con enum ChannelKind de Prisma en lugar de string libre */
+  channelKind?: ChannelKind
   inputData:   Record<string, unknown>
   availableSkills?: SkillSpec[]
   extraTools?:      McpToolDefinition[]

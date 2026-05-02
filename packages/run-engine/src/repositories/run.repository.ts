@@ -15,7 +15,7 @@
  *   (FlowExecutor, HierarchyOrchestrator). Nuevo código debe usar esta clase.
  */
 
-import type { PrismaClient, RunStatus } from '@prisma/client'
+import type { PrismaClient, RunStatus, ChannelKind } from '@prisma/client'
 
 // ── DTOs ──────────────────────────────────────────────────────────────────────
 
@@ -24,7 +24,8 @@ export interface CreateRunInput {
   agentId?:     string
   flowId?:      string
   sessionId?:   string
-  channelKind?: string
+  /** AUDIT-30: tipado con enum ChannelKind generado por Prisma */
+  channelKind?: ChannelKind
   inputData?:   Record<string, unknown>
   metadata?:    Record<string, unknown>
 }
