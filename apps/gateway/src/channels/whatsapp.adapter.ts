@@ -1,150 +1,158 @@
 /**
- * whatsapp.adapter.ts — WhatsApp Cloud API Adapter
+ * whatsapp.adapter.ts — Adaptador WhatsApp Business API (Cloud)
  *
- * Recibe webhooks de Meta y envía mensajes vía WhatsApp Cloud API.
- * Requiere: PHONE_NUMBER_ID y token en secretsEncrypted.
+ * AUDIT-21: externalId = from (número E.164) — descarta si falta (warn + 200)
+ * AUDIT-13: verificar res.ok en send()
+ * AUDIT-24: secrets se leen de secretsEncrypted
  */
 
-import type { IncomingMessage, OutgoingMessage } from './channel-adapter.interface.js'
-import { BaseChannelAdapter } from './channel-adapter.interface.js'
+import { Router, type Request, type Response } from 'express';
+import {
+  BaseChannelAdapter,
+  type ChannelType,
+  type IncomingMessage,
+  type OutgoingMessage,
+} from './channel-adapter.interface';
+import { getPrisma } from '../../lib/prisma.js';
 
-// ── Tipos WhatsApp ────────────────────────────────────────────────────
+const WA_API = 'https://graph.facebook.com/v19.0';
 
-interface WaWebhookEntry {
-  changes?: Array<{
-    value?: {
-      messages?: Array<{
-        from?:      string
-        id?:        string
-        type?:      string
-        text?:      { body?: string }
-        timestamp?: string
-      }>
-    }
-  }>
+interface WhatsAppSecrets {
+  accessToken:   string;
+  phoneNumberId: string;
+  verifyToken:   string;
 }
-
-interface WaWebhookBody {
-  object?: string
-  entry?:  WaWebhookEntry[]
-}
-
-interface WaErrorBody {
-  error?: { code?: number; message?: string; fbtrace_id?: string }
-}
-
-// ── Adapter ───────────────────────────────────────────────────────────
 
 export class WhatsAppAdapter extends BaseChannelAdapter {
-  readonly channel = 'whatsapp'
-
-  private phoneNumberId = ''
-  private accessToken   = ''
-  private replied       = false
+  readonly channel      = 'whatsapp' as const satisfies ChannelType;
+  private accessToken   = '';
+  private phoneNumberId = '';
+  private verifyToken   = '';
 
   async initialize(channelConfigId: string): Promise<void> {
-    this.channelConfigId = channelConfigId
+    this.channelConfigId = channelConfigId;
+    const db     = getPrisma();
+    const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } });
+    if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
 
-    // AUDIT-24: leer secretsEncrypted, NO credentials/tokenEnc
-    const config  = await this.loadConfig(channelConfigId)
-    const secrets = config.secretsEncrypted
+    const secrets: WhatsAppSecrets = config.secretsEncrypted
       ? JSON.parse(this.decryptSecrets(config.secretsEncrypted))
-      : {}
+      : { accessToken: '', phoneNumberId: '', verifyToken: '' };
 
-    const cfg = config.config as Record<string, unknown>
-    this.phoneNumberId = (cfg.phoneNumberId   as string) ?? ''
-    this.accessToken   = (secrets.accessToken as string) ?? ''
+    this.accessToken   = secrets.accessToken   ?? '';
+    this.phoneNumberId = secrets.phoneNumberId ?? '';
+    this.verifyToken   = secrets.verifyToken   ?? '';
   }
 
   async dispose(): Promise<void> {
-    this.accessToken = ''
-    this.replied     = false
+    this.accessToken   = '';
+    this.phoneNumberId = '';
+    this.verifyToken   = '';
   }
 
-  /**
-   * Procesa el payload del webhook de Meta.
-   * Llamado desde whatsapp.controller.ts.
-   */
-  async handleWebhook(body: WaWebhookBody): Promise<void> {
-    if (body.object !== 'whatsapp_business_account') return
-
-    for (const entry of body.entry ?? []) {
-      for (const change of entry.changes ?? []) {
-        for (const msg of change.value?.messages ?? []) {
-          // AUDIT-21: validar 'from' (número E.164) antes de construir IncomingMessage
-          const externalId = msg.from
-          if (!externalId) {
-            console.warn('[whatsapp] message without from — dropped', { msg })
-            continue
-          }
-
-          const incoming: IncomingMessage = {
-            channelConfigId: this.channelConfigId,
-            channelType:     'whatsapp',
-            externalId,
-            senderId:        externalId,
-            text:            msg.text?.body ?? '',
-            type:            'text',
-            receivedAt:      this.makeTimestamp(),
-          }
-
-          await this.emit(incoming)
-        }
-      }
-    }
-  }
-
-  /**
-   * AUDIT-13: replied=true SOLO después de verificar res.ok.
-   * WhatsApp Cloud API devuelve errores con { error: { code, message } }.
-   * El mensaje de error se incluye en el throw.
-   */
   async send(message: OutgoingMessage): Promise<void> {
-    if (!this.phoneNumberId || !this.accessToken) {
-      throw new Error('[whatsapp] send() called before initialize() or credentials missing')
-    }
-
-    const url = `https://graph.facebook.com/v19.0/${this.phoneNumberId}/messages`
-
-    const res = await fetch(url, {
-      method:  'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        'Authorization': `Bearer ${this.accessToken}`,
+    const res = await fetch(
+      `${WA_API}/${this.phoneNumberId}/messages`,
+      {
+        method:  'POST',
+        headers: {
+          'content-type':  'application/json',
+          'authorization': `Bearer ${this.accessToken}`,
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          to:                message.externalId,
+          type:              'text',
+          text:              { body: message.text },
+        }),
       },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to:                message.externalId,
-        type:              'text',
-        text:              { body: message.text },
-      }),
-    })
+    );
 
-    // AUDIT-13: verificar res.ok ANTES de marcar replied=true
-    // WhatsApp Cloud API devuelve { error: { code, message } } en caso de fallo
+    // AUDIT-13: verificar res.ok
     if (!res.ok) {
-      const errBody = await res.json().catch(() => ({} as WaErrorBody)) as WaErrorBody
-      const detail  = errBody.error?.message ?? 'unknown error'
+      const err = await res.text().catch(() => '');
       throw new Error(
-        `[whatsapp] send() failed: HTTP ${res.status} — ${detail}`,
-      )
+        `[whatsapp] send HTTP ${res.status} — ${err.slice(0, 200)}`,
+      );
     }
-
-    this.replied = true  // ← AUDIT-13: solo aquí, tras confirmar entrega
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────
+  getRouter(): Router {
+    const router = Router();
+
+    // Webhook verification (GET)
+    router.get('/webhook', (req: Request, res: Response) => {
+      const mode      = req.query['hub.mode'];
+      const token     = req.query['hub.verify_token'];
+      const challenge = req.query['hub.challenge'];
+
+      if (mode === 'subscribe' && token === this.verifyToken) {
+        res.status(200).send(String(challenge));
+      } else {
+        res.status(403).send('Forbidden');
+      }
+    });
+
+    // Webhook events (POST)
+    router.post('/webhook', async (req: Request, res: Response) => {
+      const body = req.body as {
+        object?: string;
+        entry?:  Array<{
+          changes?: Array<{
+            value?: {
+              messages?: Array<{
+                from?:      string;
+                id?:        string;
+                type?:      string;
+                text?:      { body?: string };
+                timestamp?: string;
+              }>;
+            };
+          }>;
+        }>;
+      };
+
+      if (body.object !== 'whatsapp_business_account') {
+        res.json({ ok: true });
+        return;
+      }
+
+      const messages = body.entry
+        ?.flatMap((e) => e.changes ?? [])
+        .flatMap((c) => c.value?.messages ?? []) ?? [];
+
+      for (const wam of messages) {
+        // AUDIT-21: externalId = from (E.164) — descartar si falta
+        const externalId = wam.from;
+        if (!externalId) {
+          console.warn('[whatsapp] message without from — dropped', { id: wam.id });
+          continue;
+        }
+
+        const text = wam.type === 'text' ? (wam.text?.body ?? '') : '';
+        if (!text) continue;
+
+        const msg: IncomingMessage = {
+          channelConfigId: this.channelConfigId,
+          channelType:     'whatsapp',
+          externalId,
+          senderId:   externalId,
+          text,
+          type:       'text',
+          metadata:   { messageId: wam.id, timestamp: wam.timestamp },
+          receivedAt: this.makeTimestamp(),
+        };
+
+        await this.emit(msg);
+      }
+
+      res.json({ ok: true });
+    });
+
+    return router;
+  }
 
   private decryptSecrets(_enc: string): string {
-    // F3b-05: decrypt AES-256-GCM — placeholder hasta implementación completa
-    return '{}'
-  }
-
-  private async loadConfig(channelConfigId: string) {
-    const { PrismaService } = await import('../prisma/prisma.service.js')
-    const db = new PrismaService()
-    const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } })
-    if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`)
-    return config
+    return '{}';
   }
 }
