@@ -33,6 +33,20 @@
 // Enforced at two layers:
 //   1. DB layer — raw CHECK constraint added via a manual migration.
 //   2. App layer — PolicyScopeGuard in apps/api validates before upsert.
+//
+// ── AUDIT-23 ─────────────────────────────────────────────────────────────────────────
+// enum ChannelType ya es el nombre canónico (no ChannelKind).
+// Valores exactos: telegram, whatsapp, webchat, discord, teams, slack, webhook.
+//
+// ── AUDIT-24 ─────────────────────────────────────────────────────────────────────────
+// ChannelConfig.secretsEncrypted es String? (nullable).
+// AES-256-GCM se aplica en F3b-05; hasta entonces puede estar vacío.
+// Los adapters deben leer secretsEncrypted (NO tokenEnc ni credentials).
+//
+// ── AUDIT-25 ─────────────────────────────────────────────────────────────────────────
+// ChannelConfig.isActive Boolean @default(false) es el ÚNICO campo de estado persistido.
+// Los campos fantasma status/errorMessage/lastStartedAt/lastStoppedAt han sido ELIMINADOS.
+// El estado en memoria se maneja con RuntimeChannelStatus en channel-lifecycle.service.ts.
 // ─────────────────────────────────────────────────────────────────────────────────
 
 generator client {
@@ -271,6 +285,8 @@ model RunStep {
   @@index([agentId, startedAt])
 }
 
+/// AUDIT-23: enum canónico — nombre ChannelType (NO ChannelKind).
+/// Valores exactos (7): telegram, whatsapp, webchat, discord, teams, slack, webhook.
 enum ChannelType {
   telegram
   whatsapp
@@ -294,6 +310,12 @@ enum BotStatus {
 
 // ─── Gateway / Channels ─────────────────────────────────────────────────────────────────────
 
+/// AUDIT-25: isActive es el ÚNICO campo de estado persistido en ChannelConfig.
+/// Los campos status/errorMessage/lastStartedAt/lastStoppedAt han sido ELIMINADOS.
+/// El estado en memoria (RuntimeChannelStatus) vive en channel-lifecycle.service.ts.
+///
+/// AUDIT-24: secretsEncrypted es String? (nullable) — AES-256-GCM se aplica en F3b-05.
+/// Los adapters leen secretsEncrypted (NO tokenEnc ni credentials).
 model ChannelConfig {
   id               String      @id @default(uuid())
   type             ChannelType
@@ -301,20 +323,13 @@ model ChannelConfig {
   /// FIX #173 (Opción A): workspaceId — requerido por GatewayService.dispatch()
   workspaceId      String
   workspace        Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  /// AES-256-GCM encrypted secrets (GATEWAY_ENCRYPTION_KEY env key)
-  secretsEncrypted String      @db.Text
+  /// AUDIT-24: nullable — AES-256-GCM encrypted secrets (GATEWAY_ENCRYPTION_KEY env key).
+  /// Vacío hasta que F3b-05 esté completo. Adapters leen este campo, NO 'credentials'.
+  secretsEncrypted String?     @db.Text
   /// Non-sensitive config: { webhookPath, parseMode, allowedOrigins, ... }
   config           Json
+  /// AUDIT-25: único campo de estado persistido. RuntimeChannelStatus vive en memoria.
   isActive         Boolean     @default(false)
-  /// FIX #173 (Opción A): Estado de lifecycle — usado por ChannelLifecycleService.
-  /// Valores: provisioned | starting | active | stopping | stopped | error
-  status           String      @default("provisioned")
-  /// FIX #173: Último error de lifecycle (start/stop fallido)
-  errorMessage     String?     @db.Text
-  /// FIX #173: Timestamp del último start() exitoso
-  lastStartedAt    DateTime?
-  /// FIX #173: Timestamp del último stop() exitoso
-  lastStoppedAt    DateTime?
   /// Estado operacional del bot/webhook — actualizado por el adapter manager.
   botStatus        BotStatus   @default(initializing)
   /// Detalle del último error o aviso (stack trace, mensaje Telegram API, etc.)
@@ -327,7 +342,7 @@ model ChannelConfig {
   bindings ChannelBinding[]
   sessions GatewaySession[]
 
-  @@index([workspaceId, status])
+  @@index([workspaceId, isActive])
   @@index([type, isActive])
 }
 
