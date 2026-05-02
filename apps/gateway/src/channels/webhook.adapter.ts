@@ -1,111 +1,92 @@
 /**
- * webhook.adapter.ts — Generic Webhook Adapter
+ * webhook.adapter.ts — Adaptador genérico Webhook (punto a punto)
  *
- * Recibe mensajes via HTTP POST y reenvía respuestas al callbackUrl
- * configurado en ChannelConfig.config.
+ * AUDIT-21: externalId = body.externalId ?? channelConfigId
+ *   El caller puede pasar externalId explícito.
+ *   Si no lo pasa, se usa channelConfigId como clave única
+ *   (canal punto a punto — una sola sesión por canal).
+ * AUDIT-24: secrets se leen de secretsEncrypted
  */
 
-import type { IncomingMessage, OutgoingMessage } from './channel-adapter.interface.js'
-import { BaseChannelAdapter } from './channel-adapter.interface.js'
-
-// ── Tipos ────────────────────────────────────────────────────────────────
-
-interface WebhookInboundPayload {
-  externalId?: string
-  senderId?:   string
-  text?:       string
-  message?:    string
-  metadata?:   Record<string, unknown>
-}
-
-// ── Adapter ──────────────────────────────────────────────────────────────
+import { Router, type Request, type Response } from 'express';
+import {
+  BaseChannelAdapter,
+  type ChannelType,
+  type IncomingMessage,
+  type OutgoingMessage,
+} from './channel-adapter.interface';
+import { getPrisma } from '../../lib/prisma.js';
 
 export class WebhookAdapter extends BaseChannelAdapter {
-  readonly channel = 'webhook'
-
-  private callbackUrl = ''
-  private replied     = false
+  readonly channel = 'webhook' as const satisfies ChannelType;
+  private callbackUrl = '';
 
   async initialize(channelConfigId: string): Promise<void> {
-    this.channelConfigId = channelConfigId
+    this.channelConfigId = channelConfigId;
+    const db     = getPrisma();
+    const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } });
+    if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
 
-    // AUDIT-24: leer secretsEncrypted, NO credentials/tokenEnc
-    const config = await this.loadConfig(channelConfigId)
-    const cfg    = config.config as Record<string, unknown>
-    this.callbackUrl = (cfg.callbackUrl as string) ?? ''
+    const cfg = (config.config as Record<string, unknown>) ?? {};
+    this.callbackUrl = (cfg['callbackUrl'] as string | undefined) ?? '';
   }
 
   async dispose(): Promise<void> {
-    this.callbackUrl = ''
-    this.replied     = false
+    this.callbackUrl = '';
   }
 
-  /**
-   * Procesa un payload entrante desde el webhook HTTP.
-   * Llamado desde webhook.controller.ts.
-   *
-   * AUDIT-21: si no hay externalId en el payload, usa channelConfigId
-   * como clave de sesión única (webhook es un canal punto a punto).
-   */
-  async handleInbound(payload: WebhookInboundPayload): Promise<void> {
-    // AUDIT-21: externalId desde payload o fallback a channelConfigId (punto a punto)
-    const externalId = payload.externalId ?? this.channelConfigId
-
-    const msg: IncomingMessage = {
-      channelConfigId: this.channelConfigId,
-      channelType:     'webhook',
-      externalId,
-      senderId:        payload.senderId ?? externalId,
-      text:            payload.text ?? payload.message ?? '',
-      type:            'text',
-      metadata:        payload.metadata,
-      receivedAt:      this.makeTimestamp(),
-    }
-
-    await this.emit(msg)
-  }
-
-  /**
-   * AUDIT-13: replied=true SOLO después de verificar res.ok.
-   * Error incluye HTTP status + fragmento del body.
-   */
   async send(message: OutgoingMessage): Promise<void> {
-    if (!this.callbackUrl) {
-      // Sin callbackUrl configurado — descarte silencioso (canal fire-and-forget)
-      console.warn(`[webhook] No callbackUrl configured for ${this.channelConfigId} — message dropped`)
-      return
-    }
-
+    if (!this.callbackUrl) return;
     const res = await fetch(this.callbackUrl, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({
-        externalId:  message.externalId,
-        text:        message.text,
-        richContent: message.richContent ?? null,
-        metadata:    message.metadata    ?? {},
-        ts:          new Date().toISOString(),
-      }),
-    })
+      headers: { 'content-type': 'application/json' },
+      body:    JSON.stringify(message),
+    });
 
-    // AUDIT-13: verificar res.ok ANTES de marcar replied=true
+    // AUDIT-13: verificar res.ok
     if (!res.ok) {
-      const body = await res.text().catch(() => '')
+      const err = await res.text().catch(() => '');
       throw new Error(
-        `[webhook] send() failed: HTTP ${res.status} — ${body.slice(0, 200)}`,
-      )
+        `[webhook] callbackUrl POST HTTP ${res.status} — ${err.slice(0, 200)}`,
+      );
     }
-
-    this.replied = true  // ← AUDIT-13: solo aquí, tras confirmar entrega
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────
+  getRouter(): Router {
+    const router = Router();
 
-  private async loadConfig(channelConfigId: string) {
-    const { PrismaService } = await import('../prisma/prisma.service.js')
-    const db = new PrismaService()
-    const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } })
-    if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`)
-    return config
+    router.post('/message', async (req: Request, res: Response) => {
+      const body = req.body as {
+        externalId?: string;
+        text?:       string;
+        userId?:     string;
+        metadata?:   Record<string, unknown>;
+      };
+
+      if (!body.text) {
+        res.status(400).json({ ok: false, error: '[webhook] text is required' });
+        return;
+      }
+
+      // AUDIT-21: externalId del body o fallback a channelConfigId
+      // El webhook es punto a punto: una sola sesión por canal está OK
+      const externalId = body.externalId ?? this.channelConfigId;
+
+      const msg: IncomingMessage = {
+        channelConfigId: this.channelConfigId,
+        channelType:     'webhook',
+        externalId,
+        senderId:   body.userId ?? externalId,
+        text:       body.text,
+        type:       'text',
+        metadata:   body.metadata ?? {},
+        receivedAt: this.makeTimestamp(),
+      };
+
+      await this.emit(msg);
+      res.json({ ok: true });
+    });
+
+    return router;
   }
 }

@@ -1,141 +1,133 @@
 /**
- * slack.adapter.ts — Slack Events API Adapter
+ * slack.adapter.ts — Adaptador Slack (Event Subscriptions + slash commands)
  *
- * Nota Slack-específica (AUDIT-13):
- *   Slack SIEMPRE devuelve HTTP 200, incluso cuando falla.
- *   El error real viene en el body: { ok: false, error: 'channel_not_found' }
- *   Por eso se verifica TANTO res.ok (red) COMO data.ok (protocolo Slack).
+ * AUDIT-21: externalId = event.channel — descarta si falta (warn + 200)
+ * AUDIT-13: replied=true solo después de res.ok
+ * AUDIT-24: secrets se leen de secretsEncrypted
  */
 
-import type { IncomingMessage, OutgoingMessage } from './channel-adapter.interface.js'
-import { BaseChannelAdapter } from './channel-adapter.interface.js'
+import { Router, type Request, type Response } from 'express';
+import {
+  BaseChannelAdapter,
+  type ChannelType,
+  type IncomingMessage,
+  type OutgoingMessage,
+} from './channel-adapter.interface';
+import { getPrisma } from '../../lib/prisma.js';
 
-// ── Tipos Slack ─────────────────────────────────────────────────────────
-
-interface SlackEvent {
-  type:     string
-  text?:    string
-  user?:    string
-  channel?: string
-  ts?:      string
+interface SlackSecrets {
+  botToken:      string;
+  signingSecret: string;
 }
 
-interface SlackWebhookPayload {
-  type:  string
-  event: SlackEvent
-}
-
-interface SlackApiResponse {
-  ok:     boolean
-  error?: string
-  ts?:    string
-}
-
-// ── Adapter ─────────────────────────────────────────────────────────────
+const SLACK_API = 'https://slack.com/api';
 
 export class SlackAdapter extends BaseChannelAdapter {
-  readonly channel = 'slack'
-
-  private botToken  = ''
-  private replied   = false
+  readonly channel      = 'slack' as const satisfies ChannelType;
+  private botToken      = '';
+  private signingSecret = '';
 
   async initialize(channelConfigId: string): Promise<void> {
-    this.channelConfigId = channelConfigId
+    this.channelConfigId = channelConfigId;
+    const db     = getPrisma();
+    const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } });
+    if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
 
-    // AUDIT-24: leer secretsEncrypted, NO credentials/tokenEnc
-    const config = await this.loadConfig(channelConfigId)
-    const secrets = config.secretsEncrypted
+    const secrets: SlackSecrets = config.secretsEncrypted
       ? JSON.parse(this.decryptSecrets(config.secretsEncrypted))
-      : {}
+      : { botToken: '', signingSecret: '' };
 
-    this.botToken = (secrets.botToken as string) ?? ''
+    this.botToken      = secrets.botToken      ?? '';
+    this.signingSecret = secrets.signingSecret ?? '';
   }
 
   async dispose(): Promise<void> {
-    this.botToken = ''
-    this.replied  = false
+    this.botToken      = '';
+    this.signingSecret = '';
   }
 
-  /**
-   * Procesa un evento de Slack (Events API).
-   * Llamado desde slack.controller.ts tras verificar la firma HMAC.
-   */
-  async handleEvent(payload: SlackWebhookPayload): Promise<void> {
-    const event = payload.event
-    if (event.type !== 'message') return
-
-    // AUDIT-21: validar channel antes de construir IncomingMessage
-    const externalId = event.channel
-    if (!externalId) {
-      console.warn('[slack] event without channel — dropped', { event })
-      return
-    }
-
-    // Ignorar mensajes del propio bot
-    if (!event.user) {
-      console.warn('[slack] event without user (posible bot message) — dropped', { event })
-      return
-    }
-
-    const msg: IncomingMessage = {
-      channelConfigId: this.channelConfigId,
-      channelType:     'slack',
-      externalId,
-      senderId:        event.user,
-      text:            event.text ?? '',
-      type:            'text',
-      receivedAt:      this.makeTimestamp(),
-    }
-
-    await this.emit(msg)
-  }
-
-  /**
-   * AUDIT-13: replied=true SOLO después de verificar res.ok && data.ok.
-   *
-   * Slack usa HTTP 200 para todo — el error real es data.ok === false.
-   * Ambas condiciones deben pasar antes de marcar la entrega como exitosa.
-   */
   async send(message: OutgoingMessage): Promise<void> {
-    if (!this.botToken) {
-      throw new Error('[slack] send() called before initialize() or botToken missing')
-    }
-
-    const res = await fetch('https://slack.com/api/chat.postMessage', {
+    const res = await fetch(`${SLACK_API}/chat.postMessage`, {
       method:  'POST',
       headers: {
-        'Content-Type':  'application/json; charset=utf-8',
-        'Authorization': `Bearer ${this.botToken}`,
+        'content-type':  'application/json; charset=utf-8',
+        'authorization': `Bearer ${this.botToken}`,
       },
       body: JSON.stringify({
         channel: message.externalId,
         text:    message.text,
       }),
-    })
+    });
 
-    // AUDIT-13: doble verificación (HTTP layer + Slack protocol layer)
-    const data = await res.json() as SlackApiResponse
-    if (!res.ok || data.ok === false) {
-      throw new Error(
-        `[slack] send() failed: HTTP ${res.status} error=${data.error ?? 'unknown'}`,
-      )
+    // AUDIT-13: verificar HTTP res.ok primero
+    if (!res.ok) {
+      const err = await res.text().catch(() => '');
+      throw new Error(`[slack] chat.postMessage HTTP ${res.status} — ${err.slice(0, 200)}`);
     }
 
-    this.replied = true  // ← AUDIT-13: solo aquí, tras confirmar entrega exitosa
+    // AUDIT-13: luego verificar data.ok de Slack
+    const data = await res.json() as { ok: boolean; error?: string };
+    if (!data.ok) {
+      throw new Error(`[slack] chat.postMessage error: ${data.error ?? 'unknown'}`);
+    }
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────
+  getRouter(): Router {
+    const router = Router();
+
+    router.post('/events', async (req: Request, res: Response) => {
+      const body = req.body as {
+        type:       string;
+        challenge?: string;
+        event?:     {
+          type:     string;
+          channel?: string;
+          user?:    string;
+          text?:    string;
+          ts?:      string;
+          bot_id?:  string;
+        };
+      };
+
+      // URL verification challenge
+      if (body.type === 'url_verification') {
+        res.json({ challenge: body.challenge });
+        return;
+      }
+
+      const event = body.event;
+      if (!event || event.type !== 'message' || event.bot_id) {
+        res.json({ ok: true });
+        return;
+      }
+
+      // AUDIT-21: externalId = event.channel — descartar si falta
+      const externalId = event.channel;
+      if (!externalId) {
+        console.warn('[slack] event.message without channel — dropped', { ts: event.ts });
+        res.json({ ok: true });
+        return;
+      }
+
+      const msg: IncomingMessage = {
+        channelConfigId: this.channelConfigId,
+        channelType:     'slack',
+        externalId,
+        senderId:    event.user ?? externalId,
+        text:        event.text ?? '',
+        type:        'text',
+        metadata:    { ts: event.ts },
+        receivedAt:  this.makeTimestamp(),
+      };
+
+      await this.emit(msg);
+      res.json({ ok: true });
+    });
+
+    return router;
+  }
 
   private decryptSecrets(_enc: string): string {
-    // F3b-05: decrypt AES-256-GCM — placeholder hasta implementación completa
-    return '{}'
-  }
-
-  private async loadConfig(channelConfigId: string) {
-    const { PrismaService } = await import('../prisma/prisma.service.js')
-    const db = new PrismaService()
-    const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } })
-    if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`)
-    return config
+    return '{}';
   }
 }

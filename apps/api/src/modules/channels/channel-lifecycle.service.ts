@@ -35,9 +35,26 @@ export class ChannelLifecycleService {
   /**
    * AUDIT-25: Estado en memoria por channelConfigId.
    * Permite reportar 'starting' / 'stopping' con más precisión que el bool isActive.
-   * Se inicializa al cargar canales activos en onModuleInit (si se implementa).
    */
   private readonly runtimeStatus = new Map<string, RuntimeChannelStatus>()
+
+  /**
+   * AUDIT-15: Lock por channelId — previene start/stop concurrentes en el mismo canal.
+   *
+   * Cómo funciona:
+   *   - Al entrar a _withLock(id, fn), se encadena fn() al final de la Promise
+   *     actualmente registrada para ese id.
+   *   - Si hay una operación en curso (e.g. start), la siguiente (e.g. stop)
+   *     esperará a que la primera termine antes de ejecutarse.
+   *   - Si la primera falló, la segunda se ejecuta igualmente (segundo callback
+   *     de .then()) para no bloquear el canal indefinidamente.
+   *   - Cuando la Promise resultante termina y sigue siendo la última en el Map,
+   *     se elimina la entrada para liberar memoria.
+   *
+   * Nota: este lock es en memoria — si el proceso reinicia se limpia.
+   *       Lock distribuido (Redis) está fuera de scope de este AUDIT.
+   */
+  private readonly _locks = new Map<string, Promise<ChannelStatusDto>>()
 
   constructor(
     private readonly db: PrismaService,
@@ -45,8 +62,9 @@ export class ChannelLifecycleService {
     private readonly resolver: AgentResolverService,
   ) {}
 
+  // ── Public API ─────────────────────────────────────────────────────────────
+
   async provision(dto: ProvisionChannelDto): Promise<ChannelStatusDto> {
-    // AUDIT-24: encriptar secrets → secretsEncrypted (nullable si no hay secrets)
     const secretsEncrypted = dto.secrets ? this.encryptSecrets(dto.secrets) : null
 
     const channel = await this.db.channelConfig.create({
@@ -70,7 +88,72 @@ export class ChannelLifecycleService {
     return this.buildStatusDto(channel, channel.id)
   }
 
+  /**
+   * AUDIT-15: start() pasa por _withLock para serializar operaciones concurrentes.
+   */
   async start(channelConfigId: string): Promise<ChannelStatusDto> {
+    return this._withLock(channelConfigId, () => this._startLocked(channelConfigId))
+  }
+
+  /**
+   * AUDIT-15: stop() pasa por _withLock para serializar operaciones concurrentes.
+   */
+  async stop(channelConfigId: string): Promise<ChannelStatusDto> {
+    return this._withLock(channelConfigId, () => this._stopLocked(channelConfigId))
+  }
+
+  async restart(channelConfigId: string): Promise<ChannelStatusDto> {
+    const channel = await this.loadOrThrow(channelConfigId)
+
+    if (channel.isActive) {
+      await this.stop(channelConfigId)
+    }
+
+    return this.start(channelConfigId)
+  }
+
+  async status(channelConfigId: string): Promise<ChannelStatusDto> {
+    const channel = await this.loadOrThrow(channelConfigId)
+    return this.buildStatusDto(channel, channelConfigId)
+  }
+
+  async listAll(): Promise<ChannelStatusDto[]> {
+    const channels = await this.db.channelConfig.findMany({
+      orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
+    })
+
+    return Promise.all(channels.map((ch: any) => this.buildStatusDto(ch, ch.id)))
+  }
+
+  // ── Lock guard ─────────────────────────────────────────────────────────────
+
+  /**
+   * AUDIT-15: Serializa operaciones por channelId usando una cadena de Promises.
+   * Si la operación anterior falló, la siguiente se ejecuta igualmente
+   * para no bloquear el canal indefinidamente.
+   */
+  private _withLock<T>(
+    channelId: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const existing = this._locks.get(channelId) as Promise<T> | undefined
+    const next = (existing ?? Promise.resolve()).then(
+      () => fn(),
+      () => fn(), // si la anterior falló, ejecutar igualmente
+    )
+    this._locks.set(channelId, next as unknown as Promise<ChannelStatusDto>)
+    void next.finally(() => {
+      // Limpiar el lock cuando no haya más operaciones pendientes
+      if (this._locks.get(channelId) === (next as unknown as Promise<ChannelStatusDto>)) {
+        this._locks.delete(channelId)
+      }
+    })
+    return next
+  }
+
+  // ── Locked operations ───────────────────────────────────────────────────────
+
+  private async _startLocked(channelConfigId: string): Promise<ChannelStatusDto> {
     const channel = await this.db.channelConfig.findUnique({ where: { id: channelConfigId } })
     if (!channel) throw new ChannelNotFoundError(channelConfigId)
     if (channel.isActive) throw new ChannelAlreadyInStateError(channelConfigId, 'active')
@@ -101,7 +184,7 @@ export class ChannelLifecycleService {
     }
   }
 
-  async stop(channelConfigId: string): Promise<ChannelStatusDto> {
+  private async _stopLocked(channelConfigId: string): Promise<ChannelStatusDto> {
     const channel = await this.db.channelConfig.findUnique({ where: { id: channelConfigId } })
     if (!channel) throw new ChannelNotFoundError(channelConfigId)
     if (!channel.isActive) throw new ChannelAlreadyInStateError(channelConfigId, 'stopped')
@@ -132,38 +215,58 @@ export class ChannelLifecycleService {
     }
   }
 
-  async restart(channelConfigId: string): Promise<ChannelStatusDto> {
-    const channel = await this.loadOrThrow(channelConfigId)
+  // ── Gateway calls ───────────────────────────────────────────────────────────
 
-    if (channel.isActive) {
-      await this.stop(channelConfigId)
+  /**
+   * AUDIT-14: Verificación defensiva del resultado de activateChannel.
+   *
+   * GatewayService.activateChannel() devuelve Promise<void> y lanza si falla.
+   * El try/catch en _startLocked ya captura y propaga el error correctamente.
+   *
+   * Se añade verificación explícita por si en el futuro el contrato cambia:
+   *   - { success: boolean } → lanza Error si success=false
+   *   - boolean → lanza Error si false
+   */
+  private async callGatewayActivate(id: string): Promise<void> {
+    const result = await this.gateway.activateChannel(id) as unknown
+
+    if (typeof result === 'boolean' && !result) {
+      throw new Error(`[gateway] Channel ${id} activation returned false`)
     }
 
-    return this.start(channelConfigId)
+    if (
+      result != null &&
+      typeof result === 'object' &&
+      'success' in result &&
+      !(result as { success: boolean }).success
+    ) {
+      const msg = (result as { error?: string }).error ?? 'activateChannel returned success=false'
+      throw new Error(`[gateway] Channel ${id} activation failed: ${msg}`)
+    }
   }
 
-  async status(channelConfigId: string): Promise<ChannelStatusDto> {
-    const channel = await this.loadOrThrow(channelConfigId)
-    return this.buildStatusDto(channel, channelConfigId)
-  }
-
-  async listAll(): Promise<ChannelStatusDto[]> {
-    const channels = await this.db.channelConfig.findMany({
-      orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
-    })
-
-    return Promise.all(channels.map((ch: any) => this.buildStatusDto(ch, ch.id)))
-  }
-
-  // ── Helpers ──────────────────────────────────────────────────────────────
-
-  private async callGatewayActivate(id: string): Promise<void> {
-    await this.gateway.activateChannel(id)
-  }
-
+  /**
+   * AUDIT-14: Verificación defensiva simétrica para deactivateChannel.
+   */
   private async callGatewayDeactivate(id: string): Promise<void> {
-    await this.gateway.deactivateChannel(id)
+    const result = await this.gateway.deactivateChannel(id) as unknown
+
+    if (typeof result === 'boolean' && !result) {
+      throw new Error(`[gateway] Channel ${id} deactivation returned false`)
+    }
+
+    if (
+      result != null &&
+      typeof result === 'object' &&
+      'success' in result &&
+      !(result as { success: boolean }).success
+    ) {
+      const msg = (result as { error?: string }).error ?? 'deactivateChannel returned success=false'
+      throw new Error(`[gateway] Channel ${id} deactivation failed: ${msg}`)
+    }
   }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────────────
 
   private async loadOrThrow(channelConfigId: string) {
     const channel = await this.db.channelConfig.findUnique({ where: { id: channelConfigId } })
@@ -204,7 +307,6 @@ export class ChannelLifecycleService {
 
   /**
    * AUDIT-24: encripta secrets con AES-256-GCM.
-   * El resultado se guarda en ChannelConfig.secretsEncrypted (String?).
    * Los adapters leen secretsEncrypted — NO tokenEnc ni credentials.
    */
   private encryptSecrets(secrets: Record<string, unknown>): string {
