@@ -10,6 +10,7 @@ export type ChannelType =
   | 'whatsapp'
   | 'slack'
   | 'discord'
+  | 'teams'
   | 'webhook';
 
 export interface ChannelBinding {
@@ -57,6 +58,47 @@ export interface AddBindingPayload {
   scopeLevel?: string;
   scopeId?:    string;
   isDefault?:  boolean;
+}
+
+/** Payload para PATCH de un canal existente */
+export interface PatchChannelPayload {
+  name?:    string;
+  config?:  Record<string, unknown>;
+  secrets?: Record<string, unknown>; // nunca se devuelven, solo se envían
+}
+
+/** Resultado de un test de conexión */
+export interface ChannelTestResult {
+  ok:      boolean;
+  latency: number; // ms
+  message: string;
+}
+
+/** Campos de configuración pública por tipo (no secrets) */
+export interface ChannelConfigFields {
+  telegram: {
+    webhookMode:    'polling' | 'webhook';
+    allowedUserIds: string[];
+    parseMode:      'HTML' | 'Markdown' | 'MarkdownV2';
+  };
+  whatsapp: {
+    phoneId:             string;
+    verifyToken:         string;
+    apiVersion:          string;
+    allowedPhoneNumbers: string[];
+  };
+  discord: {
+    applicationId:  string;
+    guildId?:       string;
+    commandPrefix?: string;
+  };
+  teams: {
+    tenantId:        string;
+    appId:           string;
+    serviceMode:     'bot_framework' | 'incoming_webhook';
+    webhookUrl?:     string;
+    welcomeMessage?: string;
+  };
 }
 
 // Respuestas del API

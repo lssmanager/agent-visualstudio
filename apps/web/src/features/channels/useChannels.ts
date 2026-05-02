@@ -15,11 +15,20 @@
  *   deleteChannel(id)
  *   addBinding(channelId, payload)
  *   removeBinding(channelId, bindingId)
+ *   patchChannel(id, payload)  — F3a-36
+ *   testChannel(id)            — F3a-36
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import * as gwApi from '../../lib/gateway-api';
-import type { ChannelConfig, CreateChannelPayload, AddBindingPayload } from './types';
+import type {
+  ChannelConfig,
+  CreateChannelPayload,
+  AddBindingPayload,
+  PatchChannelPayload,
+  ChannelTestResult,
+  ChannelDetailResponse,
+} from './types';
 
 export function useChannels(filters?: { agentId?: string; type?: string; isActive?: boolean }) {
   const [channels,    setChannels]    = useState<ChannelConfig[]>([]);
@@ -105,6 +114,45 @@ export function useChannels(filters?: { agentId?: string; type?: string; isActiv
     [],
   );
 
+  // ── F3a-36: patchChannel + testChannel ──────────────────────────────────────
+
+  const patchChannel = useCallback(
+    async (id: string, payload: PatchChannelPayload): Promise<void> => {
+      const res = await fetch(`/api/channels/${id}`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: 'Error al actualizar canal' }));
+        throw new Error((err as { message?: string }).message ?? 'Error al actualizar canal');
+      }
+      const updated: ChannelDetailResponse = await res.json();
+      setChannels(prev =>
+        prev.map(ch => (ch.id === id ? updated.data : ch)),
+      );
+      if (selectedId === id) {
+        // forzar re-render del detalle con datos nuevos
+        setSelectedId(null);
+        requestAnimationFrame(() => setSelectedId(id));
+      }
+    },
+    [selectedId],
+  );
+
+  const testChannel = useCallback(
+    async (id: string): Promise<ChannelTestResult> => {
+      const res = await fetch(`/api/channels/${id}/test`, { method: 'POST' });
+      if (!res.ok) {
+        return { ok: false, latency: 0, message: 'No se pudo conectar al canal' };
+      }
+      return res.json() as Promise<ChannelTestResult>;
+    },
+    [],
+  );
+
+  // ── ──────────────────────────────────────────────────────────────────────────
+
   const selected = channels.find(c => c.id === selectedId) ?? null;
 
   return {
@@ -121,5 +169,7 @@ export function useChannels(filters?: { agentId?: string; type?: string; isActiv
     deleteChannel,
     addBinding,
     removeBinding,
+    patchChannel,
+    testChannel,
   };
 }
