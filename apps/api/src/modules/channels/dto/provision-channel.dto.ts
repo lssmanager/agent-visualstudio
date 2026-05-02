@@ -25,10 +25,14 @@ export class ChannelStatusDto {
   id:             string
   name:           string
   type:           string
-  status:         string
+  /** Derivado de isActive: 'active' | 'stopped'. AUDIT-25 añadirá enum persistido. */
+  status:         string | null
   isActive:       boolean
+  /** No persiste en BD hasta AUDIT-25. Siempre null por ahora. */
   errorMessage:   string | null
+  /** No persiste en BD hasta AUDIT-25. Siempre null por ahora. */
   lastStartedAt:  string | null
+  /** No persiste en BD hasta AUDIT-25. Siempre null por ahora. */
   lastStoppedAt:  string | null
   bindingCount:   number
   activeSessions: number
