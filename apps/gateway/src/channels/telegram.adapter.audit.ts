@@ -1,6 +1,5 @@
 /**
- * Discord Adapter — F3a series
- * Hooks: channel.provisioned, channel.message (inbound+outbound), channel.error
+ * Telegram Adapter — Audit hooks
  */
 import {
   AuditService,
@@ -11,27 +10,18 @@ import {
 
 const auditService = new AuditService();
 
-// ── Existing adapter code preserved below ────────────────────────────────────
-// (Import and usage placeholders — the real adapter implementation already
-//  exists in the repo; we only ADD the audit hooks here)
-
-/**
- * Call this when the Discord bot connects / reconnects successfully.
- */
-export function auditDiscordProvisioned(params: {
+export function auditTelegramProvisioned(params: {
   channelId:   string;
   channelName: string;
   agentId:     string;
   workspaceId: string;
-  guildId?:    string;
   userId?:     string;
 }): void {
   const meta: ChannelProvisionedMeta = {
-    channelType: 'discord',
+    channelType: 'telegram',
     channelName: params.channelName,
     agentId:     params.agentId,
     workspaceId: params.workspaceId,
-    configSnapshot: { guildId: params.guildId },
   };
   auditService.logChannelProvisioned({
     channelId: params.channelId,
@@ -40,16 +30,13 @@ export function auditDiscordProvisioned(params: {
   });
 }
 
-/**
- * Call from the interaction handler after accepting an inbound message.
- */
-export function auditDiscordMessageInbound(params: {
+export function auditTelegramMessageInbound(params: {
   channelId:      string;
   messageId:      string;
   conversationId?: string;
 }): void {
   const meta: ChannelMessageMeta = {
-    channelType:    'discord',
+    channelType:    'telegram',
     direction:      'inbound',
     messageId:      params.messageId,
     conversationId: params.conversationId,
@@ -57,33 +44,25 @@ export function auditDiscordMessageInbound(params: {
   auditService.logChannelMessage({ channelId: params.channelId, meta });
 }
 
-/**
- * Call from the reply dispatcher after sending the agent response.
- */
-export function auditDiscordMessageOutbound(params: {
+export function auditTelegramMessageOutbound(params: {
   channelId:      string;
   messageId:      string;
   agentId?:       string;
-  conversationId?: string;
   tokensUsed?:    number;
   latencyMs?:     number;
 }): void {
   const meta: ChannelMessageMeta = {
-    channelType:    'discord',
-    direction:      'outbound',
-    messageId:      params.messageId,
-    agentId:        params.agentId,
-    conversationId: params.conversationId,
-    tokensUsed:     params.tokensUsed,
-    latencyMs:      params.latencyMs,
+    channelType: 'telegram',
+    direction:   'outbound',
+    messageId:   params.messageId,
+    agentId:     params.agentId,
+    tokensUsed:  params.tokensUsed,
+    latencyMs:   params.latencyMs,
   };
   auditService.logChannelMessage({ channelId: params.channelId, meta });
 }
 
-/**
- * Call from the Discord client error / close handlers.
- */
-export function auditDiscordError(params: {
+export function auditTelegramError(params: {
   channelId:    string;
   errorCode:    string;
   errorMessage: string;
@@ -92,7 +71,7 @@ export function auditDiscordError(params: {
   stack?:       string;
 }): void {
   const meta: ChannelErrorMeta = {
-    channelType:  'discord',
+    channelType:  'telegram',
     errorCode:    params.errorCode,
     errorMessage: params.errorMessage,
     recoverable:  params.recoverable,
