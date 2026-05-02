@@ -11,26 +11,6 @@ import {
 import type { ProvisionChannelDto, ChannelStatusDto } from './dto/provision-channel.dto.js'
 import { createCipheriv, randomBytes } from 'crypto'
 
-type ChannelStatus =
-  | 'provisioned'
-  | 'starting'
-  | 'active'
-  | 'stopping'
-  | 'stopped'
-  | 'error'
-
-const TRANSITIONS: Record<ChannelStatus, ChannelStatus[]> = {
-  provisioned: ['starting'],
-  starting: ['active', 'error'],
-  active: ['stopping'],
-  stopping: ['stopped', 'error'],
-  stopped: ['starting'],
-  error: ['starting'],
-}
-
-const START_ALLOWED_STATUSES: ChannelStatus[] = ['provisioned', 'stopped', 'error']
-const STOP_ALLOWED_STATUSES: ChannelStatus[] = ['active']
-
 @Injectable()
 export class ChannelLifecycleService {
   private readonly logger = new Logger(ChannelLifecycleService.name)
@@ -51,10 +31,6 @@ export class ChannelLifecycleService {
         config: dto.config,
         secretsEncrypted,
         isActive: false,
-        status: 'provisioned',
-        errorMessage: null,
-        lastStartedAt: null,
-        lastStoppedAt: null,
       },
     })
 
@@ -71,18 +47,17 @@ export class ChannelLifecycleService {
     const claim = await this.db.channelConfig.updateMany({
       where: {
         id: channelConfigId,
-        status: { in: START_ALLOWED_STATUSES },
       },
-      data: { status: 'starting', isActive: true, errorMessage: null },
+      data: { isActive: true },
     })
 
     if (claim.count === 0) {
       const channel = await this.db.channelConfig.findUnique({ where: { id: channelConfigId } })
       if (!channel) throw new ChannelNotFoundError(channelConfigId)
-      if (channel.status === 'active' || channel.status === 'starting') {
-        throw new ChannelAlreadyInStateError(channelConfigId, channel.status)
+      if (channel.isActive) {
+        throw new ChannelAlreadyInStateError(channelConfigId, 'active')
       }
-      throw new InvalidTransitionError(channelConfigId, channel.status, 'starting')
+      throw new InvalidTransitionError(channelConfigId, 'unknown', 'starting')
     }
 
     this.resolver.invalidateCache(channelConfigId)
@@ -92,7 +67,7 @@ export class ChannelLifecycleService {
 
       const updated = await this.db.channelConfig.update({
         where: { id: channelConfigId },
-        data: { status: 'active', lastStartedAt: new Date() },
+        data: { isActive: true },
       })
       this.resolver.invalidateCache(channelConfigId)
       this.logger.log(`[start] Channel "${channelConfigId}" is now active`)
@@ -101,7 +76,7 @@ export class ChannelLifecycleService {
       const errorMessage = err instanceof Error ? err.message : String(err)
       await this.db.channelConfig.update({
         where: { id: channelConfigId },
-        data: { status: 'error', isActive: false, errorMessage },
+        data: { isActive: false },
       })
       this.resolver.invalidateCache(channelConfigId)
       this.logger.error(`[start] Channel "${channelConfigId}" failed to start: ${errorMessage}`)
@@ -113,18 +88,18 @@ export class ChannelLifecycleService {
     const claim = await this.db.channelConfig.updateMany({
       where: {
         id: channelConfigId,
-        status: { in: STOP_ALLOWED_STATUSES },
+        isActive: true,
       },
-      data: { status: 'stopping', isActive: false, errorMessage: null },
+      data: { isActive: false },
     })
 
     if (claim.count === 0) {
       const channel = await this.db.channelConfig.findUnique({ where: { id: channelConfigId } })
       if (!channel) throw new ChannelNotFoundError(channelConfigId)
-      if (channel.status === 'stopped' || channel.status === 'stopping') {
-        throw new ChannelAlreadyInStateError(channelConfigId, channel.status)
+      if (!channel.isActive) {
+        throw new ChannelAlreadyInStateError(channelConfigId, 'stopped')
       }
-      throw new InvalidTransitionError(channelConfigId, channel.status, 'stopping')
+      throw new InvalidTransitionError(channelConfigId, 'unknown', 'stopping')
     }
 
     this.resolver.invalidateCache(channelConfigId)
@@ -134,7 +109,7 @@ export class ChannelLifecycleService {
 
       const updated = await this.db.channelConfig.update({
         where: { id: channelConfigId },
-        data: { status: 'stopped', lastStoppedAt: new Date() },
+        data: { isActive: false },
       })
       this.resolver.invalidateCache(channelConfigId)
       this.logger.log(`[stop] Channel "${channelConfigId}" is now stopped`)
@@ -143,7 +118,7 @@ export class ChannelLifecycleService {
       const errorMessage = err instanceof Error ? err.message : String(err)
       await this.db.channelConfig.update({
         where: { id: channelConfigId },
-        data: { status: 'error', errorMessage },
+        data: { isActive: false },
       })
       this.resolver.invalidateCache(channelConfigId)
       this.logger.error(`[stop] Channel "${channelConfigId}" failed to stop: ${errorMessage}`)
@@ -154,11 +129,7 @@ export class ChannelLifecycleService {
   async restart(channelConfigId: string): Promise<ChannelStatusDto> {
     const channel = await this.loadOrThrow(channelConfigId)
 
-    if (channel.status === 'starting' || channel.status === 'stopping') {
-      throw new InvalidTransitionError(channelConfigId, channel.status, 'restart')
-    }
-
-    if (channel.status === 'active') {
+    if (channel.isActive) {
       await this.stop(channelConfigId)
     }
 
@@ -186,13 +157,6 @@ export class ChannelLifecycleService {
     await this.gateway.deactivateChannel(id)
   }
 
-  private assertTransition(from: ChannelStatus, to: ChannelStatus, channelConfigId: string): void {
-    const allowed = TRANSITIONS[from] ?? []
-    if (!allowed.includes(to)) {
-      throw new InvalidTransitionError(channelConfigId, from, to)
-    }
-  }
-
   private async loadOrThrow(channelConfigId: string) {
     const channel = await this.db.channelConfig.findUnique({ where: { id: channelConfigId } })
     if (!channel) throw new ChannelNotFoundError(channelConfigId)
@@ -212,11 +176,11 @@ export class ChannelLifecycleService {
       id: ch.id,
       name: ch.name,
       type: ch.type,
-      status: ch.status,
+      status: ch.isActive ? 'active' : 'stopped',
       isActive: ch.isActive,
-      errorMessage: ch.errorMessage ?? null,
-      lastStartedAt: ch.lastStartedAt?.toISOString() ?? null,
-      lastStoppedAt: ch.lastStoppedAt?.toISOString() ?? null,
+      errorMessage: null,
+      lastStartedAt: null,
+      lastStoppedAt: null,
       bindingCount,
       activeSessions,
       createdAt: ch.createdAt.toISOString(),
