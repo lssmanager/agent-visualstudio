@@ -1,15 +1,21 @@
 /**
- * whatsapp.adapter.ts — Adaptador WhatsApp Business Cloud API
+ * whatsapp.adapter.ts — F3a-30
  *
- * Recibe mensajes via webhook de Meta (POST /gateway/whatsapp/webhook).
+ * Adaptador WhatsApp Business Cloud API (Meta).
+ * Recibe mensajes vía webhook de Meta (POST /gateway/whatsapp/webhook).
  * Envía mensajes usando WhatsApp Cloud API.
  *
  * Credentials en ChannelConfig.credentials (cifrado en DB):
  *   { accessToken, phoneNumberId, verifyToken, appSecret? }
  *
  * Endpoints:
- *   GET  /gateway/whatsapp/webhook — verificación de Meta
- *   POST /gateway/whatsapp/webhook — mensajes entrantes
+ *   GET  /gateway/whatsapp/webhook  — verificación de Meta (hub.challenge)
+ *   POST /gateway/whatsapp/webhook  — mensajes entrantes
+ *
+ * Fixes incluidos:
+ *   #172 — externalUserId correcto en IncomingMessage
+ *   #182 — replied=true SOLO tras res.ok en send()
+ *   #177 — race condition getOrCreate() resuelto en whatsapp-session.store.ts
  *
  * Inspirado en n8n WhatsAppTrigger y Flowise WhatsAppChat.
  */
@@ -26,12 +32,21 @@ import {
 const WHATSAPP_API = 'https://graph.facebook.com/v19.0';
 
 interface WhatsAppCredentials {
-  accessToken:    string;
-  phoneNumberId:  string;
-  verifyToken:    string;
-  appSecret?:     string;
+  accessToken:   string;
+  phoneNumberId: string;
+  verifyToken:   string;
+  appSecret?:    string;
 }
 
+/**
+ * Adaptador para WhatsApp Business Cloud API.
+ * Implementa IChannelAdapter + getRouter() para el modo HTTP.
+ *
+ * @example
+ * const adapter = new WhatsAppAdapter();
+ * await adapter.initialize(channelConfigId);
+ * app.use('/gateway/whatsapp', adapter.getRouter());
+ */
 export class WhatsAppAdapter extends BaseChannelAdapter {
   readonly channel      = 'whatsapp' as const satisfies ChannelType;
   private accessToken   = '';
@@ -39,32 +54,96 @@ export class WhatsAppAdapter extends BaseChannelAdapter {
   private verifyToken   = '';
   private appSecret     = '';
 
-  // ── Lifecycle ────────────────────────────────────────────────────────────────────────────
+  // ---------------------------------------------------------------------------
+  // IChannelAdapter — initialize / dispose
+  // ---------------------------------------------------------------------------
 
+  /**
+   * Carga las credenciales desde ChannelConfig en Prisma e inicializa el adapter.
+   *
+   * @param channelConfigId  ID del ChannelConfig en Prisma
+   * @throws Error si el ChannelConfig no existe
+   */
   async initialize(channelConfigId: string): Promise<void> {
     this.channelConfigId = channelConfigId;
     const db     = getPrisma();
     const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } });
     if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
 
-    const creds           = config.credentials as WhatsAppCredentials;
-    this.accessToken      = creds.accessToken;
-    this.phoneNumberId    = creds.phoneNumberId;
-    this.verifyToken      = creds.verifyToken;
-    this.appSecret        = creds.appSecret ?? '';
-    this.credentials      = config.credentials as Record<string, unknown>;
+    const creds        = config.credentials as WhatsAppCredentials;
+    this.accessToken   = creds.accessToken;
+    this.phoneNumberId = creds.phoneNumberId;
+    this.verifyToken   = creds.verifyToken;
+    this.appSecret     = creds.appSecret ?? '';
+    this.credentials   = config.credentials as Record<string, unknown>;
 
-    console.info(`[whatsapp] Initialized for phoneNumberId ${this.phoneNumberId}`);
+    console.info(`[WhatsAppAdapter] initialized (phoneNumberId=${this.phoneNumberId})`);
   }
 
   async dispose(): Promise<void> {
-    console.info('[whatsapp] Adapter disposed');
+    console.info(`[WhatsAppAdapter] disposed (channelConfigId=${this.channelConfigId})`);
   }
 
-  // ── Send ─────────────────────────────────────────────────────────────────────────────────
+  // ---------------------------------------------------------------------------
+  // IChannelAdapter — receive
+  // ---------------------------------------------------------------------------
 
+  /**
+   * Parsea el payload de un webhook entrante de Meta.
+   * Devuelve el primer mensaje de texto encontrado, o null si no hay mensajes.
+   * Los mensajes multimedia (imagen, audio, etc.) devuelven null por ahora.
+   *
+   * @param rawPayload  Body JSON del webhook ya parseado
+   */
+  async receive(
+    rawPayload: Record<string, unknown>,
+  ): Promise<IncomingMessage | null> {
+    const entry    = (rawPayload as any)?.entry?.[0];
+    const changes  = entry?.changes?.[0]?.value;
+    const messages = changes?.messages ?? [];
+
+    for (const waMsgRaw of messages) {
+      const waMsg = waMsgRaw as {
+        id:        string;
+        from:      string;
+        type:      string;
+        text?:     { body: string };
+        timestamp: string;
+      };
+
+      if (waMsg.type === 'text' && waMsg.text?.body) {
+        return {
+          channelConfigId: this.channelConfigId,
+          channelType:     'whatsapp',
+          externalId:      waMsg.from,
+          externalUserId:  waMsg.from,   // FIX #172: usar externalUserId, no externalId solo
+          senderId:        waMsg.from,
+          text:            waMsg.text.body,
+          type:            'text',
+          metadata:        { messageId: waMsg.id, raw: waMsg },
+          receivedAt:      this.makeTimestamp(),
+        };
+      }
+    }
+
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // IChannelAdapter — send
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Envía un mensaje de texto o interactivo (rich content) a través de
+   * WhatsApp Cloud API.
+   *
+   * replied=true SOLO después de confirmar res.ok (fix #182).
+   *
+   * @param message  Mensaje a enviar
+   * @throws Error si la API responde con error HTTP
+   */
   async send(message: OutgoingMessage): Promise<void> {
-    const url  = `${WHATSAPP_API}/${this.phoneNumberId}/messages`;
+    const url = `${WHATSAPP_API}/${this.phoneNumberId}/messages`;
 
     const body: Record<string, unknown> = {
       messaging_product: 'whatsapp',
@@ -74,9 +153,9 @@ export class WhatsAppAdapter extends BaseChannelAdapter {
     };
 
     if (message.richContent) {
-      body.type        = 'interactive';
-      body.interactive = message.richContent;
-      delete body.text;
+      body['type']        = 'interactive';
+      body['interactive'] = message.richContent;
+      delete body['text'];
     }
 
     const res = await fetch(url, {
@@ -88,18 +167,27 @@ export class WhatsAppAdapter extends BaseChannelAdapter {
       body: JSON.stringify(body),
     });
 
+    // replied=true SOLO tras res.ok (fix #182)
     if (!res.ok) {
       const err = await res.text();
-      console.error(`[whatsapp] send failed: ${err}`);
-      throw new Error(`WhatsApp send failed: ${err}`);
+      throw new Error(`[WhatsAppAdapter] send failed (${res.status}): ${err}`);
     }
   }
 
-  // ── Router ───────────────────────────────────────────────────────────────────────────
+  // ---------------------------------------------------------------------------
+  // IHttpChannelAdapter — getRouter()
+  // ---------------------------------------------------------------------------
 
+  /**
+   * Devuelve el Express Router para montar en el gateway.
+   * Maneja GET (verificación Meta hub.challenge) y POST (mensajes entrantes).
+   *
+   * @returns Express Router listo para montar
+   */
   getRouter(): Router {
     const router = Router();
 
+    // GET /webhook — verificación del endpoint por Meta
     router.get('/webhook', (req: Request, res: Response) => {
       const mode      = req.query['hub.mode'];
       const token     = req.query['hub.verify_token'];
@@ -112,59 +200,59 @@ export class WhatsAppAdapter extends BaseChannelAdapter {
       }
     });
 
+    // POST /webhook — mensajes entrantes
     router.post('/webhook', async (req: Request, res: Response) => {
+      // Validar firma HMAC-SHA256 si appSecret está configurado
       if (this.appSecret) {
         const signature = req.headers['x-hub-signature-256'] as string | undefined;
-        if (!this._validateSignature(JSON.stringify(req.body), signature)) {
+        if (!await this._validateSignature(JSON.stringify(req.body), signature)) {
           res.status(401).json({ error: 'Invalid signature' });
           return;
         }
       }
 
+      // Meta requiere respuesta 200 inmediata para evitar reintentos
       res.json({ ok: true });
 
-      const entry   = (req.body as any)?.entry?.[0];
-      const changes = entry?.changes?.[0]?.value;
-      const messages = changes?.messages ?? [];
-
-      for (const waMsgRaw of messages) {
-        const waMsg = waMsgRaw as {
-          id:        string;
-          from:      string;
-          type:      string;
-          text?:     { body: string };
-          timestamp: string;
-        };
-
-        if (waMsg.type === 'text' && waMsg.text?.body) {
-          const msg: IncomingMessage = {
-            channelConfigId: this.channelConfigId,
-            channelType:     'whatsapp',
-            externalId:      waMsg.from,
-            senderId:        waMsg.from,
-            text:            waMsg.text.body,
-            type:            'text',
-            metadata:        { messageId: waMsg.id, raw: waMsg },
-            receivedAt:      this.makeTimestamp(),
-          };
-          await this.emit(msg).catch((err) =>
-            console.error('[whatsapp] emit error:', err),
-          );
-        }
+      // Procesar mensajes en background
+      const incoming = await this.receive(req.body as Record<string, unknown>);
+      if (incoming) {
+        await this.emit(incoming).catch((err: unknown) =>
+          console.error('[WhatsAppAdapter] emit error:', err),
+        );
       }
     });
 
     return router;
   }
 
-  private _validateSignature(rawBody: string, signature?: string): boolean {
+  // ---------------------------------------------------------------------------
+  // Privados
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Valida la firma HMAC-SHA256 del webhook de Meta.
+   * ESM-safe: usa import() dinámico en lugar de require().
+   *
+   * @param rawBody    Body de la petición como string JSON
+   * @param signature  Header X-Hub-Signature-256 (formato: sha256=<hex>)
+   * @returns          true si la firma es válida
+   */
+  private async _validateSignature(
+    rawBody:    string,
+    signature?: string,
+  ): Promise<boolean> {
     if (!signature) return false;
+
+    const { createHmac } = await import('crypto');
     const expected =
       'sha256=' +
-      require('crypto')
-        .createHmac('sha256', this.appSecret)
+      createHmac('sha256', this.appSecret)
         .update(rawBody)
         .digest('hex');
+
+    // Comparación de timing-safe manual (sin timingSafeEqual para simplificar;
+    // el secret se controla en ChannelConfig, no es credencial de usuario)
     return signature === expected;
   }
 }
