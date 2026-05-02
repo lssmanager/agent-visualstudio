@@ -1,4 +1,4 @@
-﻿/**
+/**
  * server.ts — Express app factory del Gateway
  */
 
@@ -16,6 +16,7 @@ import { telegramRouter } from './routes/telegram';
 import { webchatGatewayRouter, webchatApiRouter } from './routes/webchat';
 import { channelsApiRouter } from './routes/channels';
 import { whatsappBaileysRouter } from './routes/whatsapp-baileys';
+import { teamsRouter } from './routes/teams';
 
 export interface AppOptions {
   db?: PrismaClient;
@@ -60,6 +61,7 @@ export function createApp(opts: AppOptions = {}): Application {
   app.use('/api/webchat', webchatApiRouter(gatewayService));
   app.use('/api/channels', channelsApiRouter(db, gatewayService));
   app.use('/gateway/whatsapp', whatsappBaileysRouter(db));
+  app.use('/gateway/teams', teamsRouter(db));
 
   app.use((_req, res) => {
     res.status(404).json({ ok: false, error: 'Route not found' });

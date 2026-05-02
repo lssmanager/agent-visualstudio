@@ -23,6 +23,7 @@ export type ChannelType =
   | 'discord'
   | 'slack'
   | 'webhook'
+  | 'teams'
 
 // ── AdapterMode ──────────────────────────────────────────────────────────────
 

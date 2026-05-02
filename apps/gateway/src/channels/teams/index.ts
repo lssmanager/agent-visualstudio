@@ -23,3 +23,19 @@ export {
   buildAdaptiveTextCard,
   buildAdaptiveRichCard,
 } from './teams-mode.strategy.js'
+
+// Re-export del adapter bidireccional (F3a-32)
+export { TeamsAdapter } from './teams-bot.adapter.js'
+export type { TeamsAdapterConfig } from './teams-bot.adapter.js'
+
+// TeamsWebhookAdapter — solo-envío, notificaciones de sistema (F3a-33)
+export {
+  TeamsWebhookAdapter,
+  sendTeamsNotification,
+} from './teams-webhook.adapter.js'
+
+export type {
+  TeamsWebhookConfig,
+  TeamsWebhookSendResult,
+  TeamsNotification,
+} from './teams-webhook.adapter.js'
