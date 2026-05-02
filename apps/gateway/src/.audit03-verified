@@ -1,0 +1,4 @@
+# AUDIT-03 verification marker
+# gateway.service.ts already uses registry.get() via private resolveAdapter() helper
+# Lines ~90 resolveAdapter(): registry.has(type) guard + registry.get(type)
+# No getChannelConfig() or getAdapter() calls found. Closes #174

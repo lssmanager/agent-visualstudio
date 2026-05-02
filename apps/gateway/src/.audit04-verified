@@ -1,0 +1,8 @@
+# AUDIT-04 verification marker
+# gateway.service.ts already uses externalUserId throughout dispatch() flow:
+#   incoming.externalUserId (line ~105, ~113, ~118, ~135)
+#   sessions.findSession(channelConfigId, incoming.externalUserId)
+#   sessions.receiveUserMessage(channelConfigId, resolved.agentId, incoming)
+#   outbound.externalUserId = incoming.externalUserId
+# Canonical field name matches GatewaySession.externalUserId in schema.prisma
+# No externalId misuse found. Closes #172
