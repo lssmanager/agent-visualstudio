@@ -7,8 +7,8 @@
  * Usa Prisma completamente mockeado con jest.fn() — no instancia real.
  */
 
-import { ProfilePropagatorService } from '../profile-propagator.service.js'
-import type { PropagateProfileInput, ResolvedProfile } from '../profile-propagator.service.js'
+import { ProfilePropagatorService } from '../profile-propagator.service'
+import type { PropagateProfileInput, ResolvedProfile } from '../profile-propagator.service'
 
 // ── Helpers para construir mocks ──────────────────────────────────────────
 
