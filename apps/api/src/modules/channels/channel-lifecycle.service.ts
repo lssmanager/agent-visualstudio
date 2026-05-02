@@ -11,29 +11,33 @@ import {
 import type { ProvisionChannelDto, ChannelStatusDto } from './dto/provision-channel.dto.js'
 import { createCipheriv, randomBytes } from 'crypto'
 
-type ChannelStatus =
-  | 'provisioned'
+/**
+ * AUDIT-25: Estado operacional en memoria del adaptador.
+ * NUNCA se persiste en Prisma — ChannelConfig.isActive es el único campo
+ * de estado persistido en BD.
+ *
+ * Transiciones válidas:
+ *   stopped → starting → active
+ *   active  → stopping → stopped
+ *   *       → error    (cualquier estado puede caer en error)
+ */
+type RuntimeChannelStatus =
   | 'starting'
   | 'active'
   | 'stopping'
   | 'stopped'
   | 'error'
 
-const TRANSITIONS: Record<ChannelStatus, ChannelStatus[]> = {
-  provisioned: ['starting'],
-  starting: ['active', 'error'],
-  active: ['stopping'],
-  stopping: ['stopped', 'error'],
-  stopped: ['starting'],
-  error: ['starting'],
-}
-
-const START_ALLOWED_STATUSES: ChannelStatus[] = ['provisioned', 'stopped', 'error']
-const STOP_ALLOWED_STATUSES: ChannelStatus[] = ['active']
-
 @Injectable()
 export class ChannelLifecycleService {
   private readonly logger = new Logger(ChannelLifecycleService.name)
+
+  /**
+   * AUDIT-25: Estado en memoria por channelConfigId.
+   * Permite reportar 'starting' / 'stopping' con más precisión que el bool isActive.
+   * Se inicializa al cargar canales activos en onModuleInit (si se implementa).
+   */
+  private readonly runtimeStatus = new Map<string, RuntimeChannelStatus>()
 
   constructor(
     private readonly db: PrismaService,
@@ -42,66 +46,54 @@ export class ChannelLifecycleService {
   ) {}
 
   async provision(dto: ProvisionChannelDto): Promise<ChannelStatusDto> {
+    // AUDIT-24: encriptar secrets → secretsEncrypted (nullable si no hay secrets)
     const secretsEncrypted = dto.secrets ? this.encryptSecrets(dto.secrets) : null
 
     const channel = await this.db.channelConfig.create({
       data: {
-        type: dto.type,
-        name: dto.name,
-        config: dto.config,
+        type:            dto.type as any,
+        name:            dto.name,
+        config:          dto.config,
         secretsEncrypted,
-        isActive: false,
-        status: 'provisioned',
-        errorMessage: null,
-        lastStartedAt: null,
-        lastStoppedAt: null,
+        isActive:        false,
+        workspaceId:     (dto as any).workspaceId,
       },
     })
 
+    this.runtimeStatus.set(channel.id, 'stopped')
     this.logger.log(`[provision] Channel "${channel.id}" (${channel.type}) created`)
 
     if (dto.autoStart) {
       return this.start(channel.id)
     }
 
-    return this.toStatusDto(channel, 0, 0)
+    return this.buildStatusDto(channel, channel.id)
   }
 
   async start(channelConfigId: string): Promise<ChannelStatusDto> {
-    const claim = await this.db.channelConfig.updateMany({
-      where: {
-        id: channelConfigId,
-        status: { in: START_ALLOWED_STATUSES },
-      },
-      data: { status: 'starting', isActive: true, errorMessage: null },
-    })
+    const channel = await this.db.channelConfig.findUnique({ where: { id: channelConfigId } })
+    if (!channel) throw new ChannelNotFoundError(channelConfigId)
+    if (channel.isActive) throw new ChannelAlreadyInStateError(channelConfigId, 'active')
 
-    if (claim.count === 0) {
-      const channel = await this.db.channelConfig.findUnique({ where: { id: channelConfigId } })
-      if (!channel) throw new ChannelNotFoundError(channelConfigId)
-      if (channel.status === 'active' || channel.status === 'starting') {
-        throw new ChannelAlreadyInStateError(channelConfigId, channel.status)
-      }
-      throw new InvalidTransitionError(channelConfigId, channel.status, 'starting')
-    }
-
-    this.resolver.invalidateCache(channelConfigId)
+    this.runtimeStatus.set(channelConfigId, 'starting')
 
     try {
       await this.callGatewayActivate(channelConfigId)
 
       const updated = await this.db.channelConfig.update({
         where: { id: channelConfigId },
-        data: { status: 'active', lastStartedAt: new Date() },
+        data:  { isActive: true },
       })
+      this.runtimeStatus.set(channelConfigId, 'active')
       this.resolver.invalidateCache(channelConfigId)
       this.logger.log(`[start] Channel "${channelConfigId}" is now active`)
       return this.buildStatusDto(updated, channelConfigId)
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err)
+      this.runtimeStatus.set(channelConfigId, 'error')
       await this.db.channelConfig.update({
         where: { id: channelConfigId },
-        data: { status: 'error', isActive: false, errorMessage },
+        data:  { isActive: false },
       })
       this.resolver.invalidateCache(channelConfigId)
       this.logger.error(`[start] Channel "${channelConfigId}" failed to start: ${errorMessage}`)
@@ -110,40 +102,29 @@ export class ChannelLifecycleService {
   }
 
   async stop(channelConfigId: string): Promise<ChannelStatusDto> {
-    const claim = await this.db.channelConfig.updateMany({
-      where: {
-        id: channelConfigId,
-        status: { in: STOP_ALLOWED_STATUSES },
-      },
-      data: { status: 'stopping', isActive: false, errorMessage: null },
-    })
+    const channel = await this.db.channelConfig.findUnique({ where: { id: channelConfigId } })
+    if (!channel) throw new ChannelNotFoundError(channelConfigId)
+    if (!channel.isActive) throw new ChannelAlreadyInStateError(channelConfigId, 'stopped')
 
-    if (claim.count === 0) {
-      const channel = await this.db.channelConfig.findUnique({ where: { id: channelConfigId } })
-      if (!channel) throw new ChannelNotFoundError(channelConfigId)
-      if (channel.status === 'stopped' || channel.status === 'stopping') {
-        throw new ChannelAlreadyInStateError(channelConfigId, channel.status)
-      }
-      throw new InvalidTransitionError(channelConfigId, channel.status, 'stopping')
-    }
-
-    this.resolver.invalidateCache(channelConfigId)
+    this.runtimeStatus.set(channelConfigId, 'stopping')
 
     try {
       await this.callGatewayDeactivate(channelConfigId)
 
       const updated = await this.db.channelConfig.update({
         where: { id: channelConfigId },
-        data: { status: 'stopped', lastStoppedAt: new Date() },
+        data:  { isActive: false },
       })
+      this.runtimeStatus.set(channelConfigId, 'stopped')
       this.resolver.invalidateCache(channelConfigId)
       this.logger.log(`[stop] Channel "${channelConfigId}" is now stopped`)
       return this.buildStatusDto(updated, channelConfigId)
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err)
+      this.runtimeStatus.set(channelConfigId, 'error')
       await this.db.channelConfig.update({
         where: { id: channelConfigId },
-        data: { status: 'error', errorMessage },
+        data:  { isActive: false },
       })
       this.resolver.invalidateCache(channelConfigId)
       this.logger.error(`[stop] Channel "${channelConfigId}" failed to stop: ${errorMessage}`)
@@ -154,11 +135,7 @@ export class ChannelLifecycleService {
   async restart(channelConfigId: string): Promise<ChannelStatusDto> {
     const channel = await this.loadOrThrow(channelConfigId)
 
-    if (channel.status === 'starting' || channel.status === 'stopping') {
-      throw new InvalidTransitionError(channelConfigId, channel.status, 'restart')
-    }
-
-    if (channel.status === 'active') {
+    if (channel.isActive) {
       await this.stop(channelConfigId)
     }
 
@@ -178,19 +155,14 @@ export class ChannelLifecycleService {
     return Promise.all(channels.map((ch: any) => this.buildStatusDto(ch, ch.id)))
   }
 
+  // ── Helpers ──────────────────────────────────────────────────────────────
+
   private async callGatewayActivate(id: string): Promise<void> {
     await this.gateway.activateChannel(id)
   }
 
   private async callGatewayDeactivate(id: string): Promise<void> {
     await this.gateway.deactivateChannel(id)
-  }
-
-  private assertTransition(from: ChannelStatus, to: ChannelStatus, channelConfigId: string): void {
-    const allowed = TRANSITIONS[from] ?? []
-    if (!allowed.includes(to)) {
-      throw new InvalidTransitionError(channelConfigId, from, to)
-    }
   }
 
   private async loadOrThrow(channelConfigId: string) {
@@ -207,23 +179,34 @@ export class ChannelLifecycleService {
     return this.toStatusDto(channel, bindingCount, activeSessions)
   }
 
+  /**
+   * AUDIT-25: toStatusDto canónico.
+   * - status deriva de isActive como base
+   * - si existe RuntimeChannelStatus en memoria, lo usa para mayor precisión
+   * - SIN errorMessage / lastStartedAt / lastStoppedAt (campos fantasma eliminados)
+   */
   private toStatusDto(ch: any, bindingCount: number, activeSessions: number): ChannelStatusDto {
+    const memStatus = this.runtimeStatus.get(ch.id)
+    const status: string = memStatus ?? (ch.isActive ? 'active' : 'stopped')
+
     return {
-      id: ch.id,
-      name: ch.name,
-      type: ch.type,
-      status: ch.status,
-      isActive: ch.isActive,
-      errorMessage: ch.errorMessage ?? null,
-      lastStartedAt: ch.lastStartedAt?.toISOString() ?? null,
-      lastStoppedAt: ch.lastStoppedAt?.toISOString() ?? null,
+      id:             ch.id,
+      name:           ch.name,
+      type:           ch.type,
+      status,
+      isActive:       ch.isActive,
       bindingCount,
       activeSessions,
-      createdAt: ch.createdAt.toISOString(),
-      updatedAt: ch.updatedAt.toISOString(),
+      createdAt:      ch.createdAt.toISOString(),
+      updatedAt:      ch.updatedAt.toISOString(),
     }
   }
 
+  /**
+   * AUDIT-24: encripta secrets con AES-256-GCM.
+   * El resultado se guarda en ChannelConfig.secretsEncrypted (String?).
+   * Los adapters leen secretsEncrypted — NO tokenEnc ni credentials.
+   */
   private encryptSecrets(secrets: Record<string, unknown>): string {
     const keyHex = process.env.GATEWAY_ENCRYPTION_KEY ?? ''
     if (!keyHex) throw new Error('GATEWAY_ENCRYPTION_KEY is not set')

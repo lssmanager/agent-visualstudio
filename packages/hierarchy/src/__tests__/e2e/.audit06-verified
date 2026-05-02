@@ -1,0 +1,4 @@
+# AUDIT-06 verification marker
+# grep confirms 0 occurrences of createdAt in hierarchy-e2e.test.ts
+# orderBy: { startedAt: 'asc' } already correct at line ~83
+# No code change required. Closes #166

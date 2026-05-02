@@ -17,6 +17,10 @@
  *   - buildSystemPrompt() prioriza: systemPrompt explícito > plantilla generada desde persona.
  *   - Si no hay perfil, devuelve un system prompt genérico basado en Agent.role + Agent.goal.
  *
+ * AUDIT-01 (#163): orchestratorId NO existe en Workspace/Department/Agency.
+ *   El orchestrador de cada nivel se identifica con `isLevelOrchestrator: true`
+ *   en el modelo Agent, filtrado por workspaceId/departmentId/agencyId.
+ *
  * Integración con LLMStepExecutor:
  *   const { systemPrompt } = await propagator.resolveForAgent(agentId)
  *   // inyectar como primer mensaje { role: 'system', content: systemPrompt }
@@ -24,7 +28,7 @@
 
 import type { PrismaClient } from '@prisma/client'
 
-// ── DTOs ───────────────────────────────────────────────────────────────────
+// ── DTOs ───────────────────────────────────────────────────────────────────────────
 
 export interface AgentPersona {
   name?:     string
@@ -65,19 +69,19 @@ export interface ResolvedProfile {
 /**
  * [F2b-01] Resultado de propagateUp().
  * - updated: perfiles actualizados en orden workspace → department → agency
- * - skipped: IDs de niveles sin orchestratorId o que son el propio agentId (anti-loop)
+ * - skipped: IDs de niveles sin orchestrator (isLevelOrchestrator) o que son el propio agentId
  */
 export interface PropagateUpResult {
   updated: ResolvedProfile[]
-  skipped: string[]   // IDs de niveles sin orchestratorId o que son el propio agentId
+  skipped: string[]   // IDs de niveles sin orchestrator o que son el propio agentId
 }
 
-// ── Service ────────────────────────────────────────────────────────────────
+// ── Service ────────────────────────────────────────────────────────────────────
 
 export class ProfilePropagatorService {
   constructor(private readonly prisma: PrismaClient) {}
 
-  // ── Propagación ──────────────────────────────────────────────────────────
+  // ── Propagación ────────────────────────────────────────────────────────────────
 
   /**
    * Upsert del AgentProfile para un agente.
@@ -130,9 +134,13 @@ export class ProfilePropagatorService {
    * [F2b-01] Propaga el perfil hacia arriba por la jerarquía:
    *   Agent → Workspace orchestrator → Department orchestrator → Agency orchestrator
    *
-   * Regla irrevocable (D-24f): solo se llama a this.propagate() con el
-   * orchestratorId de cada entidad padre — nunca con todos los agentes del scope.
-   * Si un nivel no tiene orchestratorId, se añade al array `skipped`.
+   * El orchestrador de cada nivel es el Agent con `isLevelOrchestrator: true`
+   * filtrado por workspaceId / departmentId / agencyId respectivamente.
+   * NO usa orchestratorId en Workspace/Department/Agency (campo inexistente en schema).
+   *
+   * Regla irrevocable (D-24f): solo se llama a this.propagate() con el ID del
+   * orchestrador de cada nivel — nunca con todos los agentes del scope.
+   * Si un nivel no tiene agente con isLevelOrchestrator=true, se añade a `skipped`.
    * Si el orchestratorId es igual al agentId fuente, se añade a `skipped` (anti-loop).
    *
    * @param agentId  ID del agente cuyo perfil se propaga hacia arriba
@@ -147,49 +155,64 @@ export class ProfilePropagatorService {
 
     // 1. Leer el agente y su workspaceId
     const agent = await this.prisma.agent.findUnique({
-      where:   { id: agentId },
-      select:  { workspaceId: true },
+      where:  { id: agentId },
+      select: { workspaceId: true },
     })
     if (!agent) throw new Error(`Agent "${agentId}" not found`)
 
-    // 2. Leer el workspace (con departmentId para navegar hacia arriba)
+    // 2. Leer el workspace para obtener departmentId (navegar hacia arriba)
+    // AUDIT-01: NO seleccionar orchestratorId — campo inexistente en schema
     const workspace = await this.prisma.workspace.findUnique({
-      where:   { id: agent.workspaceId },
-      select:  { id: true, orchestratorId: true, departmentId: true },
+      where:  { id: agent.workspaceId },
+      select: { id: true, departmentId: true },
     })
     if (!workspace) throw new Error(`Workspace not found for agent "${agentId}"`)
 
-    // 3. Nivel Workspace — propagar al orchestrator si existe y no es el fuente
-    if (!workspace.orchestratorId || workspace.orchestratorId === agentId) {
+    // 3. Nivel Workspace — orchestrador = Agent con isLevelOrchestrator=true en este workspace
+    const wsOrchestrator = await this.prisma.agent.findFirst({
+      where:  { workspaceId: agent.workspaceId, isLevelOrchestrator: true },
+      select: { id: true },
+    })
+
+    if (!wsOrchestrator || wsOrchestrator.id === agentId) {
       skipped.push(`workspace:${workspace.id}`)
     } else {
-      const profile = await this.propagate(workspace.orchestratorId, input)
+      const profile = await this.propagate(wsOrchestrator.id, input)
       updated.push(profile)
     }
 
     // 4. Nivel Department (si el workspace pertenece a uno)
     if (workspace.departmentId) {
+      // AUDIT-01: NO seleccionar orchestratorId en Department — campo inexistente
       const department = await this.prisma.department.findUnique({
         where:  { id: workspace.departmentId },
-        select: { id: true, orchestratorId: true, agencyId: true },
+        select: { id: true, agencyId: true },
       })
-      if (!department?.orchestratorId || department.orchestratorId === agentId) {
+
+      const depOrchestrator = await this.prisma.agent.findFirst({
+        where:  { departmentId: workspace.departmentId, isLevelOrchestrator: true },
+        select: { id: true },
+      })
+
+      if (!depOrchestrator || depOrchestrator.id === agentId) {
         skipped.push(`department:${workspace.departmentId}`)
       } else {
-        const profile = await this.propagate(department.orchestratorId, input)
+        const profile = await this.propagate(depOrchestrator.id, input)
         updated.push(profile)
       }
 
       // 5. Nivel Agency (si el department pertenece a una)
       if (department?.agencyId) {
-        const agency = await this.prisma.agency.findUnique({
-          where:  { id: department.agencyId },
-          select: { id: true, orchestratorId: true },
+        // AUDIT-01: NO seleccionar orchestratorId en Agency — campo inexistente
+        const agcOrchestrator = await this.prisma.agent.findFirst({
+          where:  { agencyId: department.agencyId, isLevelOrchestrator: true },
+          select: { id: true },
         })
-        if (!agency?.orchestratorId || agency.orchestratorId === agentId) {
+
+        if (!agcOrchestrator || agcOrchestrator.id === agentId) {
           skipped.push(`agency:${department.agencyId}`)
         } else {
-          const profile = await this.propagate(agency.orchestratorId, input)
+          const profile = await this.propagate(agcOrchestrator.id, input)
           updated.push(profile)
         }
       }
@@ -198,7 +221,7 @@ export class ProfilePropagatorService {
     return { updated, skipped }
   }
 
-  // ── Lectura ────────────────────────────────────────────────────────────────────
+  // ── Lectura ──────────────────────────────────────────────────────────────────────
 
   /**
    * Lee el AgentProfile activo desde Prisma.
@@ -259,7 +282,7 @@ export class ProfilePropagatorService {
     return true
   }
 
-  // ── Compilación del system prompt ──────────────────────────────────────────
+  // ── Compilación del system prompt ──────────────────────────────────────────────
 
   /**
    * Compila el system prompt final desde el perfil.
@@ -274,16 +297,13 @@ export class ProfilePropagatorService {
     profile: ResolvedProfile,
     agent:   { name: string; role?: string | null; goal?: string | null; backstory?: string | null },
   ): string {
-    // Si hay system prompt explícito, usarlo directamente
     if (profile.systemPrompt && profile.systemPrompt.trim().length > 0) {
       return profile.systemPrompt.trim()
     }
 
-    // Generar desde persona + rol
     const persona = profile.persona
     const lines: string[] = []
 
-    // Identidad
     const name = persona.name ?? agent.name
     lines.push(`You are ${name}.`)
 
@@ -291,21 +311,18 @@ export class ProfilePropagatorService {
     if (agent.goal) lines.push(`Your goal: ${agent.goal}.`)
     if (agent.backstory) lines.push(`Background: ${agent.backstory}`)
 
-    // Persona
     if (persona.tone)    lines.push(`Tone: ${persona.tone}.`)
     if (persona.language) lines.push(`Always respond in language: ${persona.language}.`)
     if (persona.traits && persona.traits.length > 0) {
       lines.push(`Traits: ${persona.traits.join(', ')}.`)
     }
 
-    // Formato de respuesta
     if (profile.responseFormat === 'json') {
       lines.push('Always respond with valid JSON only. No prose.')
     } else if (profile.responseFormat === 'markdown') {
       lines.push('Format responses in Markdown.')
     }
 
-    // Knowledge base (referencias)
     if (profile.knowledgeBase.length > 0) {
       lines.push('\nKnowledge base references:')
       for (const kb of profile.knowledgeBase) {
@@ -317,7 +334,7 @@ export class ProfilePropagatorService {
     return lines.join('\n')
   }
 
-  // ── Privado ──────────────────────────────────────────────────────────────────
+  // ── Privado ────────────────────────────────────────────────────────────────────────
 
   private toResolved(
     agentId: string,
@@ -346,7 +363,7 @@ export class ProfilePropagatorService {
   }
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 function buildFallbackPrompt(agent: {
   name: string

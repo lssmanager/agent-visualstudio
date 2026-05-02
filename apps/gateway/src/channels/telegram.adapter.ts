@@ -2,14 +2,15 @@
  * telegram.adapter.ts — Adaptador Telegram Bot API
  *
  * Recibe updates via webhook (POST /gateway/telegram/webhook).
- * El token del bot y el webhook secret se leen de ChannelConfig.credentials
- * (cifrado AES-256-GCM en DB).
+ * AUDIT-24: botToken y webhookSecret se leen de ChannelConfig.secretsEncrypted
+ *   (AES-256-GCM, implementación completa en F3b-05).
  *
  * Endpoints:
  *   POST /gateway/telegram/webhook  — updates de Telegram
  *   POST /gateway/telegram/setup    — registra el webhook en Telegram
  *
- * Inspirado en n8n TelegramTriggerNode y Flowise TelegramChatModel.
+ * AUDIT-21: mensajes sin chat.id son descartados con logger.warn + return.
+ *   Nunca se construye un IncomingMessage con externalId falsy/undefined.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -23,7 +24,7 @@ import {
 
 const TELEGRAM_API = 'https://api.telegram.org';
 
-interface TelegramCredentials {
+interface TelegramSecrets {
   botToken:       string;
   webhookSecret?: string;
 }
@@ -33,7 +34,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
   private botToken      = '';
   private webhookSecret = '';
 
-  // ── Lifecycle ─────────────────────────────────────────────────────────────────────────────────
+  // ── Lifecycle ─────────────────────────────────────────────────────────────────────────────
 
   async initialize(channelConfigId: string): Promise<void> {
     this.channelConfigId = channelConfigId;
@@ -41,19 +42,25 @@ export class TelegramAdapter extends BaseChannelAdapter {
     const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } });
     if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`);
 
-    const creds          = config.credentials as TelegramCredentials;
-    this.botToken        = creds.botToken;
-    this.webhookSecret   = creds.webhookSecret ?? '';
-    this.credentials     = config.credentials as Record<string, unknown>;
+    // AUDIT-24: leer secretsEncrypted (NO credentials)
+    // F3b-05 implementará decrypt AES-256-GCM completo
+    const secrets: TelegramSecrets = config.secretsEncrypted
+      ? JSON.parse(this.decryptSecrets(config.secretsEncrypted))
+      : { botToken: '' };
+
+    this.botToken      = secrets.botToken      ?? '';
+    this.webhookSecret = secrets.webhookSecret ?? '';
 
     console.info(`[telegram] Initialized bot for config ${channelConfigId}`);
   }
 
   async dispose(): Promise<void> {
+    this.botToken      = '';
+    this.webhookSecret = '';
     console.info('[telegram] Adapter disposed');
   }
 
-  // ── Send ───────────────────────────────────────────────────────────────────────────────
+  // ── Send ────────────────────────────────────────────────────────────────────────────────
 
   async send(message: OutgoingMessage): Promise<void> {
     const url  = `${TELEGRAM_API}/bot${this.botToken}/sendMessage`;
@@ -77,7 +84,7 @@ export class TelegramAdapter extends BaseChannelAdapter {
     }
   }
 
-  // ── Router ────────────────────────────────────────────────────────────────────────────
+  // ── Router ─────────────────────────────────────────────────────────────────────────────
 
   getRouter(): Router {
     const router = Router();
@@ -95,41 +102,75 @@ export class TelegramAdapter extends BaseChannelAdapter {
         update_id:       number;
         message?:        {
           message_id: number;
-          chat:       { id: number };
-          from?:      { id: number; username?: string };
+          chat:       { id?: number };
+          from?:      { id?: number; username?: string };
           text?:      string;
         };
-        callback_query?: { id: string; data?: string; message?: { chat: { id: number } } };
+        callback_query?: {
+          id:       string;
+          data?:    string;
+          message?: { chat: { id?: number } };
+        };
       };
 
       const message       = update.message;
       const callbackQuery = update.callback_query;
 
       if (message?.text) {
+        // AUDIT-21: validar chat.id antes de construir IncomingMessage
+        const rawChatId = message.chat.id;
+        if (!rawChatId) {
+          console.warn(
+            `[telegram] message without chat.id — dropped`,
+            { updateId: update.update_id },
+          );
+          res.json({ ok: true });
+          return;
+        }
+
+        const externalId = String(rawChatId);
+        const senderId   = message.from?.id != null
+          ? String(message.from.id)
+          : externalId;  // fallback al chat (grupos sin from)
+
         const msg: IncomingMessage = {
           channelConfigId: this.channelConfigId,
           channelType:     'telegram',
-          externalId:      String(message.chat.id),
-          senderId:        String(message.from?.id ?? message.chat.id),
-          text:            message.text,
-          type:            message.text.startsWith('/') ? 'command' : 'text',
-          metadata:        { updateId: update.update_id, raw: message },
-          receivedAt:      this.makeTimestamp(),
+          externalId,
+          senderId,
+          text:        message.text,
+          type:        message.text.startsWith('/') ? 'command' : 'text',
+          metadata:    { updateId: update.update_id, raw: message },
+          receivedAt:  this.makeTimestamp(),
         };
         await this.emit(msg);
+
       } else if (callbackQuery?.data) {
-        const chatId = callbackQuery.message?.chat.id;
+        // AUDIT-21: validar chatId antes de construir IncomingMessage
+        const rawChatId = callbackQuery.message?.chat.id;
+        if (!rawChatId) {
+          console.warn(
+            `[telegram] callbackQuery without chat.id — dropped`,
+            { callbackQueryId: callbackQuery.id },
+          );
+          res.json({ ok: true });
+          return;
+        }
+
+        const externalId = String(rawChatId);
+
         const msg: IncomingMessage = {
           channelConfigId: this.channelConfigId,
           channelType:     'telegram',
-          externalId:      String(chatId),
-          senderId:        String(chatId),
-          text:            callbackQuery.data,
-          type:            'button_click',
-          metadata:        { callbackQueryId: callbackQuery.id, raw: callbackQuery },
-          receivedAt:      this.makeTimestamp(),
+          externalId,
+          senderId:    externalId,
+          text:        callbackQuery.data,
+          type:        'button_click',
+          metadata:    { callbackQueryId: callbackQuery.id, raw: callbackQuery },
+          receivedAt:  this.makeTimestamp(),
         };
         await this.emit(msg);
+
         await fetch(`${TELEGRAM_API}/bot${this.botToken}/answerCallbackQuery`, {
           method:  'POST',
           headers: { 'content-type': 'application/json' },
@@ -173,5 +214,12 @@ export class TelegramAdapter extends BaseChannelAdapter {
       }),
     });
     console.info(`[telegram] Webhook registered at ${webhookUrl}/gateway/telegram/webhook`);
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────────────────
+
+  private decryptSecrets(_enc: string): string {
+    // F3b-05: decrypt AES-256-GCM — placeholder hasta implementación completa
+    return '{}'
   }
 }
