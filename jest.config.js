@@ -31,6 +31,7 @@ module.exports = {
       // uses vi.fn/vi.mock and must be excluded to avoid runtime errors with Jest)
       testMatch: [
         '<rootDir>/src/__tests__/**/*-sequential.test.ts',
+        '<rootDir>/src/__tests__/**/*-e2e.test.ts',
       ],
       transform: {
         '^.+\\.tsx?$': ['ts-jest', {
