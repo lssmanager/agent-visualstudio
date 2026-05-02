@@ -25,6 +25,11 @@
  * Outbound (send):
  *   Si credentials.replyWebhookUrl está configurado, hace POST a esa URL
  *   con la respuesta del agente (push mode).
+ *
+ * Seguridad (SSRF):
+ *   replyWebhookUrl se valida contra WEBHOOK_CALLBACK_ALLOWLIST (CSV de dominios/origins)
+ *   antes de ejecutar cualquier fetch. Si la variable no está definida, todas las
+ *   URLs de callback son rechazadas (fail-secure). Esto cierra el vector SSRF (#175).
  */
 
 import { getPrisma } from '../../lib/prisma.js';
@@ -41,7 +46,7 @@ type WebhookCredentials = {
 };
 
 type WebhookPayload = {
-  userId:  string;
+  userId?:  string;
   text?:   string;
   data?:   Record<string, unknown>;
   source?: string;
@@ -81,10 +86,15 @@ export class WebhookAdapter extends BaseChannelAdapter {
   ): Promise<IncomingMessage | null> {
     const payload = rawPayload as WebhookPayload;
 
+    // FIX #176: sin fallback 'unknown' — lanzar error si no hay userId
     if (!payload.userId) {
-      console.warn('[WebhookAdapter] received payload without userId — ignoring');
-      return null;
+      throw new Error(
+        '[WebhookAdapter] payload must include a non-empty userId. ' +
+        'Field checked: payload.userId (also accepted: sessionId, chatId).',
+      );
     }
+
+    const userId = payload.userId;
 
     let text = payload.text ?? '';
     if (!text && payload.data) {
@@ -96,8 +106,9 @@ export class WebhookAdapter extends BaseChannelAdapter {
     }
 
     return {
-      externalId:  payload.userId,
-      senderId:    payload.userId,
+      externalUserId: userId,
+      externalId:     userId,
+      senderId:       userId,
       text,
       type:       'text',
       receivedAt: this.makeTimestamp(),
@@ -113,18 +124,27 @@ export class WebhookAdapter extends BaseChannelAdapter {
     const creds = this.credentials as WebhookCredentials;
 
     if (creds.replyWebhookUrl) {
+      // FIX #175: validar callbackUrl contra WEBHOOK_CALLBACK_ALLOWLIST (SSRF)
+      if (!this._isCallbackAllowed(creds.replyWebhookUrl)) {
+        throw new Error(
+          `[WebhookAdapter] replyWebhookUrl '${creds.replyWebhookUrl}' is not in ` +
+          `WEBHOOK_CALLBACK_ALLOWLIST. Set the env var to enable outbound callbacks.`,
+        );
+      }
+
       const response = await fetch(creds.replyWebhookUrl, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: message.externalId,
+          userId: message.externalUserId ?? message.externalId,
           reply:  message.text,
           ts:     new Date().toISOString(),
         }),
       });
 
+      // FIX #182: verificar res.ok ANTES de marcar como entregado
       if (!response.ok) {
-        console.error(
+        throw new Error(
           `[WebhookAdapter] push reply failed: HTTP ${response.status} → ${creds.replyWebhookUrl}`,
         );
       }
@@ -155,5 +175,50 @@ export class WebhookAdapter extends BaseChannelAdapter {
 
     if (!provided) return false;
     return provided === expected;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private: SSRF allowlist check (#175)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Verifica que `url` esté en WEBHOOK_CALLBACK_ALLOWLIST.
+   *
+   * WEBHOOK_CALLBACK_ALLOWLIST es un CSV de orígenes permitidos:
+   *   https://n8n.mycompany.com,https://hooks.zapier.com
+   *
+   * Si la env var no está definida → rechaza todo (fail-secure).
+   * La comparación usa el origin (scheme + host + port), no el path completo,
+   * para evitar bypasses vía path manipulation.
+   */
+  private _isCallbackAllowed(url: string): boolean {
+    const allowlistRaw = process.env.WEBHOOK_CALLBACK_ALLOWLIST ?? '';
+    if (!allowlistRaw.trim()) {
+      console.error(
+        '[WebhookAdapter] WEBHOOK_CALLBACK_ALLOWLIST is not set — ' +
+        'all replyWebhookUrl callbacks are blocked (fail-secure). ' +
+        'Set the env var to enable outbound push mode.',
+      );
+      return false;
+    }
+
+    let requestedOrigin: string;
+    try {
+      requestedOrigin = new URL(url).origin;
+    } catch {
+      console.error(`[WebhookAdapter] replyWebhookUrl is not a valid URL: ${url}`);
+      return false;
+    }
+
+    const allowedOrigins = allowlistRaw
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry) => {
+        try { return new URL(entry).origin; } catch { return ''; }
+      })
+      .filter(Boolean);
+
+    return allowedOrigins.includes(requestedOrigin);
   }
 }
