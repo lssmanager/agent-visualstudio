@@ -30,7 +30,6 @@ import SettingsPage from './features/settings/pages/SettingsPage';
 import { CommandsPage } from './features/commands/pages/CommandsPage';
 import OperationsPage from './features/operations/pages/OperationsPage';
 import { ChannelsPage } from './features/channels/ChannelsPage';
-import { ChannelDetail } from './features/channels/components/ChannelDetail';
 import { AlertTriangle } from 'lucide-react';
 
 export function App() {
@@ -197,7 +196,7 @@ export function App() {
                 <Route path="/operations"  element={<OperationsPage />} />
                 {/* F5-05: Gestión de canales */}
                 <Route path="/channels"    element={<ChannelsPage />} />
-                <Route path="/channels/:id" element={<ChannelDetail />} />
+                <Route path="/channels/:id" element={<ChannelsPage />} />
                 <Route path="*"            element={<Navigate to="/" replace />} />
               </Route>
             </Routes>

@@ -1,9 +1,8 @@
 /**
  * CreateChannelPanel.tsx — [F5-05]
- *
  * Panel lateral de creación de canal.
- * Incluye los 7 ChannelType: webchat, telegram, whatsapp, slack, discord, teams, webhook.
  * Campos dinámicos de secrets por tipo de canal.
+ * Incluye los 7 tipos: webchat, telegram, whatsapp, slack, discord, teams, webhook.
  */
 import React, { useState } from 'react';
 import type { ChannelType, CreateChannelPayload } from '../types';
@@ -14,40 +13,41 @@ interface Props {
   onCreate:   (payload: CreateChannelPayload) => Promise<void>;
 }
 
-const CHANNEL_TYPES: { value: ChannelType; label: string; hint: string }[] = [
-  { value: 'webchat',  label: 'Web Chat',   hint: 'Widget embebido en tu sitio web' },
-  { value: 'telegram', label: 'Telegram',   hint: 'Bot via Telegram API' },
-  { value: 'whatsapp', label: 'WhatsApp',   hint: 'WhatsApp Business Cloud API o Baileys QR' },
-  { value: 'slack',    label: 'Slack',      hint: 'App de Slack con Bolt SDK' },
-  { value: 'discord',  label: 'Discord',    hint: 'Bot de Discord con discord.js' },
-  { value: 'teams',    label: 'MS Teams',   hint: 'Bot de Microsoft Teams via Bot Framework' },
-  { value: 'webhook',  label: 'Webhook',    hint: 'HTTP POST genérico para integraciones custom' },
+/** Los 7 tipos de canal del plan — incluyendo teams */
+const CHANNEL_TYPES: { value: ChannelType; label: string; icon: string }[] = [
+  { value: 'webchat',  label: 'Web Chat',          icon: '💬' },
+  { value: 'telegram', label: 'Telegram',           icon: '✈️' },
+  { value: 'whatsapp', label: 'WhatsApp',           icon: '📱' },
+  { value: 'slack',    label: 'Slack',              icon: '⚡' },
+  { value: 'discord',  label: 'Discord',            icon: '🎮' },
+  { value: 'teams',    label: 'MS Teams',           icon: '👥' },
+  { value: 'webhook',  label: 'Webhook genérico',   icon: '🔗' },
 ];
 
-// Campos de secrets por tipo
-const SECRET_FIELDS: Record<ChannelType, { key: string; label: string; placeholder: string; hint?: string; required?: boolean }[]> = {
+// Campos de secrets por tipo — completos según el plan F5-05
+const SECRET_FIELDS: Record<ChannelType, { key: string; label: string; placeholder: string; required?: boolean }[]> = {
   webchat:  [],
   webhook:  [],
   telegram: [
-    { key: 'botToken',  label: 'Bot Token',  placeholder: '123456:ABC...', hint: 'Obtenlo de @BotFather con el comando /token.', required: true },
+    { key: 'botToken',       label: 'Bot Token',       placeholder: '123456:ABC-DEF...',    required: true },
   ],
   whatsapp: [
-    { key: 'token',   label: 'API Token (Meta Cloud API)',  placeholder: 'EAAxxxxxxx...', hint: 'Dejar vacío si usas Baileys QR (no requiere token).' },
-    { key: 'phoneId', label: 'Phone Number ID (Meta)',      placeholder: '1234567890',    hint: 'ID del número en Meta Developers. Dejar vacío si usas Baileys.' },
+    { key: 'token',          label: 'API Token',        placeholder: 'Bearer ...',           required: true },
+    { key: 'phoneId',        label: 'Phone Number ID',  placeholder: '1234567890',           required: true },
   ],
   slack: [
-    { key: 'botToken',      label: 'Bot Token',      placeholder: 'xoxb-...',     hint: 'OAuth & Permissions → Bot User OAuth Token.', required: true },
-    { key: 'signingSecret', label: 'Signing Secret', placeholder: 'abc123...',    hint: 'Basic Information → App Credentials → Signing Secret.', required: true },
-    { key: 'appToken',      label: 'App-Level Token (Socket Mode, opcional)', placeholder: 'xapp-...', hint: 'Basic Information → App-Level Tokens. Solo si usas Socket Mode.' },
+    { key: 'botToken',       label: 'Bot Token',        placeholder: 'xoxb-...',             required: true },
+    { key: 'signingSecret',  label: 'Signing Secret',   placeholder: 'abc123...',            required: true },
+    { key: 'appToken',       label: 'App-Level Token',  placeholder: 'xapp-... (opcional)',  required: false },
   ],
   discord: [
-    { key: 'botToken',     label: 'Bot Token',     placeholder: 'MTk...',   hint: 'Developer Portal → Bot → Reset Token.', required: true },
-    { key: 'publicKey',    label: 'Public Key',    placeholder: 'hex...',   hint: 'Developer Portal → General Information → Public Key. Requerido para verificar interacciones.', required: true },
-    { key: 'clientSecret', label: 'Client Secret (opcional)', placeholder: '...', hint: 'Developer Portal → OAuth2. Solo para OAuth2 flows.' },
+    { key: 'publicKey',      label: 'Public Key',       placeholder: 'hex string (Ed25519)', required: true },
+    { key: 'botToken',       label: 'Bot Token',        placeholder: 'Bot MTk...',           required: true },
+    { key: 'clientSecret',   label: 'Client Secret',    placeholder: 'opcional',             required: false },
   ],
   teams: [
-    { key: 'clientSecret', label: 'Client Secret (Azure)', placeholder: '...',  hint: 'App Registrations → Certificates & Secrets → New client secret.', required: true },
-    { key: 'appPassword',  label: 'App Password (Bot Framework)', placeholder: '...', hint: 'Azure Bot Service → Configuration → Microsoft App Password.', required: true },
+    { key: 'clientSecret',   label: 'Client Secret',    placeholder: 'Azure app secret',     required: true },
+    { key: 'appPassword',    label: 'App Password',     placeholder: 'Bot Framework password', required: true },
   ],
 };
 
@@ -69,6 +69,16 @@ export function CreateChannelPanel({ onClose, onCreate }: Props) {
     setError(null);
   }
 
+  function validateSecrets(): string | null {
+    const fields = SECRET_FIELDS[type];
+    for (const f of fields) {
+      if (f.required && !secrets[f.key]?.trim()) {
+        return `"${f.label}" es obligatorio para canales de tipo ${type}.`;
+      }
+    }
+    return null;
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !agentId.trim()) {
@@ -76,27 +86,20 @@ export function CreateChannelPanel({ onClose, onCreate }: Props) {
       return;
     }
 
-    // Validar campos requeridos de secrets
-    const requiredMissing = SECRET_FIELDS[type]
-      .filter(f => f.required)
-      .filter(f => !(secrets[f.key] ?? '').trim())
-      .map(f => f.label);
-    if (requiredMissing.length > 0) {
-      setError(`Campos obligatorios faltantes: ${requiredMissing.join(', ')}`);
+    const secretsError = validateSecrets();
+    if (secretsError) {
+      setError(secretsError);
       return;
     }
 
     setBusy(true);
     setError(null);
     try {
-      const nonEmptySecrets = Object.fromEntries(
-        Object.entries(secrets).filter(([, v]) => v.trim() !== '')
-      );
       const payload: CreateChannelPayload = {
         type,
-        name:    name.trim(),
-        agentId: agentId.trim(),
-        secrets: Object.keys(nonEmptySecrets).length > 0 ? nonEmptySecrets : undefined,
+        name:     name.trim(),
+        agentId:  agentId.trim(),
+        secrets:  Object.keys(secrets).length > 0 ? secrets : undefined,
       };
       await onCreate(payload);
       onClose();
@@ -124,7 +127,7 @@ export function CreateChannelPanel({ onClose, onCreate }: Props) {
 
       <form onSubmit={e => void handleSubmit(e)} className="create-panel__form">
 
-        {/* Tipo */}
+        {/* Tipo — los 7 tipos del plan */}
         <fieldset className="create-panel__fieldset">
           <legend className="create-panel__legend">Tipo de canal</legend>
           <div className="create-panel__type-grid">
@@ -138,17 +141,12 @@ export function CreateChannelPanel({ onClose, onCreate }: Props) {
                 ].join(' ')}
                 onClick={() => handleTypeChange(ct.value)}
                 aria-pressed={type === ct.value}
-                title={ct.hint}
               >
                 <ChannelTypeIcon type={ct.value} size={20} />
                 <span>{ct.label}</span>
               </button>
             ))}
           </div>
-          {/* Hint del tipo seleccionado */}
-          <p className="create-panel__type-hint">
-            {CHANNEL_TYPES.find(ct => ct.value === type)?.hint}
-          </p>
         </fieldset>
 
         {/* Nombre */}
@@ -158,7 +156,7 @@ export function CreateChannelPanel({ onClose, onCreate }: Props) {
             type="text"
             value={name}
             onChange={e => setName(e.target.value)}
-            placeholder="Ej: Soporte WhatsApp LATAM"
+            placeholder="Ej: Chat pública LSS"
             className="create-panel__input"
             required
             autoFocus
@@ -196,18 +194,17 @@ export function CreateChannelPanel({ onClose, onCreate }: Props) {
                   className="create-panel__input"
                   autoComplete="off"
                 />
-                {f.hint && <span className="create-panel__field-hint">{f.hint}</span>}
               </label>
             ))}
           </fieldset>
         )}
 
-        {/* WhatsApp Baileys — aviso sin secrets */}
+        {/* WhatsApp Baileys info — no requiere secrets */}
         {type === 'whatsapp' && (
-          <div className="create-panel__info-note" role="note">
-            <strong>¿Usas Baileys (QR)?</strong> Deja los campos de credenciales vacíos.
-            Después de crear el canal, usa el botón «Vincular WhatsApp» para escanear el QR.
-          </div>
+          <p className="create-panel__hint">
+            Si usas autenticación por QR (WhatsApp Baileys), no necesitas
+            completar las credenciales. El QR se generará tras crear el canal.
+          </p>
         )}
 
         {error && <p className="create-panel__error" role="alert">{error}</p>}
@@ -225,7 +222,6 @@ export function CreateChannelPanel({ onClose, onCreate }: Props) {
             type="submit"
             className="create-panel__btn-create"
             disabled={busy}
-            aria-busy={busy}
           >
             {busy ? 'Creando…' : 'Crear canal'}
           </button>

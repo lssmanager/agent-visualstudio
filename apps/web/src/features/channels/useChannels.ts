@@ -1,13 +1,3 @@
-/**
- * useChannels.ts — [F5-05]
- *
- * Hook de gestión de canales.
- * Endpoints corregidos para coincidir con el plan F3a/F5:
- *   - PATCH  /api/channels/:id
- *   - POST   /api/channels/:id/test
- *   - GET    /gateway/whatsapp/:id/qr          ← SSE del QR (NO /api/channels/:id/whatsapp/qr)
- *   - POST   /gateway/whatsapp/:id/logout       ← logout de sesión Baileys
- */
 import { useState, useEffect, useCallback } from 'react'
 import * as gwApi from '../../lib/gateway-api'
 import type {
@@ -38,7 +28,7 @@ export function useChannels(filters?: { agentId?: string; type?: string; isActiv
     } finally {
       setLoading(false)
     }
-  }, [filtersKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filtersKey])
 
   useEffect(() => { void load() }, [load])
 
@@ -120,9 +110,9 @@ export function useChannels(filters?: { agentId?: string; type?: string; isActiv
   }, [])
 
   /**
-   * Solicita un nuevo QR para una sesión Baileys.
-   * Endpoint corregido: POST /gateway/whatsapp/:id/qr
-   * (el SSE del QR se consume en WhatsAppQrModal via /gateway/whatsapp/:id/qr-stream)
+   * requestWhatsAppQr — solicita al gateway que genere un nuevo QR de vinculación.
+   * Endpoint: POST /gateway/whatsapp/:id/qr  (F5-01 — WhatsAppAdapter)
+   * El QR llega vía SSE en /gateway/whatsapp/:id/qr-stream → ChannelStatusCard
    */
   const requestWhatsAppQr = useCallback(async (id: string): Promise<void> => {
     const res = await fetch(`/gateway/whatsapp/${id}/qr`, { method: 'POST' })
@@ -130,19 +120,6 @@ export function useChannels(filters?: { agentId?: string; type?: string; isActiv
       const err = await res.json().catch(() => ({ message: 'Error al generar QR' })) as { message?: string }
       throw new Error(err.message ?? 'Error al generar QR')
     }
-  }, [])
-
-  /**
-   * Cierra la sesión Baileys del canal WhatsApp.
-   * Endpoint: POST /gateway/whatsapp/:id/logout
-   */
-  const logoutWhatsApp = useCallback(async (id: string): Promise<void> => {
-    const res = await fetch(`/gateway/whatsapp/${id}/logout`, { method: 'POST' })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ message: 'Error al cerrar sesión' })) as { message?: string }
-      throw new Error(err.message ?? 'Error al cerrar sesión')
-    }
-    setChannels(prev => prev.map(c => c.id === id ? { ...c, isActive: false } : c))
   }, [])
 
   const selected = channels.find(c => c.id === selectedId) ?? null
@@ -164,6 +141,5 @@ export function useChannels(filters?: { agentId?: string; type?: string; isActiv
     patchChannel,
     testChannel,
     requestWhatsAppQr,
-    logoutWhatsApp,
   }
 }
