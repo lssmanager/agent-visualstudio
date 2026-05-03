@@ -74,6 +74,11 @@ type HierarchyOrchestratorCtor = new (
         partial: number
         failed: number
         rejected: number
+        errors: Array<{
+          taskId: string
+          nodeId: string
+          message: string
+        }>
       }
     }
     subtaskResults: unknown[]

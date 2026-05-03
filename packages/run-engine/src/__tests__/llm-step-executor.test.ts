@@ -106,6 +106,7 @@ jest.mock(
               partial: 0,
               failed: 0,
               rejected: 0,
+              errors: [],
             },
           },
           subtaskResults:     [],
@@ -374,6 +375,11 @@ describe('LlmStepExecutor', () => {
                 partial: number;
                 failed: number;
                 rejected: number;
+                errors: Array<{
+                  taskId: string;
+                  nodeId: string;
+                  message: string;
+                }>;
               };
             };
             subtaskResults: unknown[];
