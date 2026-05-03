@@ -63,3 +63,16 @@ export type CoreFilesPreviewResponse = { snapshotId?: string; artifacts: unknown
 
 export * from './types-base';
 export type * from '../../../../packages/core-types/src/studio-canonical';
+
+// ── Run types ────────────────────────────────────────────────────────────────
+// Re-exportados desde core-types/run-spec para que todos los consumidores
+// (RunsPage, RunTimeline, StepDetail, ApprovalPanel, etc.) importen
+// desde el barrel unificado '@/lib/types'.
+export type {
+  RunSpec,
+  RunStep,
+  RunStatus,
+  StepStatus,
+  RunTrigger,
+  RunStepTokenUsage,
+} from '../../../../packages/core-types/src/run-spec';
