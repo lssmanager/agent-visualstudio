@@ -1,6 +1,6 @@
 /**
  * whatsapp-baileys.adapter.ts — WhatsApp via Baileys (WA Web protocol)
- * [F3a-21 / F3a-23 / F3a-24]
+ * [F3a-21 / F3a-23 / F3a-24 / F5-02]
  *
  * A diferencia de WhatsAppAdapter (Cloud API), este adapter usa el
  * protocolo WhatsApp Web via Baileys. No requiere cuenta Business ni
@@ -13,18 +13,25 @@
  * normalizeMessage(), extractText(), extractType(), extractAttachment().
  *
  * F3a-23: ExponentialBackoff integrado para reconexiones.
+ *
+ * F5-02: Session persistence en Prisma (D-22b).
+ *   - useMultiFileAuthState (filesystem) → usePrismaAuthState (Prisma)
+ *   - clearSessionFiles() → clearSessionInDb()
+ *   - Eliminados imports node:path y node:fs
+ *   - setup() ya no llama fs.mkdirSync()
+ *   - PrismaClient inyectado via constructor
  */
 
-import path         from 'node:path'
-import fs           from 'node:fs'
 import EventEmitter from 'node:events'
 import {
   BaseChannelAdapter,
   type OutgoingMessage,
 } from './channel-adapter.interface.js'
-import { baileysToIncoming }  from './whatsapp-message.mapper.js'
-import { outgoingToBaileys }  from './whatsapp-send.mapper.js'
-import { ExponentialBackoff } from './whatsapp-backoff.js'
+import { baileysToIncoming }              from './whatsapp-message.mapper.js'
+import { outgoingToBaileys }              from './whatsapp-send.mapper.js'
+import { ExponentialBackoff }             from './whatsapp-backoff.js'
+import { usePrismaAuthState, clearSessionInDb } from './whatsapp-prisma-auth.js'
+import type { PrismaClient }              from '@prisma/client'
 
 // ── Tipos de Baileys (importados dinámicamente) ─────────────────────────
 
@@ -66,7 +73,6 @@ export type WhatsAppAdapterState =
 // ── Config ─────────────────────────────────────────────────────────────────
 
 interface WhatsAppBaileysConfig {
-  sessionsDir?:          string
   maxReconnectAttempts?: number
   qrTimeoutMs?:         number
   printQrInTerminal?:   boolean
@@ -77,6 +83,9 @@ interface WhatsAppBaileysConfig {
 
 export class WhatsAppBaileysAdapter extends BaseChannelAdapter {
   readonly channel = 'whatsapp-baileys'
+
+  // Prisma (F5-02): inyectado en el constructor para persistir credenciales
+  private readonly prisma: PrismaClient
 
   // Estado interno
   private _state:           WhatsAppAdapterState = 'idle'
@@ -93,13 +102,22 @@ export class WhatsAppBaileysAdapter extends BaseChannelAdapter {
   })
 
   // Config
-  private sessionsDir          = process.env['WA_SESSIONS_DIR'] ?? './data/wa-sessions'
   private maxReconnectAttempts = parseInt(process.env['WA_MAX_RECONNECT_ATTEMPTS'] ?? '8')
   private qrTimeoutMs          = 120_000
   private printQrInTerminal    = false
   private browser: [string, string, string] = ['AgentVS Gateway', 'Chrome', '120.0']
 
   private readonly emitter = new EventEmitter()
+
+  /**
+   * @param prisma - PrismaClient para persistir credenciales Baileys (F5-02).
+   *   Si el gateway usa NestJS DI, pasar PrismaService (extiende PrismaClient).
+   *   Si se instancia manualmente: new WhatsAppBaileysAdapter(prismaClient)
+   */
+  constructor(prisma: PrismaClient) {
+    super()
+    this.prisma = prisma
+  }
 
   // ── Estado público ───────────────────────────────────────────────────────────
 
@@ -117,9 +135,6 @@ export class WhatsAppBaileysAdapter extends BaseChannelAdapter {
     _secrets: Record<string, unknown>,
   ): Promise<void> {
     const cfg = config as WhatsAppBaileysConfig
-    this.sessionsDir = String(
-      process.env['WA_SESSIONS_DIR'] ?? cfg.sessionsDir ?? './data/wa-sessions',
-    )
     this.maxReconnectAttempts = Number(
       process.env['WA_MAX_RECONNECT_ATTEMPTS'] ?? cfg.maxReconnectAttempts ?? 8,
     )
@@ -127,7 +142,9 @@ export class WhatsAppBaileysAdapter extends BaseChannelAdapter {
     this.printQrInTerminal = Boolean(cfg.printQrInTerminal ?? false)
     if (cfg.browser) this.browser = cfg.browser
 
-    fs.mkdirSync(this.getSessionPath(), { recursive: true })
+    // F5-02: No se crea ningún directorio en disco.
+    // Las credenciales se leen/escriben en Prisma vía usePrismaAuthState().
+
     console.info(
       `[whatsapp-baileys] Adapter configured (lazy) — channelId=${this.channelConfigId}`,
     )
@@ -154,17 +171,20 @@ export class WhatsAppBaileysAdapter extends BaseChannelAdapter {
       )
     })
 
-    const { makeWASocket, useMultiFileAuthState, DisconnectReason: DR, fetchLatestBaileysVersion } =
+    const { makeWASocket, DisconnectReason: DR, fetchLatestBaileysVersion } =
       baileys as unknown as {
-        makeWASocket:          (opts: Record<string, unknown>) => BaileysSocket
-        useMultiFileAuthState: (dir: string) => Promise<{ state: unknown; saveCreds: () => Promise<void> }>
-        DisconnectReason:      DisconnectReason
+        makeWASocket:              (opts: Record<string, unknown>) => BaileysSocket
+        DisconnectReason:          DisconnectReason
         fetchLatestBaileysVersion: () => Promise<{ version: [number, number, number] }>
       }
 
-    const sessionPath       = this.getSessionPath()
-    const { state, saveCreds } = await useMultiFileAuthState(sessionPath)
-    const { version }        = await fetchLatestBaileysVersion()
+    // F5-02: Usar Prisma en lugar de filesystem para las credenciales
+    const { state, saveCreds } = await usePrismaAuthState(
+      this.prisma,
+      this.channelConfigId,
+    )
+
+    const { version } = await fetchLatestBaileysVersion()
 
     const sock = makeWASocket({
       version,
@@ -195,8 +215,9 @@ export class WhatsAppBaileysAdapter extends BaseChannelAdapter {
           statusCode === (DR as unknown as DisconnectReason).connectionReplaced
 
         if (isPermanentClose) {
-          console.warn(`[whatsapp-baileys:${this.channelConfigId}] Permanent close (${statusCode}) — clearing session`)
-          this.clearSessionFiles()
+          console.warn(`[whatsapp-baileys:${this.channelConfigId}] Permanent close (${statusCode}) — clearing session in DB`)
+          // F5-02: clearSessionInDb() en lugar de clearSessionFiles()
+          void clearSessionInDb(this.prisma, this.channelConfigId)
           this.setState('closed')
           this.emitter.emit('closed', this.channelConfigId, 'permanent_close')
           return
@@ -258,7 +279,7 @@ export class WhatsAppBaileysAdapter extends BaseChannelAdapter {
 
         this.emit(normalized).catch((err: unknown) =>
           console.error(
-            `[whatsapp-baileys:${this.channelConfigId}] emit error (${(waMsg as any).key?.id}):`,
+            `[whatsapp-baileys:${this.channelConfigId}] emit error (${(waMsg as Record<string, unknown> & { key?: { id?: string } })?.key?.id}):`,
             err,
           ),
         )
@@ -307,6 +328,9 @@ export class WhatsAppBaileysAdapter extends BaseChannelAdapter {
         this.sock = null
       }
     }
+
+    // F5-02: limpiar sesión en BD en lugar de filesystem
+    await clearSessionInDb(this.prisma, this.channelConfigId)
 
     this.connectPromise = null
     this.setState('closed')
@@ -397,20 +421,6 @@ export class WhatsAppBaileysAdapter extends BaseChannelAdapter {
       this.sock?.end(new Error('QR timeout'))
       this.sock = null
     }, this.qrTimeoutMs)
-  }
-
-  private getSessionPath(): string {
-    return path.join(this.sessionsDir, this.channelConfigId || 'default')
-  }
-
-  private clearSessionFiles(): void {
-    const sessionPath = this.getSessionPath()
-    try {
-      fs.rmSync(sessionPath, { recursive: true, force: true })
-      console.info(`[whatsapp-baileys:${this.channelConfigId}] Auth state deleted: ${sessionPath}`)
-    } catch (err) {
-      console.error(`[whatsapp-baileys:${this.channelConfigId}] Error deleting auth state:`, err)
-    }
   }
 
   /**
