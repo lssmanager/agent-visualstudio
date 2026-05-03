@@ -40,6 +40,39 @@ Cloudflare → Traefik → NestJS API (port 3400)
 
 ---
 
+## Arquitectura Gateway
+
+El sistema gateway tiene dos componentes con nombres similares pero roles distintos:
+
+### `apps/gateway/` - Runtime del Gateway
+
+Proceso separado que recibe mensajes entrantes de Telegram, WebChat y otros canales.
+
+```text
+apps/gateway/src/
+  SessionManager        Ciclo de vida de sesiones
+  MessageDispatcher     Orquestación de mensajes entrantes
+  ChannelRouter         Routing por tipo de canal
+  status-stream         WebSocket push para estado en tiempo real
+```
+
+### `apps/api/src/modules/gateway/` - Proxy HTTP dentro de la API
+
+Cliente del proceso gateway. La API usa este módulo para consultar el estado del gateway y controlar canales desde el panel de administración.
+
+```text
+apps/api/src/modules/gateway/
+  GatewayService        Proxy REST hacia studioConfig.gatewayBaseUrl
+  AgentResolverService  Resolver ChannelBinding -> agentId con cache TTL
+```
+
+### Regla de oro
+
+> Si buscas lógica de sesiones, routing o despacho, ve a `apps/gateway/src/`.
+> Si buscas control del gateway desde la API, ve a `apps/api/src/modules/gateway/`.
+
+---
+
 ## Quick Start
 
 ```bash

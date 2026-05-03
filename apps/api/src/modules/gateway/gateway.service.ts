@@ -3,6 +3,13 @@ import { gatewayMethods } from '../../../../../packages/gateway-sdk/src';
 import { studioConfig } from '../../config';
 import type { RuntimeCapabilityMatrix, SessionState } from '../../../../../packages/core-types/src';
 
+/**
+ * GatewayService - proxy HTTP hacia el runtime gateway externo.
+ *
+ * Este servicio es un cliente del proceso gateway (`apps/gateway/`).
+ * Todos sus métodos hacen fetch hacia `studioConfig.gatewayBaseUrl`.
+ * No gestiona sesiones, no despacha mensajes y no implementa WebSockets.
+ */
 @Injectable()
 export class GatewayService {
   async call(method: string, params?: Record<string, unknown>): Promise<unknown> {

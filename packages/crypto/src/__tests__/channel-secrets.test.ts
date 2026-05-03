@@ -1,19 +1,28 @@
 import { randomBytes } from 'node:crypto'
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import { encryptSecrets, decryptSecrets, rotateEncryption } from '../channel-secrets.js'
 
 const validKey = () => Buffer.from(randomBytes(32)).toString('base64')
 
 describe('encryptSecrets / decryptSecrets', () => {
   let testKey: string
+  let warnSpy: ReturnType<typeof vi.spyOn>
 
   beforeAll(() => {
     testKey = validKey()
-    process.env.CHANNEL_SECRET = testKey
+    process.env.SECRETS_ENCRYPTION_KEY = testKey
+  })
+
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  })
+
+  afterEach(() => {
+    warnSpy.mockRestore()
   })
 
   afterAll(() => {
-    delete process.env.CHANNEL_SECRET
+    delete process.env.SECRETS_ENCRYPTION_KEY
   })
 
   it('encryptSecrets({}) returns a non-empty base64 string', () => {
@@ -53,38 +62,71 @@ describe('encryptSecrets / decryptSecrets', () => {
     expect(() => decryptSecrets(short)).toThrow('too short')
   })
 
-  it('throws when CHANNEL_SECRET is not set', () => {
-    const orig = process.env.CHANNEL_SECRET
-    delete process.env.CHANNEL_SECRET
+  it('throws when SECRETS_ENCRYPTION_KEY is not set', () => {
+    const orig = process.env.SECRETS_ENCRYPTION_KEY
+    delete process.env.SECRETS_ENCRYPTION_KEY
     try {
-      expect(() => encryptSecrets({ x: 1 })).toThrow('CHANNEL_SECRET env var is not set')
+      expect(() => encryptSecrets({ x: 1 })).toThrow('SECRETS_ENCRYPTION_KEY env var is not set')
     } finally {
-      process.env.CHANNEL_SECRET = orig
+      if (orig === undefined) {
+        delete process.env.SECRETS_ENCRYPTION_KEY
+      } else {
+        process.env.SECRETS_ENCRYPTION_KEY = orig
+      }
     }
   })
 
-  it('throws when CHANNEL_SECRET decodes to wrong byte length', () => {
-    const orig = process.env.CHANNEL_SECRET
+  it('throws when SECRETS_ENCRYPTION_KEY decodes to wrong byte length', () => {
+    const orig = process.env.SECRETS_ENCRYPTION_KEY
     // 31 bytes → base64
-    process.env.CHANNEL_SECRET = Buffer.from(randomBytes(31)).toString('base64')
+    process.env.SECRETS_ENCRYPTION_KEY = Buffer.from(randomBytes(31)).toString('base64')
     try {
       expect(() => encryptSecrets({ x: 1 })).toThrow('must decode to exactly 32 bytes')
     } finally {
-      process.env.CHANNEL_SECRET = orig
+      if (orig === undefined) {
+        delete process.env.SECRETS_ENCRYPTION_KEY
+      } else {
+        process.env.SECRETS_ENCRYPTION_KEY = orig
+      }
+    }
+  })
+
+  it('uses CHANNEL_SECRET as deprecated fallback when SECRETS_ENCRYPTION_KEY is absent', () => {
+    const origKey = process.env.SECRETS_ENCRYPTION_KEY
+    const legacyKey = validKey()
+    delete process.env.SECRETS_ENCRYPTION_KEY
+    process.env.CHANNEL_SECRET = legacyKey
+
+    try {
+      expect(() => encryptSecrets({ x: 1 })).not.toThrow()
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('CHANNEL_SECRET is deprecated'),
+      )
+    } finally {
+      if (origKey === undefined) {
+        delete process.env.SECRETS_ENCRYPTION_KEY
+      } else {
+        process.env.SECRETS_ENCRYPTION_KEY = origKey
+      }
+      delete process.env.CHANNEL_SECRET
     }
   })
 
   it('rotateEncryption: encrypt with key A, rotate to key B, decrypt with key B gives original', () => {
     const keyA = validKey()
     const keyB = validKey()
-    const origEnv = process.env.CHANNEL_SECRET
-    process.env.CHANNEL_SECRET = keyA
+    const origEnv = process.env.SECRETS_ENCRYPTION_KEY
+    process.env.SECRETS_ENCRYPTION_KEY = keyA
     const original = { botToken: '111111111:AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIa' }
     const encryptedWithA = encryptSecrets(original)
     const rotated = rotateEncryption(encryptedWithA, keyA, keyB)
-    process.env.CHANNEL_SECRET = keyB
+    process.env.SECRETS_ENCRYPTION_KEY = keyB
     const decrypted = decryptSecrets(rotated)
     expect(decrypted).toEqual(original)
-    process.env.CHANNEL_SECRET = origEnv
+    if (origEnv === undefined) {
+      delete process.env.SECRETS_ENCRYPTION_KEY
+    } else {
+      process.env.SECRETS_ENCRYPTION_KEY = origEnv
+    }
   })
 })

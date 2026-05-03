@@ -66,7 +66,16 @@ type HierarchyOrchestratorCtor = new (
   ): Promise<{
     runId: string
     status: 'completed' | 'partial' | 'failed'
-    consolidatedOutput: string
+    consolidatedOutput: {
+      summary: string
+      stats: {
+        total: number
+        completed: number
+        partial: number
+        failed: number
+        rejected: number
+      }
+    }
     subtaskResults: unknown[]
   }>
 }
@@ -244,7 +253,7 @@ describeE2E('E2E: 4-level hierarchy delegation', () => {
 
     expect(result.status).toBe('completed')
     expect(result.subtaskResults).toHaveLength(1)
-    expect(result.consolidatedOutput).toContain('API endpoint designed')
+    expect(result.consolidatedOutput.summary).toContain('API endpoint designed')
     await expect(prisma.run.findUnique({ where: { id: result.runId } })).resolves.not.toBeNull()
   })
 
