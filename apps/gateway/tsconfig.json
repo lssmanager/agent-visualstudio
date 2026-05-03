@@ -1,12 +1,13 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "ignoreDeprecations":      "6.0",
+    "ignoreDeprecations":      "5.0",
     "experimentalDecorators":  true,
     "emitDecoratorMetadata":   true,
     "outDir":                  "dist",
-    "rootDir":                 "src",
+    "rootDir":                 "../..",
     "baseUrl":                 ".",
+    "types": ["node"],
     "paths": {
       "@gateway/*":             ["src/*"],
       "@agent-vs/gateway-sdk":  ["src/index.ts"]

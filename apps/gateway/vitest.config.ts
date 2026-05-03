@@ -11,7 +11,7 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['src/tests/unit/**/*.spec.ts'],
+    include: ['src/tests/unit/**/*.spec.ts', 'src/channels/__tests__/**/*.{test,spec}.ts'],
     globals: false,
     environment: 'node',
     reporters: ['verbose'],
