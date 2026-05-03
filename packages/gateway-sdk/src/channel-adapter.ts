@@ -182,6 +182,41 @@ export class ChannelAdapterRegistry {
   registeredTypes(): string[] {
     return [...this.adapters.keys()];
   }
+
+  /**
+   * Devuelve todos los adaptadores registrados con sus tipos.
+   *
+   * Útil para:
+   * - Health-check global: iterar sobre todos los adapters activos
+   * - Restart en cascada: `registry.list().forEach(({ adapter }) => adapter.teardown(...))`
+   * - Endpoint `GET /gateway/health`: exponer qué canales están conectados
+   *
+   * @returns Array de { type, adapter } en orden de registro.
+   *
+   * @example
+   * ```ts
+   * const active = registry.list().map(({ type }) => ({ type, status: 'active' }));
+   * res.json({ adapters: active });
+   * ```
+   */
+  list(): Array<{ type: string; adapter: IChannelAdapter }> {
+    return Array.from(this.adapters.entries()).map(([type, adapter]) => ({
+      type,
+      adapter,
+    }));
+  }
+
+  /**
+   * Variante conveniente de `list()` que solo devuelve los adaptadores.
+   *
+   * Útil cuando solo necesitas iterar sobre los adapters sin el tipo:
+   * ```ts
+   * await Promise.all(registry.listAdapters().map(a => a.teardown({}, {})));
+   * ```
+   */
+  listAdapters(): IChannelAdapter[] {
+    return Array.from(this.adapters.values());
+  }
 }
 
 /** Module-level singleton — import and use directly */
