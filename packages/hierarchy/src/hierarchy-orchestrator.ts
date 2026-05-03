@@ -97,6 +97,12 @@ export interface OrchestrationResult {
   totalDurationMs:   number
 }
 
+export interface ConsolidationError {
+  taskId: string
+  nodeId: string
+  message: string
+}
+
 /**
  * [F2a-06d] Resultado rico de la consolidación, incluye stats de ejecución.
  */
@@ -108,6 +114,7 @@ export interface ConsolidationResult {
     partial:   number
     failed:    number
     rejected:  number
+    errors:    ConsolidationError[]
   }
 }
 
@@ -845,6 +852,17 @@ export class HierarchyOrchestrator {
     const completed = results.filter((r) => r.status === 'completed')
     const partial = results.filter((r) => r.status === 'partial')
     const successful = [...completed, ...partial]
+    const errors = results
+      .filter((r) => r.status === 'failed' || r.status === 'rejected')
+      .map((r) => ({
+        taskId:  r.taskId,
+        nodeId:  r.nodeId,
+        message: r.error ?? (
+          r.status === 'failed'
+            ? 'Subtask failed without an error message'
+            : 'Subtask was rejected without an error message'
+        ),
+      }))
 
     if (successful.length === 0) {
       return {
@@ -855,6 +873,7 @@ export class HierarchyOrchestrator {
           partial:   partial.length,
           failed:    results.filter((r) => r.status === 'failed').length,
           rejected:  results.filter((r) => r.status === 'rejected').length,
+          errors,
         },
       }
     }
@@ -865,12 +884,12 @@ export class HierarchyOrchestrator {
       partial:   partial.length,
       failed:    results.filter((r) => r.status === 'failed').length,
       rejected:  results.filter((r) => r.status === 'rejected').length,
+      errors,
     }
 
     if (this.supervisorFn) {
       try {
-        const failed = results.filter((r) => r.status === 'failed' || r.status === 'rejected')
-        return await this.consolidateWithSupervisor(rootTask, successful, failed, stats)
+        return await this.consolidateWithSupervisor(rootTask, successful, errors, stats)
       } catch {
         // fallback a concatenación
       }
@@ -893,7 +912,7 @@ export class HierarchyOrchestrator {
   private async consolidateWithSupervisor(
     rootTask:  string,
     completed: SubtaskResult[],
-    failed:    SubtaskResult[],
+    errors:    ConsolidationError[],
     stats:     ConsolidationResult['stats'],
   ): Promise<ConsolidationResult> {
     const statusLine =
@@ -909,10 +928,10 @@ export class HierarchyOrchestrator {
       .map((r, i) => `[${i + 1}] Agent ${r.nodeId}: ${String(r.output ?? '')}`)
       .join('\n')
 
-    const failureSummary = failed.length > 0
-      ? failed
+    const failureSummary = errors.length > 0
+      ? errors
           .map((r) =>
-            `[FAILED] Agent ${r.nodeId} (${r.status}): ${r.error ?? 'unknown error'}`
+            `[FAILED] Agent ${r.nodeId} (${r.taskId}): ${r.message}`
           )
           .join('\n')
       : ''
