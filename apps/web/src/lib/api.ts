@@ -374,6 +374,25 @@ export async function rejectStep(runId: string, stepId: string, reason?: string)
   return parseJson<RunSpec>(response);
 }
 
+/**
+ * Reintenta la delegación de un step bloqueado.
+ * Endpoint: POST /api/studio/v1/runs/:runId/steps/:stepId/retry
+ *
+ * Si el backend no implementa este endpoint todavía (devuelve 404/405),
+ * el error se propaga al componente BlockedNode que lo muestra al usuario
+ * con un mensaje específico.
+ *
+ * TODO(F-backend): implementar RunsController.retryStep() cuando
+ * HierarchyOrchestrator soporte re-delegación (ver F2a-07 isBlocked()).
+ */
+export async function retryDelegation(runId: string, stepId: string) {
+  const response = await fetch(
+    `${API_BASE}/runs/${encodeURIComponent(runId)}/steps/${encodeURIComponent(stepId)}/retry`,
+    { method: 'POST' },
+  );
+  return parseJson<RunSpec>(response);
+}
+
 export async function getRunTrace(id: string) {
   const response = await fetch(`${API_BASE}/runs/${encodeURIComponent(id)}/trace`);
   return parseJson<{
