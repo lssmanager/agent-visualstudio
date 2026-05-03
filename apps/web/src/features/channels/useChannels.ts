@@ -109,12 +109,35 @@ export function useChannels(filters?: { agentId?: string; type?: string; isActiv
     }
   }, [])
 
+  /**
+   * requestWhatsAppQr — solicita al gateway que genere un nuevo QR para
+   * la sesión Baileys del canal. El QR se emitirá via SSE (evento 'qr')
+   * en /api/channels/:id/status/stream, que ya escucha useChannelStatus.
+   *
+   * Endpoint correcto: POST /gateway/whatsapp/:id/qr
+   * (no /api/channels/:id/whatsapp/qr — ese path no existe en el gateway)
+   */
   const requestWhatsAppQr = useCallback(async (id: string): Promise<void> => {
-    const res = await fetch(`/api/channels/${id}/whatsapp/qr`, { method: 'POST' })
+    const res = await fetch(`/gateway/whatsapp/${id}/qr`, { method: 'POST' })
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: 'Error al generar QR' })) as { message?: string }
       throw new Error(err.message ?? 'Error al generar QR')
     }
+  }, [])
+
+  /**
+   * logoutWhatsApp — cierra la sesión Baileys del canal y elimina
+   * los archivos de sesión del gateway.
+   *
+   * Endpoint: POST /gateway/whatsapp/:id/logout
+   */
+  const logoutWhatsApp = useCallback(async (id: string): Promise<void> => {
+    const res = await fetch(`/gateway/whatsapp/${id}/logout`, { method: 'POST' })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: 'Error al cerrar sesión' })) as { message?: string }
+      throw new Error(err.message ?? 'Error al cerrar sesión')
+    }
+    setChannels(prev => prev.map(c => (c.id === id ? { ...c, isActive: false } : c)))
   }, [])
 
   const selected = channels.find(c => c.id === selectedId) ?? null
@@ -136,5 +159,6 @@ export function useChannels(filters?: { agentId?: string; type?: string; isActiv
     patchChannel,
     testChannel,
     requestWhatsAppQr,
+    logoutWhatsApp,
   }
 }
