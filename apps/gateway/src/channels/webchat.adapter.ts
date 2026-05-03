@@ -20,14 +20,13 @@
 
 import { WebSocketServer, WebSocket, type RawData } from 'ws'
 import type { IncomingMessage as HttpIncomingMessage, Server } from 'http'
+import type { PrismaClient } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service.js'
 import {
   BaseChannelAdapter,
   type IncomingMessage,
   type OutgoingMessage,
 } from './channel-adapter.interface.js'
-
-const db = new PrismaService()
 
 // ── Tipos de frame ──────────────────────────────────────────────────────
 
@@ -64,11 +63,25 @@ interface ActiveConnection {
 export class WebChatAdapter extends BaseChannelAdapter {
   readonly channel = 'webchat'
 
+  // Instancia de PrismaClient — inyectada por constructor o lazy-init
+  private readonly db: PrismaClient
+
   // WebSocketServer — se adjunta al httpServer en initialize()
   private wss: WebSocketServer | null = null
 
   // sessionId → lista de conexiones activas (multi-tab support)
   private readonly connections = new Map<string, ActiveConnection[]>()
+
+  /**
+   * @param prisma — instancia compartida de PrismaClient.
+   *   Si no se pasa, se crea una instancia local via PrismaService (fallback
+   *   para compatibilidad con código antiguo). En producción siempre pasar
+   *   la instancia compartida del servidor para evitar pool exhaustion.
+   */
+  constructor(prisma?: PrismaClient) {
+    super()
+    this.db = prisma ?? (new PrismaService() as unknown as PrismaClient)
+  }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -87,7 +100,7 @@ export class WebChatAdapter extends BaseChannelAdapter {
   ): Promise<void> {
     this.channelConfigId = channelConfigId
 
-    const config = await db.channelConfig.findUnique({
+    const config = await this.db.channelConfig.findUnique({
       where: { id: channelConfigId },
     })
     if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`)
@@ -352,7 +365,7 @@ export class WebChatAdapter extends BaseChannelAdapter {
 
   private async sendHistory(conn: ActiveConnection): Promise<void> {
     try {
-      const session = await db.gatewaySession.findFirst({
+      const session = await this.db.gatewaySession.findFirst({
         where: {
           channelConfigId: this.channelConfigId,
           externalUserId:   conn.sessionId,
@@ -382,7 +395,7 @@ export class WebChatAdapter extends BaseChannelAdapter {
         throw new Error(`Missing agentId for WebChat session ${sessionId}`)
       }
 
-      await db.gatewaySession.upsert({
+      await this.db.gatewaySession.upsert({
         where: {
           channelConfigId_externalUserId: {
             channelConfigId: this.channelConfigId,
@@ -428,7 +441,7 @@ export class WebChatAdapter extends BaseChannelAdapter {
   }
 
   private async resolveAgentId(sessionId: string): Promise<string | null> {
-    const session = await db.gatewaySession.findFirst({
+    const session = await this.db.gatewaySession.findFirst({
       where: {
         channelConfigId: this.channelConfigId,
         externalUserId:  sessionId,
