@@ -5,6 +5,12 @@ const describeE2E = DATABASE_URL_TEST ? describe : describe.skip
 
 const allNodeIds = ['agency-1', 'dept-1', 'ws-1', 'agent-1']
 
+// ── Suite-scoped ID tracking (fix #169) ──────────────────────────────────
+// Tracks IDs created by THIS suite so beforeEach only deletes its own rows,
+// preventing contamination of other suites sharing DATABASE_URL_TEST.
+const _createdRunIds  = new Set<string>()
+const _createdStepIds = new Set<string>()
+
 type AgentExecutionResult = {
   response: string
   model?: string
@@ -143,32 +149,50 @@ describeE2E('E2E: 4-level hierarchy delegation', () => {
     await prisma.$disconnect()
   })
 
+  // ── Scoped cleanup (fix #169) ─────────────────────────────────────────────
+  // Only deletes rows that THIS suite created, identified by their IDs.
+  // Does NOT use deleteMany() without a filter — that would wipe rows
+  // from other test suites sharing the same DATABASE_URL_TEST in CI.
   beforeEach(async () => {
-    await prisma.$transaction([
-      prisma.runStep.deleteMany(),
-      prisma.run.deleteMany(),
-    ])
+    if (_createdStepIds.size) {
+      await prisma.runStep.deleteMany({
+        where: { id: { in: [..._createdStepIds] } },
+      })
+      _createdStepIds.clear()
+    }
+    if (_createdRunIds.size) {
+      await prisma.run.deleteMany({
+        where: { id: { in: [..._createdRunIds] } },
+      })
+      _createdRunIds.clear()
+    }
   })
 
   it('crea exactamente 4 RunSteps en BD para la cadena Agency->Dept->Workspace->Agent', async () => {
     const orchestrator = makeOrchestrator(HierarchyOrchestrator, makeExecutorFn(), prisma)
 
-    await expect(orchestrator.orchestrate('ws-1', 'Design an API endpoint')).resolves.toBeDefined()
+    const result = await orchestrator.orchestrate('ws-1', 'Design an API endpoint')
+    _createdRunIds.add(result.runId)
 
     await expect(prisma.runStep.count({
       where: { nodeId: { in: allNodeIds } },
     })).resolves.toBe(4)
 
     const steps = await getHierarchySteps(prisma)
+    steps.forEach((step) => _createdStepIds.add((step as unknown as { id: string }).id))
     expect(steps.map((step) => step.nodeId).sort()).toEqual([...allNodeIds].sort())
   })
 
   it('los RunSteps de delegacion tienen nodeType=delegation y el agente tiene nodeType=agent', async () => {
     const orchestrator = makeOrchestrator(HierarchyOrchestrator, makeExecutorFn(), prisma)
 
-    await orchestrator.orchestrate('ws-1', 'Design an API endpoint')
+    const result = await orchestrator.orchestrate('ws-1', 'Design an API endpoint')
+    _createdRunIds.add(result.runId)
 
-    const stepsByNodeId = new Map((await getHierarchySteps(prisma)).map((step) => [step.nodeId, step]))
+    const steps = await getHierarchySteps(prisma)
+    steps.forEach((step) => _createdStepIds.add((step as unknown as { id: string }).id))
+
+    const stepsByNodeId = new Map(steps.map((step) => [step.nodeId, step]))
     expect(stepsByNodeId.get('agency-1')?.nodeType).toBe('delegation')
     expect(stepsByNodeId.get('dept-1')?.nodeType).toBe('delegation')
     expect(stepsByNodeId.get('ws-1')?.nodeType).toBe('delegation')
@@ -178,9 +202,12 @@ describeE2E('E2E: 4-level hierarchy delegation', () => {
   it('todos los RunSteps tienen status=completed tras orchestrate() exitoso', async () => {
     const orchestrator = makeOrchestrator(HierarchyOrchestrator, makeExecutorFn(), prisma)
 
-    await orchestrator.orchestrate('ws-1', 'Design an API endpoint')
+    const result = await orchestrator.orchestrate('ws-1', 'Design an API endpoint')
+    _createdRunIds.add(result.runId)
 
     const steps = await getHierarchySteps(prisma)
+    steps.forEach((step) => _createdStepIds.add((step as unknown as { id: string }).id))
+
     expect(steps).toHaveLength(4)
     expect(steps.every((step) => step.status === 'completed')).toBe(true)
   })
@@ -192,9 +219,12 @@ describeE2E('E2E: 4-level hierarchy delegation', () => {
       prisma,
     )
 
-    await orchestrator.orchestrate('ws-1', 'Design an API endpoint')
+    const result = await orchestrator.orchestrate('ws-1', 'Design an API endpoint')
+    _createdRunIds.add(result.runId)
 
     const agentStep = await prisma.runStep.findFirst({ where: { nodeId: 'agent-1' } })
+    if (agentStep) _createdStepIds.add(agentStep.id)
+
     expect(agentStep).not.toBeNull()
     expect(JSON.stringify(agentStep?.output)).toContain('API endpoint designed')
   })
@@ -207,6 +237,10 @@ describeE2E('E2E: 4-level hierarchy delegation', () => {
     )
 
     const result = await orchestrator.orchestrate('ws-1', 'Design an API endpoint')
+    _createdRunIds.add(result.runId)
+
+    const steps = await getHierarchySteps(prisma)
+    steps.forEach((step) => _createdStepIds.add((step as unknown as { id: string }).id))
 
     expect(result.status).toBe('completed')
     expect(result.subtaskResults).toHaveLength(1)
@@ -219,10 +253,12 @@ describeE2E('E2E: 4-level hierarchy delegation', () => {
     const orchestrator = makeOrchestrator(HierarchyOrchestrator, failingExecutor, prisma)
 
     const result = await orchestrator.orchestrate('ws-1', 'Design an API endpoint')
-
-    expect(result.status).toBe('failed')
+    _createdRunIds.add(result.runId)
 
     const agentStep = await prisma.runStep.findFirst({ where: { nodeId: 'agent-1' } })
+    if (agentStep) _createdStepIds.add(agentStep.id)
+
+    expect(result.status).toBe('failed')
     expect(agentStep?.status).toBe('failed')
     expect(agentStep?.error).toContain('LLM unreachable')
   })
