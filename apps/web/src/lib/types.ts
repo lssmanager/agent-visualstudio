@@ -1,1 +1,65 @@
-aW1wb3J0IHR5cGUgewogIENhbm9uaWNhbFN0dWRpb1N0YXRlLAogIENvcmVGaWxlRGlmZiwKICBXb3Jrc3BhY2VTcGVjQ2Fub25pY2FsLAp9IGZyb20gJy4uLy4uLy4uLy4uL3BhY2thZ2VzL2NvcmUtdHlwZXMvc3JjL3N0dWRpby1jYW5vbmljYWwnOwppbXBvcnQgdHlwZSB7IEFnZW50U3BlYywgRmxvd1NwZWMsIFByb2ZpbGVTcGVjLCBTa2lsbFNwZWMsIFdvcmtzcGFjZVNwZWMgfSBmcm9tICcuL3R5cGVzLWJhc2UnOwoKLy8gQVVESVQtMzE6IHNpbmNyb25pemFkbyBjb24gZW51bSBDaGFubmVsS2luZCBkZWwgc2NoZW1hIFByaXNtYQovLyAgICAgICAgICAgKEFVRElULTMwIGHDsWFkaW8gc2xhY2sgeSB0ZWFtcyBhbCBlbnVtKQpleHBvcnQgdHlwZSBDaGFubmVsS2luZCA9CiAgfCAndGVsZWdyYW0nCiAgfCAnd2hhdHNhcHAnCiAgfCAnZGlzY29yZCcKICB8ICd3ZWJjaGF0JwogIHwgJ3NsYWNrJwogIHwgJ3RlYW1zJzsKCi8vIEFVRElULTMxOiBzdGF0dXMgYWxpbmVhZG8gY29uIGVudW0gQ2hhbm5lbFN0YXR1cyBkZWwgc2NoZW1hIFByaXNtYToKLy8gICBBTlRFUzogJ2lkbGUnIHwgJ3Byb3Zpc2lvbmluZycgfCAnYWN0aXZlJyB8ICdlcnJvcicgICAgIChpbmNvcnJlY3RvKQovLyAgIERFU1BVw4lTOiAncHJvdmlzaW9uZWQnIHwgJ2JvdW5kJyB8ICdlcnJvcicgfCAnb2ZmbGluZScgIChvcmFjbGUgZGUgREIpCmV4cG9ydCBpbnRlcmZhY2UgQ2hhbm5lbFJlY29yZCB7CiAgaWQ6IHN0cmluZzsKICB3b3Jrc3BhY2VJZDogc3RyaW5nOwogIGtpbmQ6IENoYW5uZWxLaW5kOwogIG5hbWU6IHN0cmluZzsKICBzdGF0dXM6ICdwcm92aXNpb25lZCcgfCAnYm91bmQnIHwgJ2Vycm9yJyB8ICdvZmZsaW5lJzsKICBhZ2VudElkOiBzdHJpbmcgfCBudWxsOwogIGNyZWF0ZWRBdDogc3RyaW5nOwogIHVwZGF0ZWRBdDogc3RyaW5nOwp9CgpleHBvcnQgaW50ZXJmYWNlIExsbVByb3ZpZGVyUmVjb3JkIHsKICBpZDogc3RyaW5nOwogIHdvcmtzcGFjZUlkOiBzdHJpbmc7CiAgcHJvdmlkZXI6IHN0cmluZzsKICBsYWJlbDogc3RyaW5nOwogIG1hc2tlZEtleTogc3RyaW5nOwogIGlzRGVmYXVsdDogYm9vbGVhbjsKICBjcmVhdGVkQXQ6IHN0cmluZzsKfQoKZXhwb3J0IGludGVyZmFjZSBTdHVkaW9TdGF0ZVJlc3BvbnNlIHsKICB3b3Jrc3BhY2U6IFdvcmtzcGFjZVNwZWMgfCBudWxsOwogIGFnZW50czogQWdlbnRTcGVjW107CiAgc2tpbGxzOiBTa2lsbFNwZWNbXTsKICBmbG93czogRmxvd1NwZWNbXTsKICBwb2xpY2llczogQXJyYXk8eyBpZDogc3RyaW5nOyBuYW1lOiBzdHJpbmcgfT47CiAgcHJvZmlsZXM6IFByb2ZpbGVTcGVjW107CiAgY29tcGlsZTogeyBhcnRpZmFjdHM6IHVua25vd25bXTsgZGlhZ25vc3RpY3M6IHN0cmluZ1tdIH07CiAgcnVudGltZTogewogICAgaGVhbHRoOiB7IG9rOiBib29sZWFuOyBba2V5OiBzdHJpbmddOiB1bmtub3duIH07CiAgICBkaWFnbm9zdGljczogUmVjb3JkPHN0cmluZywgdW5rbm93bj47CiAgICBzZXNzaW9uczogeyBvazogYm9vbGVhbjsgcGF5bG9hZD86IHVua25vd25bXSB9OwogIH07CiAgZ2VuZXJhdGVkQXQ6IHN0cmluZzsKfQoKZXhwb3J0IHR5cGUgQ2Fub25pY2FsU3R1ZGlvU3RhdGVSZXNwb25zZSA9IENhbm9uaWNhbFN0dWRpb1N0YXRlOwpleHBvcnQgdHlwZSBDb3JlRmlsZXNEaWZmUmVzcG9uc2UgPSB7IHNuYXBzaG90SWQ/OiBzdHJpbmc7IGRpZmZzOiBDb3JlRmlsZURpZmZbXTsgZ2VuZXJhdGVkQXQ/OiBzdHJpbmcgfTsKZXhwb3J0IHR5cGUgQ29yZUZpbGVzUHJldmlld1Jlc3BvbnNlID0geyBzbmFwc2hvdElkPzogc3RyaW5nOyBhcnRpZmFjdHM6IHVua25vd25bXTsgZGlhZ25vc3RpY3M6IHN0cmluZ1tdOyBnZW5lcmF0ZWRBdD86IHN0cmluZyB9OwoKZXhwb3J0ICogZnJvbSAnLi90eXBlcy1iYXNlJzsKZXhwb3J0IHR5cGUgKiBmcm9tICcuLi8uLi8uLi8uLi9wYWNrYWdlcy9jb3JlLXR5cGVzL3NyYy9zdHVkaW8tY2Fub25pY2FsJzsK
+import type {
+  CanonicalStudioState,
+  CoreFileDiff,
+  WorkspaceSpecCanonical,
+} from '../../../../packages/core-types/src/studio-canonical';
+import type { AgentSpec, FlowSpec, ProfileSpec, SkillSpec, WorkspaceSpec } from './types-base';
+
+// AUDIT-31: sincronizado con enum ChannelKind del schema Prisma
+//           (AUDIT-30 añadió slack y teams al enum)
+//           fix(channels-ui): añadido 'webhook' para completar el enum
+export type ChannelKind =
+  | 'telegram'
+  | 'whatsapp'
+  | 'discord'
+  | 'webchat'
+  | 'slack'
+  | 'teams'
+  | 'webhook';
+
+// AUDIT-31: status alineado con enum ChannelStatus del schema Prisma:
+//   ANTES: 'idle' | 'provisioning' | 'active' | 'error'    (incorrecto)
+//   DESPUÉS: 'provisioned' | 'bound' | 'error' | 'offline'  (oracle de DB)
+export interface ChannelRecord {
+  id: string;
+  workspaceId: string;
+  kind: ChannelKind;
+  name: string;
+  status: 'provisioned' | 'bound' | 'error' | 'offline';
+  agentId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LlmProviderRecord {
+  id: string;
+  workspaceId: string;
+  provider: string;
+  label: string;
+  maskedKey: string;
+  isDefault: boolean;
+  createdAt: string;
+}
+
+export interface StudioStateResponse {
+  workspace: WorkspaceSpec | null;
+  agents: AgentSpec[];
+  skills: SkillSpec[];
+  flows: FlowSpec[];
+  policies: Array<{ id: string; name: string }>;
+  profiles: ProfileSpec[];
+  compile: { artifacts: unknown[]; diagnostics: string[] };
+  runtime: {
+    health: { ok: boolean; [key: string]: unknown };
+    diagnostics: Record<string, unknown>;
+    sessions: { ok: boolean; payload?: unknown[] };
+  };
+  generatedAt: string;
+}
+
+export type CanonicalStudioStateResponse = CanonicalStudioState;
+export type CoreFilesDiffResponse = { snapshotId?: string; diffs: CoreFileDiff[]; generatedAt?: string };
+export type CoreFilesPreviewResponse = { snapshotId?: string; artifacts: unknown[]; diagnostics: string[]; generatedAt?: string };
+
+export * from './types-base';
+export type * from '../../../../packages/core-types/src/studio-canonical';
