@@ -105,7 +105,13 @@ export class WebChatAdapter extends BaseChannelAdapter {
     })
     if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`)
 
-    this.credentials = config.credentials as Record<string, unknown>
+    // FIX-6: ChannelConfig no tiene campo `credentials`.
+    // Leer secretsEncrypted (string | null) y parsear como JSON.
+    // WebChat no requiere secrets en runtime (auth vía sessionId),
+    // por lo que un valor null resulta en objeto vacío sin error.
+    this.credentials = config.secretsEncrypted
+      ? (JSON.parse(config.secretsEncrypted) as Record<string, unknown>)
+      : {}
 
     // Crear WebSocketServer adjunto al httpServer existente.
     // path: '/gateway/webchat' → filtra solo esta ruta.

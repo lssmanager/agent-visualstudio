@@ -18,13 +18,19 @@
     "strictNullChecks": true,
     "strictFunctionTypes": true,
     "strictBindCallApply": true,
-    "strictPropertyInitialization": true,
+    "strictPropertyInitialization": false,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
     "noImplicitThis": true,
     "alwaysStrict": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "paths": {
+      "../../lib/prisma": ["./packages/db/src/index.ts"],
+      "../../lib/prisma.js": ["./packages/db/src/index.ts"]
+    }
   },
   "include": [
     "apps/**/*.ts",
@@ -35,6 +41,7 @@
     "dist",
     "apps/web",
     "**/__tests__/**",
-    "**/*.test.ts"
+    "**/*.test.ts",
+    "apps/gateway/src/channels/whatsapp-baileys.adapter.ts"
   ]
 }

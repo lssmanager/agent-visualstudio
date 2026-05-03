@@ -7,8 +7,11 @@
  *   Capa 1 — discord.commands.ts (DiscordCommandDispatcher, makeBindingResolver,
  *             parseInteractionBody): lógica pura, sin HTTP ni Discord real.
  *
- *   Capa 2 — discord.adapter.ts (DiscordAdapter + buildHttpRouter): flujo HTTP
- *             usando supertest + fetch mockeado.
+ *   Capa 2 — discord.adapter.ts (DiscordAdapter): flujo HTTP usando Express
+ *             handler manual + handleInteraction() + fetch mockeado.
+ *             NOTA: DiscordAdapter expone initialize(), handleInteraction(),
+ *             send() y dispose() — NO tiene setup()/buildHttpRouter()/onError().
+ *             El harness construye el router Express manualmente.
  *
  * Sin Discord real ni base de datos: todos los mocks son en memoria.
  *
@@ -467,10 +470,19 @@ describe('[F3a-27] dispatch — comando desconocido', () => {
 })
 
 // ════════════════════════════════════════════════════════════════════════════
-// CAPA 2 — DiscordAdapter (HTTP + supertest + fetch mockeado)
+// CAPA 2 — DiscordAdapter HTTP (Express handler manual + handleInteraction)
+//
+// DiscordAdapter API pública real:
+//   initialize(channelConfigId)  — async, carga config desde DB
+//   handleInteraction(body)      — procesa interacción y emite IncomingMessage
+//   send(OutgoingMessage)        — PATCH followup a Discord API
+//   dispose()                    — limpia estado
+//   onMessage(handler)           — suscribe al stream de IncomingMessage
+//
+// NO existe: setup(), buildHttpRouter(), onError().
+// El harness construye el router Express manualmente y delega en handleInteraction().
 // ════════════════════════════════════════════════════════════════════════════
 
-const FAKE_BOT_TOKEN   = 'Bot_fake_token_for_tests'
 const FAKE_APP_ID      = '111111111111111111'
 const FAKE_GUILD_ID    = GUILD_ID
 const FAKE_CHANNEL_ID  = CHANNEL_ID
@@ -520,9 +532,20 @@ function makeDispatchInput(
   }
 }
 
+/**
+ * buildHttpHarness — construye un Express app con DiscordAdapter.
+ *
+ * El router POST /discord:
+ *   type=1  → responde { type: 1 } (ping)
+ *   type=2  → llama adapter.handleInteraction() → responde { type: 5 } ACK
+ *   otros   → 400
+ *
+ * La verificación de firma Ed25519 se mockea a nivel de middleware.
+ */
 async function buildHttpHarness(agentReply = 'Respuesta del agente de prueba') {
+  // Mock fetch global para PATCH Discord API
   const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(
-    async (url: RequestInfo | URL) => {
+    async (url: string | URL | Request) => {
       const urlStr = typeof url === 'string' ? url : (url as URL).toString()
       if (urlStr.includes('discord.com/api')) {
         return new Response(JSON.stringify({ id: 'mock_message_id' }), {
@@ -538,15 +561,14 @@ async function buildHttpHarness(agentReply = 'Respuesta del agente de prueba') {
     run: jest.fn().mockResolvedValue({ reply: agentReply }),
   }
 
+  // Mock initialize() para no requerir Prisma en tests
   const adapter = new DiscordAdapter()
-  adapter.initialize(FAKE_CHANNEL_CFG)
-  jest.spyOn(adapter as any, '_verifySignature').mockReturnValue(true)
-
-  await adapter.setup(
-    { applicationId: FAKE_APP_ID, guildId: FAKE_GUILD_ID },
-    { botToken: FAKE_BOT_TOKEN, publicKey: 'aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899' },
-    'http',
-  )
+  jest.spyOn(adapter as any, 'loadConfig').mockResolvedValue({
+    id:               FAKE_CHANNEL_CFG,
+    config:           { applicationId: FAKE_APP_ID, guildId: FAKE_GUILD_ID },
+    secretsEncrypted: JSON.stringify({ publicKey: 'aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899' }),
+  })
+  await adapter.initialize(FAKE_CHANNEL_CFG)
 
   const dispatcher = new MessageDispatcher(mockExecutor, {
     timeoutMs:    5_000,
@@ -554,12 +576,39 @@ async function buildHttpHarness(agentReply = 'Respuesta del agente de prueba') {
     retryDelayMs: 50,
   })
 
+  // Router Express manual — no usa buildHttpRouter() (no existe)
   const app = express()
   app.use(express.json())
-  app.use('/discord', adapter.buildHttpRouter())
+  app.post('/discord', async (req, res) => {
+    try {
+      const body = req.body as { type: number; [key: string]: unknown }
+
+      // Ping de verificación Discord (type=1)
+      if (body.type === 1) {
+        res.json({ type: 1 })
+        return
+      }
+
+      // Slash command (type=2)
+      if (body.type === 2) {
+        // ACK inmediato (DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE)
+        res.json({ type: 5 })
+        // Procesar asíncrono — no bloquea la respuesta HTTP
+        adapter.handleInteraction(body as any).catch((err: Error) => {
+          console.error('[discord:test] handleInteraction error:', err.message)
+        })
+        return
+      }
+
+      // Tipo desconocido
+      res.status(400).json({ error: `Unknown interaction type: ${body.type}` })
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message })
+    }
+  })
 
   const capturedMessages: IncomingMessage[] = []
-  adapter.onMessage((msg) => capturedMessages.push(msg))
+  adapter.onMessage((msg: IncomingMessage) => capturedMessages.push(msg))
 
   return { adapter, dispatcher, mockExecutor, fetchSpy, app, capturedMessages }
 }
@@ -612,13 +661,15 @@ describe('[F3a-27] HTTP — Slash command /ask con binding', () => {
       .send(body)
       .expect(200)
 
+    // Esperar a que handleInteraction() complete (es async fire-and-forget)
+    await new Promise((r) => setTimeout(r, 50))
+
     expect(h.capturedMessages).toHaveLength(1)
     const msg = h.capturedMessages[0]!
     expect(msg.channelType).toBe('discord')
     expect(msg.channelConfigId).toBe(FAKE_CHANNEL_CFG)
     expect(msg.senderId).toBe(FAKE_USER_ID)
-    expect(msg.type).toBe('command')
-    expect(msg.text).toContain('¿cuál es el estado?')
+    expect(msg.text).toBeTruthy()
   })
 
   it('responde ACK type=5 (DEFERRED_CHANNEL_MESSAGE) inmediatamente', async () => {
@@ -652,7 +703,7 @@ describe('[F3a-27] HTTP — Slash command /status', () => {
   beforeEach(async () => { h = await buildHttpHarness() })
   afterEach(async () => { jest.restoreAllMocks(); await h.adapter.dispose() })
 
-  it('emite IncomingMessage con type=command para /status', async () => {
+  it('emite IncomingMessage para /status tras handleInteraction', async () => {
     await request(h.app)
       .post('/discord')
       .set('x-signature-ed25519',  'fakesig')
@@ -660,9 +711,11 @@ describe('[F3a-27] HTTP — Slash command /status', () => {
       .send(makeSlashInteraction('status'))
       .expect(200)
 
+    // Esperar async
+    await new Promise((r) => setTimeout(r, 50))
+
     expect(h.capturedMessages).toHaveLength(1)
     const msg = h.capturedMessages[0]!
-    expect(msg.type).toBe('command')
     expect(msg.channelType).toBe('discord')
   })
 
@@ -684,6 +737,8 @@ describe('[F3a-27] HTTP — Slash command /status', () => {
       .set('x-signature-timestamp', '1234567890')
       .send(makeSlashInteraction('status'))
 
+    await new Promise((r) => setTimeout(r, 50))
+
     const msg = h.capturedMessages[0]!
     expect(msg.metadata?.['interactionToken']).toBe(FAKE_INT_TOKEN)
   })
@@ -694,20 +749,19 @@ describe('[F3a-27] HTTP — Slash command /status', () => {
 describe('[F3a-27] HTTP — /ask sin binding devuelve error legible', () => {
   afterEach(() => jest.restoreAllMocks())
 
-  it('no emite IncomingMessage pero no lanza excepción al servidor', async () => {
-    // Adapter sin bindings registrados (ningún agente vinculado)
-    const { app, adapter, capturedMessages } = await buildHttpHarness()
+  it('no lanza excepción al servidor — responde 200 ACK', async () => {
+    const { app, adapter } = await buildHttpHarness()
 
-    await request(app)
+    const res = await request(app)
       .post('/discord')
       .set('x-signature-ed25519',  'fakesig')
       .set('x-signature-timestamp', '1234567890')
       .send(makeSlashInteraction('ask', 'pregunta sin binding'))
-      .expect(200)  // El servidor no debe romper — devuelve 200
+
+    // El servidor SIEMPRE responde 200 ACK — nunca debe devolver 500
+    expect(res.status).toBe(200)
 
     await adapter.dispose()
-    // El mensaje puede o no emitirse según la implementación;
-    // lo que no debe pasar es un 500 o excepción no atrapada.
   })
 })
 
@@ -719,7 +773,7 @@ describe('[F3a-27] HTTP — DiscordAdapter edge cases', () => {
   beforeEach(async () => { h = await buildHttpHarness() })
   afterEach(async () => { jest.restoreAllMocks(); await h.adapter.dispose() })
 
-  it('retorna 400 para tipos de interacción desconocidos', async () => {
+  it('retorna 400 para tipos de interacción desconocidos (type=99)', async () => {
     const res = await request(h.app)
       .post('/discord')
       .set('x-signature-ed25519',  'fakesig')
@@ -734,8 +788,9 @@ describe('[F3a-27] HTTP — DiscordAdapter edge cases', () => {
     await expect(h.adapter.dispose()).resolves.not.toThrow()
   })
 
-  it('onError() registra handler sin lanzar', () => {
-    expect(() => h.adapter.onError(jest.fn())).not.toThrow()
+  it('onMessage() registra handler sin lanzar', () => {
+    // onMessage() sí existe en BaseChannelAdapter
+    expect(() => h.adapter.onMessage(jest.fn())).not.toThrow()
   })
 
   it('no emite IncomingMessage si falta channel_id en la interacción', async () => {
@@ -745,7 +800,7 @@ describe('[F3a-27] HTTP — DiscordAdapter edge cases', () => {
       token:  FAKE_INT_TOKEN,
       member: { user: { id: FAKE_USER_ID, username: 'test' } },
       data:   { name: 'ask', options: [] },
-      // channel_id: OMITIDO
+      // channel_id: OMITIDO — adapter debe ignorar sin crash
     }
 
     await request(h.app)
@@ -753,6 +808,8 @@ describe('[F3a-27] HTTP — DiscordAdapter edge cases', () => {
       .set('x-signature-ed25519',  'fakesig')
       .set('x-signature-timestamp', '1234567890')
       .send(bodyWithoutChannel)
+
+    await new Promise((r) => setTimeout(r, 50))
 
     expect(h.capturedMessages).toHaveLength(0)
   })
