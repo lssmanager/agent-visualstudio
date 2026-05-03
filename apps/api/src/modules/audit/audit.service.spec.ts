@@ -11,9 +11,14 @@ jest.mock('../../config', () => ({
 import {
   AuditService,
   CHANNEL_AUDIT_ACTIONS,
+  RUN_AUDIT_ACTIONS,
+  AGENT_AUDIT_ACTIONS,
   ChannelErrorMeta,
   ChannelMessageMeta,
   ChannelProvisionedMeta,
+  RunStartedMeta,
+  RunCompletedMeta,
+  AgentCreatedMeta,
 } from './audit.service';
 
 function flushImmediate(): Promise<void> {
@@ -65,6 +70,22 @@ describe('CHANNEL_AUDIT_ACTIONS', () => {
     expect(CHANNEL_AUDIT_ACTIONS.PROVISIONED).toBe('channel.provisioned');
     expect(CHANNEL_AUDIT_ACTIONS.MESSAGE).toBe('channel.message');
     expect(CHANNEL_AUDIT_ACTIONS.ERROR).toBe('channel.error');
+  });
+});
+
+describe('RUN_AUDIT_ACTIONS', () => {
+  it('has canonical string values', () => {
+    expect(RUN_AUDIT_ACTIONS.STARTED).toBe('run.started');
+    expect(RUN_AUDIT_ACTIONS.COMPLETED).toBe('run.completed');
+    expect(RUN_AUDIT_ACTIONS.FAILED).toBe('run.failed');
+  });
+});
+
+describe('AGENT_AUDIT_ACTIONS', () => {
+  it('has canonical string values', () => {
+    expect(AGENT_AUDIT_ACTIONS.CREATED).toBe('agent.created');
+    expect(AGENT_AUDIT_ACTIONS.UPDATED).toBe('agent.updated');
+    expect(AGENT_AUDIT_ACTIONS.DELETED).toBe('agent.deleted');
   });
 });
 
@@ -213,5 +234,166 @@ describe('queryChannelMessages filters', () => {
     const results = new AuditService().queryChannelMessages({ channelId: 'nonexistent' });
     // File may or may not exist depending on test order — just verify no crash
     expect(Array.isArray(results)).toBe(true);
+  });
+});
+
+// ── run.started ───────────────────────────────────────────────────────────────
+describe('logRunStarted', () => {
+  it('escribe entrada con action run.started y severity info', async () => {
+    const meta: RunStartedMeta = {
+      runId:       'run-001',
+      agentId:     'agent-xyz',
+      workspaceId: 'ws-1',
+      triggeredBy: 'user',
+    };
+    service.logRunStarted({ runId: 'run-001', userId: 'user-abc', meta });
+    await flushImmediate();
+    const entries = service.query({ action: 'run.started' });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].severity).toBe('info');
+    expect(entries[0].resourceId).toBe('run-001');
+  });
+
+  it('detail contiene agentId y triggeredBy', async () => {
+    const meta: RunStartedMeta = {
+      runId:       'run-001b',
+      agentId:     'agent-detail',
+      workspaceId: 'ws-1',
+      triggeredBy: 'webhook',
+    };
+    service.logRunStarted({ runId: 'run-001b', meta });
+    await flushImmediate();
+    const entries = service.query({ action: 'run.started' });
+    expect(entries[0].detail).toContain('agent-detail');
+    expect(entries[0].detail).toContain('webhook');
+  });
+});
+
+// ── run.completed ─────────────────────────────────────────────────────────────
+describe('logRunCompleted', () => {
+  it('severity "warn" cuando status es error', async () => {
+    const meta: RunCompletedMeta = {
+      runId:        'run-002',
+      agentId:      'agent-xyz',
+      workspaceId:  'ws-1',
+      status:       'error',
+      durationMs:   1500,
+      errorCode:    'LLM_TIMEOUT',
+      errorMessage: 'OpenAI timed out',
+    };
+    service.logRunCompleted({ runId: 'run-002', meta });
+    await flushImmediate();
+    const entries = service.query({ action: 'run.completed' });
+    expect(entries[0].severity).toBe('warn');
+    expect(entries[0].metadata?.errorCode).toBe('LLM_TIMEOUT');
+  });
+
+  it('severity "error" cuando status es timeout', async () => {
+    const meta: RunCompletedMeta = {
+      runId: 'run-003', agentId: 'a', workspaceId: 'w',
+      status: 'timeout', durationMs: 30000,
+    };
+    service.logRunCompleted({ runId: 'run-003', meta });
+    await flushImmediate();
+    const entries = service.query({ action: 'run.completed' });
+    const entry = entries.find(e => e.resourceId === 'run-003');
+    expect(entry?.severity).toBe('error');
+  });
+
+  it('severity "info" cuando status es success', async () => {
+    const meta: RunCompletedMeta = {
+      runId: 'run-004', agentId: 'a', workspaceId: 'w',
+      status: 'success', durationMs: 500, totalTokens: 120,
+    };
+    service.logRunCompleted({ runId: 'run-004', meta });
+    await flushImmediate();
+    const entries = service.query({ action: 'run.completed' });
+    const entry = entries.find(e => e.resourceId === 'run-004');
+    expect(entry?.severity).toBe('info');
+    expect(entry?.detail).toContain('120 tokens');
+  });
+
+  it('severity "info" cuando status es cancelled', async () => {
+    const meta: RunCompletedMeta = {
+      runId: 'run-005', agentId: 'a', workspaceId: 'w',
+      status: 'cancelled', durationMs: 200,
+    };
+    service.logRunCompleted({ runId: 'run-005', meta });
+    await flushImmediate();
+    const entries = service.query({ action: 'run.completed' });
+    const entry = entries.find(e => e.resourceId === 'run-005');
+    expect(entry?.severity).toBe('info');
+  });
+});
+
+// ── agent.created ─────────────────────────────────────────────────────────────
+describe('logAgentCreated', () => {
+  it('escribe síncronamente y devuelve AuditEntry', () => {
+    const meta: AgentCreatedMeta = {
+      agentId:     'agent-new',
+      agentName:   'Support Bot',
+      workspaceId: 'ws-1',
+      scopeLevel:  'workspace',
+      createdBy:   'user-123',
+    };
+    const entry = service.logAgentCreated({ agentId: 'agent-new', meta });
+    expect(entry.id).toMatch(/^audit-/);
+    expect(entry.action).toBe('agent.created');
+    expect(entry.severity).toBe('info');
+    // Verificar que está en el log inmediatamente (síncrono)
+    const entries = service.query({ action: 'agent.created' });
+    expect(entries.some(e => e.id === entry.id)).toBe(true);
+  });
+
+  it('detail contiene agentName, workspaceId y scopeLevel', () => {
+    const meta: AgentCreatedMeta = {
+      agentId:     'agent-detail',
+      agentName:   'Sales Agent',
+      workspaceId: 'ws-sales',
+      scopeLevel:  'department',
+      createdBy:   'user-456',
+    };
+    const entry = service.logAgentCreated({ agentId: 'agent-detail', meta });
+    expect(entry.detail).toContain('Sales Agent');
+    expect(entry.detail).toContain('ws-sales');
+    expect(entry.detail).toContain('department');
+  });
+
+  it('detail incluye parentId cuando está presente', () => {
+    const meta: AgentCreatedMeta = {
+      agentId:     'agent-child',
+      agentName:   'Child Bot',
+      workspaceId: 'ws-1',
+      scopeLevel:  'agent',
+      createdBy:   'user-1',
+      parentId:    'agent-parent-001',
+    };
+    const entry = service.logAgentCreated({ agentId: 'agent-child', meta });
+    expect(entry.detail).toContain('agent-parent-001');
+  });
+
+  it('redacta campos sensibles en metadata', () => {
+    const meta = {
+      agentId:     'agent-sec',
+      agentName:   'Bot',
+      workspaceId: 'ws-1',
+      scopeLevel:  'agent',
+      createdBy:   'user-1',
+      apiKey:      'sk-secret-key',
+    } as unknown as AgentCreatedMeta;
+    const entry = service.logAgentCreated({ agentId: 'agent-sec', meta });
+    expect(entry.metadata?.apiKey).toBe('[REDACTED]');
+  });
+
+  it('usa createdBy como userId cuando userId no se pasa', () => {
+    const meta: AgentCreatedMeta = {
+      agentId:     'agent-userid',
+      agentName:   'Bot',
+      workspaceId: 'ws-1',
+      scopeLevel:  'workspace',
+      createdBy:   'user-from-meta',
+    };
+    const entry = service.logAgentCreated({ agentId: 'agent-userid', meta });
+    expect(entry.userId).toBe('user-from-meta');
   });
 });
