@@ -186,8 +186,6 @@ export async function createWorkspace(input: {
   defaultModel?: string;
   skillIds?: string[];
 }) {
-  // Bootstrap endpoint: backend handles merge order (request > profile > defaults)
-  // Only include fields user explicitly set - backend fills in profile defaults
   const workspaceSpec: Record<string, any> = {
     name: input.name,
     agentIds: [],
@@ -195,7 +193,6 @@ export async function createWorkspace(input: {
     policyIds: [],
   };
 
-  // Only include optional fields if explicitly set (not undefined)
   if (input.slug !== undefined) workspaceSpec.slug = input.slug;
   if (input.defaultModel !== undefined) workspaceSpec.defaultModel = input.defaultModel;
   if (input.skillIds !== undefined) workspaceSpec.skillIds = input.skillIds;
@@ -588,4 +585,68 @@ export async function getUsage(filters?: { from?: string; to?: string; groupBy?:
 export async function getUsageByAgent() {
   const response = await fetch(`${API_BASE}/usage/by-agent`);
   return parseJson<Array<{ agentId: string; cost: number; tokens: { input: number; output: number }; steps: number }>>(response);
+}
+
+// ── n8n ───────────────────────────────────────────────────────────────────────
+
+export interface N8nWorkflowSummary {
+  id:     string;
+  name:   string;
+  active: boolean;
+}
+
+export interface N8nExecutionSummary {
+  id:         string;
+  workflowId: string;
+  finished:   boolean;
+  mode:       string;
+  startedAt:  string;
+  stoppedAt?: string;
+  status:     'running' | 'success' | 'error' | 'waiting' | 'canceled';
+}
+
+export async function listN8nWorkflows(): Promise<N8nWorkflowSummary[]> {
+  const response = await fetch(`${API_BASE}/n8n/workflows`);
+  return parseJson<N8nWorkflowSummary[]>(response);
+}
+
+export async function getN8nWorkflow(
+  workflowId: string,
+): Promise<N8nWorkflowSummary & { nodes: unknown[]; connections: unknown }> {
+  const response = await fetch(`${API_BASE}/n8n/workflows/${encodeURIComponent(workflowId)}`);
+  return parseJson(response);
+}
+
+export async function syncFlowToN8n(
+  flowId:      string,
+  workflowId?: string,
+): Promise<N8nWorkflowSummary> {
+  const response = await fetch(`${API_BASE}/n8n/sync-flow/${encodeURIComponent(flowId)}`, {
+    method:  'POST',
+    headers: { 'content-type': 'application/json' },
+    body:    JSON.stringify({ workflowId }),
+  });
+  return parseJson(response);
+}
+
+export async function activateN8nWorkflow(workflowId: string): Promise<{ ok: boolean }> {
+  const response = await fetch(
+    `${API_BASE}/n8n/workflows/${encodeURIComponent(workflowId)}/activate`,
+    { method: 'POST' },
+  );
+  return parseJson(response);
+}
+
+export async function deactivateN8nWorkflow(workflowId: string): Promise<{ ok: boolean }> {
+  const response = await fetch(
+    `${API_BASE}/n8n/workflows/${encodeURIComponent(workflowId)}/deactivate`,
+    { method: 'POST' },
+  );
+  return parseJson(response);
+}
+
+export async function listN8nExecutions(workflowId?: string): Promise<N8nExecutionSummary[]> {
+  const qs = workflowId ? `?workflowId=${encodeURIComponent(workflowId)}` : '';
+  const response = await fetch(`${API_BASE}/n8n/executions${qs}`);
+  return parseJson<N8nExecutionSummary[]>(response);
 }

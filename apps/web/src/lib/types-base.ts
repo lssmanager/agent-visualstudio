@@ -68,3 +68,30 @@ export interface StudioState {
   skills: SkillSpec[];
   profiles: ProfileSpec[];
 }
+
+// ── Flow Node types ───────────────────────────────────────────────────────────
+
+/** Mapeado de entradas del canvas al payload del workflow n8n.
+ *  Cada entrada es una expresión libre: puede ser un valor literal
+ *  o una referencia tipo "{{output.fieldName}}". */
+export type N8nInputMapping = Record<string, string>;
+
+export interface N8nNodeConfig {
+  /** ID del workflow en n8n (string numérico, ej: "42") */
+  workflowId:   string;
+  /** ID del webhook en n8n (solo si triggerType === 'webhook') */
+  webhookPath?: string;
+  /** Mapeo nombre_parametro → expresión de valor */
+  inputMapping: N8nInputMapping;
+}
+
+export interface FlowNode {
+  id:        string;
+  type:      string;
+  label?:    string;
+  position?: { x: number; y: number };
+  /** Presente cuando type === 'n8n' */
+  n8n?:      N8nNodeConfig;
+  /** Metadatos abiertos para otros tipos de nodo */
+  config?:   Record<string, unknown>;
+}
