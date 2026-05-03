@@ -3,23 +3,20 @@
  *
  * Módulo NestJS para el AgentBuilder.
  * Registra BuilderAgentService, N8nStudioHelper y ProfilePropagatorService.
- * Importa N8nModule para que N8nService esté disponible como dependencia.
+ *
+ * Nota: N8nService NO es @Injectable() — es clase plain instanciada
+ * directamente dentro de N8nStudioHelper. No se importa N8nModule.
+ * PrismaService es @Global() — disponible sin importar PrismaModule aquí.
  *
  * Issue: #76 (F4b-01)
  */
 
-import { Module }                    from '@nestjs/common';
-import { BuilderAgentService }       from './builder-agent.service';
-import { N8nStudioHelper }           from './n8n-studio-helper';
-import { ProfilePropagatorService }  from './profile-propagator.service';
-import { PrismaModule }              from '../../lib/prisma.module';
-import { N8nModule }                 from '../n8n/n8n.module';
+import { Module }                   from '@nestjs/common';
+import { BuilderAgentService }      from './builder-agent.service';
+import { N8nStudioHelper }          from './n8n-studio-helper';
+import { ProfilePropagatorService } from './profile-propagator.service';
 
 @Module({
-  imports: [
-    PrismaModule,
-    N8nModule,
-  ],
   providers: [
     BuilderAgentService,
     N8nStudioHelper,

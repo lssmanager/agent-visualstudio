@@ -9,6 +9,9 @@
  * en n8n real via N8nService, y registra el resultado como un Skill de
  * tipo n8n_webhook en Prisma.
  *
+ * Fix aplicado: N8nService es clase plain (sin @Injectable) — se instancia
+ * directamente con `new N8nService()` en lugar de inyectarse por DI.
+ *
  * Bloquea: F4b-02, F4b-03, F4b-04
  * Issue:   #76 (F4b-01)
  */
@@ -16,7 +19,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { N8nService }         from '../n8n/n8n.service';
-import { PrismaService }      from '../../lib/prisma.service';
+import { PrismaService }      from '../core/db/prisma.service';
 import { resolveModelPolicy } from '../../../../../packages/run-engine/src/policy-resolver';
 import { buildLLMClient }     from '../../../../../packages/run-engine/src/llm-client';
 
@@ -124,8 +127,13 @@ export interface CreateWorkflowFromDescriptionResult {
 
 @Injectable()
 export class N8nStudioHelper {
+  /**
+   * N8nService es una clase plain (no @Injectable, no proveedor NestJS).
+   * Se instancia directamente — mismo patrón que n8n.controller.ts.
+   */
+  private readonly n8nService = new N8nService();
+
   constructor(
-    private readonly n8nService: N8nService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -138,8 +146,9 @@ export class N8nStudioHelper {
    *   3. Llamar al LLM con el modelo resuelto (temperatura 0.2)
    *   4. Parsear y validar el JSON devuelto
    *   5. Crear el workflow en n8n via N8nService.createWorkflowRaw()
-   *   6. Hacer findFirst+update/create del Skill en Prisma con type='n8n_webhook'
-   *   7. Retornar CreateWorkflowFromDescriptionResult
+   *   6. Extraer webhookUrl del nodo webhook (si existe)
+   *   7. findFirst + update/create del Skill en Prisma con type='n8n_webhook'
+   *   8. Retornar CreateWorkflowFromDescriptionResult
    */
   async createWorkflowFromDescription(
     options: CreateWorkflowFromDescriptionOptions,
@@ -172,8 +181,6 @@ export class N8nStudioHelper {
     }
 
     // ── Paso 2-3: Llamar al LLM ───────────────────────────────────────────────
-    // buildLLMClient devuelve un ProviderAdapter cuyo chat() acepta
-    // (messages[], tools[], opts) y devuelve { content, toolCalls }.
     const llmClient = buildLLMClient(primaryModel);
 
     let rawContent: string;
@@ -183,14 +190,13 @@ export class N8nStudioHelper {
           { role: 'system', content: N8N_SYSTEM_PROMPT },
           { role: 'user',   content: `Create an n8n workflow for: ${description}` },
         ],
-        [],   // tools: vacío — solo generamos JSON, no usamos tool calls
+        [],
         {
           model:       primaryModel,
           temperature: LLM_TEMPERATURE,
           maxTokens:   LLM_MAX_TOKENS,
         },
       );
-      // ProviderAdapter devuelve { content: string, toolCalls: ToolCall[] }
       rawContent = response.content ?? '';
       if (!rawContent) {
         throw new Error('[N8nStudioHelper] LLM returned empty content');
@@ -224,7 +230,9 @@ export class N8nStudioHelper {
       spec.connections = {};
     }
 
-    // ── Paso 5: Crear el workflow en n8n via N8nService.createWorkflowRaw() ───
+    // ── Paso 5: Crear el workflow en n8n ──────────────────────────────────────
+    // N8nWorkflow.nodes = unknown[] y connections = unknown → el spec tipado
+    // es subtipo de unknown, TypeScript lo acepta sin cast.
     let createdWorkflow: { id: string; name: string; active: boolean };
     try {
       createdWorkflow = await this.n8nService.createWorkflowRaw({
@@ -253,11 +261,8 @@ export class N8nStudioHelper {
     const webhookUrl  = webhookPath ? `${baseUrl}/webhook/${webhookPath}` : undefined;
 
     // ── Paso 7: findFirst + update/create del Skill en Prisma ─────────────────
-    //
-    // Skill.name NO tiene @unique en el schema — no se puede usar upsert con
-    // where: { name }. Estrategia: findFirst por name+workspaceId, luego
-    // update (si existe) o create (si no existe).
-    // workspaceId es NOT NULL en el schema — requerido en create.
+    // Skill.name NO tiene @unique — no se puede usar upsert con where: { name }.
+    // Estrategia: findFirst por name+workspaceId, luego update o create.
     const skillName = `n8n:${connectionId}:${n8nWorkflowId}`;
     const skillConfig = {
       n8nWorkflowId,
