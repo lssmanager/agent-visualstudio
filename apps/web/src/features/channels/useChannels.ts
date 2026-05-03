@@ -109,8 +109,13 @@ export function useChannels(filters?: { agentId?: string; type?: string; isActiv
     }
   }, [])
 
+  /**
+   * requestWhatsAppQr — solicita al gateway que genere un nuevo QR de vinculación.
+   * Endpoint: POST /gateway/whatsapp/:id/qr  (F5-01 — WhatsAppAdapter)
+   * El QR llega vía SSE en /gateway/whatsapp/:id/qr-stream → ChannelStatusCard
+   */
   const requestWhatsAppQr = useCallback(async (id: string): Promise<void> => {
-    const res = await fetch(`/api/channels/${id}/whatsapp/qr`, { method: 'POST' })
+    const res = await fetch(`/gateway/whatsapp/${id}/qr`, { method: 'POST' })
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: 'Error al generar QR' })) as { message?: string }
       throw new Error(err.message ?? 'Error al generar QR')

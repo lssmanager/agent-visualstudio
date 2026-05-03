@@ -1,8 +1,8 @@
 /**
- * ChannelSettings.tsx — [F3a-36]
+ * ChannelSettings.tsx — [F5-05]
  *
  * Formulario de configuración de un canal existente.
- * Cubre: Telegram, WhatsApp, Discord, Teams.
+ * Cubre: Telegram, WhatsApp (Meta), WhatsApp Baileys (QR), Slack, Discord, Teams, Webhook.
  * Montado dentro de ChannelDetail.tsx como pestaña "Configuración".
  *
  * Props:
@@ -55,6 +55,14 @@ interface FieldDef {
   readOnly?:   boolean;
 }
 
+/**
+ * Detecta si el canal es WhatsApp Baileys (authMode='qr').
+ * Los canales de Meta tienen token API; los Baileys no tienen secrets.
+ */
+function isWhatsAppBaileys(channel: ChannelConfig): boolean {
+  return channel.type === 'whatsapp' && channel.config?.['authMode'] === 'qr';
+}
+
 const CONFIG_FIELDS: Partial<Record<ChannelType, FieldDef[]>> = {
   telegram: [
     {
@@ -88,6 +96,7 @@ const CONFIG_FIELDS: Partial<Record<ChannelType, FieldDef[]>> = {
     },
   ],
 
+  // WhatsApp Meta Business (token API)
   whatsapp: [
     {
       key:         'verifyToken',
@@ -116,6 +125,27 @@ const CONFIG_FIELDS: Partial<Record<ChannelType, FieldDef[]>> = {
       placeholder: '+34612345678, +1234567890 (vacío = todos)',
       type:        'tags',
       hint:        'En producción, deja vacío. En desarrollo, restringe a números de prueba.',
+    },
+  ],
+
+  // WhatsApp Baileys — campos de config (no secrets)
+  // Los campos de secrets no aplican (usa QR, sin token)
+  // Se detecta vía isWhatsAppBaileys() y se renderizan aparte
+
+  slack: [
+    {
+      key:         'botDisplayName',
+      label:       'Nombre del bot (display)',
+      placeholder: 'Mi Agente LSS',
+      type:        'text',
+      hint:        'Nombre visible en los mensajes enviados por el bot en Slack.',
+    },
+    {
+      key:         'workspaceName',
+      label:       'Nombre del workspace',
+      placeholder: 'Contoso',
+      type:        'text',
+      hint:        'Solo informativo — facilita identificar la conexión cuando hay múltiples workspaces.',
     },
   ],
 
@@ -186,6 +216,24 @@ const CONFIG_FIELDS: Partial<Record<ChannelType, FieldDef[]>> = {
   ],
 };
 
+// Campos de config específicos de WhatsApp Baileys
+const WHATSAPP_BAILEYS_CONFIG_FIELDS: FieldDef[] = [
+  {
+    key:         'maxReconnectAttempts',
+    label:       'Intentos máx. de reconexión',
+    placeholder: '8',
+    type:        'text',
+    hint:        'Número de veces que el adaptador intentará reconectarse antes de marcar el canal como inactivo. Default: 8.',
+  },
+  {
+    key:         'qrTimeoutMs',
+    label:       'Timeout del QR (ms)',
+    placeholder: '120000',
+    type:        'text',
+    hint:        'Tiempo en milisegundos que el QR permanece válido antes de expirar. Default: 120000 (2 minutos).',
+  },
+];
+
 const SECRET_ROTATE_FIELDS: Partial<Record<ChannelType, FieldDef[]>> = {
   telegram: [
     {
@@ -196,6 +244,7 @@ const SECRET_ROTATE_FIELDS: Partial<Record<ChannelType, FieldDef[]>> = {
       hint:        '@BotFather → /token. Rotarlo invalida el token anterior inmediatamente.',
     },
   ],
+  // WhatsApp Meta Business
   whatsapp: [
     {
       key:         'token',
@@ -205,29 +254,66 @@ const SECRET_ROTATE_FIELDS: Partial<Record<ChannelType, FieldDef[]>> = {
       hint:        'Meta Business → System Users → Generate Token.',
     },
   ],
-  discord: [
+  slack: [
     {
       key:         'botToken',
       label:       'Bot Token',
-      placeholder: 'Dejar vacío para no cambiar · MTk...',
+      placeholder: 'Dejar vacío para no cambiar · xoxb-...',
+      type:        'password',
+      hint:        'Slack App Dashboard → OAuth & Permissions → Bot User OAuth Token.',
+    },
+    {
+      key:         'signingSecret',
+      label:       'Signing Secret',
+      placeholder: 'Dejar vacío para no cambiar',
+      type:        'password',
+      hint:        'Slack App Dashboard → Basic Information → App Credentials → Signing Secret.',
+    },
+    {
+      key:         'appToken',
+      label:       'App-Level Token (opcional)',
+      placeholder: 'Dejar vacío para no cambiar · xapp-...',
+      type:        'password',
+      hint:        'Necesario para Socket Mode. Slack App Dashboard → Basic Information → App-Level Tokens.',
+    },
+  ],
+  discord: [
+    {
+      key:         'publicKey',
+      label:       'Public Key (verificación Ed25519)',
+      placeholder: 'Dejar vacío para no cambiar · hex string',
+      type:        'password',
+      hint:        'Discord Developer Portal → General Information → Public Key. Requerido para verificar interacciones.',
+    },
+    {
+      key:         'botToken',
+      label:       'Bot Token',
+      placeholder: 'Dejar vacío para no cambiar · Bot ...',
       type:        'password',
       hint:        'Discord Developer Portal → Bot → Reset Token.',
     },
     {
-      key:         'appPublicKey',
-      label:       'Public Key (verificación de interacciones)',
+      key:         'clientSecret',
+      label:       'Client Secret (opcional)',
       placeholder: 'Dejar vacío para no cambiar',
       type:        'password',
-      hint:        'Discord Developer Portal → General Information → Public Key.',
+      hint:        'Discord Developer Portal → OAuth2 → Client Secret. Solo necesario para OAuth2 flows.',
     },
   ],
   teams: [
     {
-      key:         'appPassword',
-      label:       'App Password (Client Secret)',
+      key:         'clientSecret',
+      label:       'Client Secret',
       placeholder: 'Dejar vacío para no cambiar',
       type:        'password',
       hint:        'Azure Portal → App Registrations → Certificates & Secrets → New client secret.',
+    },
+    {
+      key:         'appPassword',
+      label:       'App Password (Bot Framework)',
+      placeholder: 'Dejar vacío para no cambiar',
+      type:        'password',
+      hint:        'Azure Bot Service → Configuration → Microsoft App Password.',
     },
   ],
 };
@@ -276,7 +362,11 @@ function buildPatchPayload(state: FormState, originalChannel: ChannelConfig): Pa
     payload.name = state.name.trim();
   }
 
-  const configFields = CONFIG_FIELDS[originalChannel.type] ?? [];
+  const isBaileys = isWhatsAppBaileys(originalChannel);
+  const configFields = isBaileys
+    ? WHATSAPP_BAILEYS_CONFIG_FIELDS
+    : (CONFIG_FIELDS[originalChannel.type] ?? []);
+
   const newConfig: Record<string, unknown> = {};
   let configChanged = false;
   for (const field of configFields) {
@@ -304,20 +394,28 @@ function buildPatchPayload(state: FormState, originalChannel: ChannelConfig): Pa
   return payload;
 }
 
-function getWebhookUrl(gatewayUrl: string, channelId: string, channelType: ChannelType): string {
+/**
+ * buildWebhookUrl — construye la URL de webhook/events para mostrar al usuario.
+ * Sigue los paths del plan F3a/F5.
+ */
+function buildWebhookUrl(gatewayUrl: string, channelId: string, channelType: ChannelType, isBaileys = false): string {
+  if (isBaileys) return ''; // WhatsApp Baileys no tiene webhook URL — usa QR
   const base = gatewayUrl.replace(/\/$/, '');
   const paths: Partial<Record<ChannelType, string>> = {
-    telegram: `/channels/telegram/${channelId}/webhook`,
-    whatsapp: `/channels/whatsapp/${channelId}/webhook`,
+    telegram: `/gateway/telegram/${channelId}/webhook`,
+    whatsapp: `/gateway/whatsapp/${channelId}/webhook`,
+    slack:    `/channels/slack/${channelId}/events`,
     discord:  `/channels/discord/${channelId}/interactions`,
-    teams:    `/channels/teams/${channelId}`,
+    teams:    `/channels/teams/${channelId}/messages`,
+    webhook:  `/gateway/webhook/${channelId}`,
+    webchat:  `/embed/${channelId}`,
   };
   return paths[channelType] ? `${base}${paths[channelType]}` : '';
 }
 
 // ── Componentes internos ───────────────────────────────────────────────────────
 
-function WebhookUrlRow({ url }: { url: string }) {
+function WebhookUrlRow({ url, label = 'Webhook URL' }: { url: string; label?: string }) {
   const [copied, setCopied] = useState(false);
   const copy = useCallback(() => {
     void navigator.clipboard.writeText(url).then(() => {
@@ -330,14 +428,14 @@ function WebhookUrlRow({ url }: { url: string }) {
 
   return (
     <div className="channel-settings__webhook-row">
-      <span className="channel-settings__webhook-label">Webhook URL</span>
+      <span className="channel-settings__webhook-label">{label}</span>
       <div className="channel-settings__webhook-value">
         <code className="channel-settings__webhook-url">{url}</code>
         <button
           type="button"
           className="channel-settings__copy-btn"
           onClick={copy}
-          aria-label="Copiar webhook URL"
+          aria-label={`Copiar ${label}`}
         >
           {copied ? '✓ Copiado' : 'Copiar'}
         </button>
@@ -345,6 +443,22 @@ function WebhookUrlRow({ url }: { url: string }) {
       <p className="channel-settings__webhook-hint">
         Configura esta URL en el proveedor del canal como endpoint de webhook.
       </p>
+    </div>
+  );
+}
+
+/** Badge especial para WhatsApp Baileys — sin secrets requeridos */
+function WhatsAppBaileysBadge() {
+  return (
+    <div className="channel-settings__baileys-badge">
+      <span className="channel-settings__baileys-badge-icon" aria-hidden>📱</span>
+      <div>
+        <strong className="channel-settings__baileys-badge-title">WhatsApp Baileys (QR)</strong>
+        <p className="channel-settings__baileys-badge-hint">
+          Este canal no usa token API — la autenticación se realiza mediante código QR.
+          No es necesario configurar credenciales en este formulario.
+        </p>
+      </div>
     </div>
   );
 }
@@ -438,9 +552,22 @@ export function ChannelSettings({ channel, gatewayUrl, onSave, onTest }: Channel
   const [saveErr,    setSaveErr]   = useState<string | null>(null);
   const [testResult, setTestResult] = useState<ChannelTestResult | null>(null);
 
-  const configFields = CONFIG_FIELDS[channel.type]        ?? [];
-  const secretFields = SECRET_ROTATE_FIELDS[channel.type] ?? [];
-  const webhookUrl   = getWebhookUrl(gatewayUrl, channel.id, channel.type);
+  const isBaileys   = isWhatsAppBaileys(channel);
+  const configFields = isBaileys
+    ? WHATSAPP_BAILEYS_CONFIG_FIELDS
+    : (CONFIG_FIELDS[channel.type] ?? []);
+  // WhatsApp Baileys no tiene secrets — nunca mostrar el fieldset de credenciales
+  const secretFields = isBaileys ? [] : (SECRET_ROTATE_FIELDS[channel.type] ?? []);
+
+  const webhookUrl = buildWebhookUrl(gatewayUrl, channel.id, channel.type, isBaileys);
+
+  // Etiqueta de la webhook URL según el tipo
+  const webhookUrlLabel: Partial<Record<ChannelType, string>> = {
+    slack:   'Events URL (Slack)',
+    discord: 'Interactions URL (Discord)',
+    teams:   'Messages URL (Teams)',
+    webchat: 'Embed URL',
+  };
 
   React.useEffect(() => {
     dispatch({ type: 'RESET', channel });
@@ -476,13 +603,100 @@ export function ChannelSettings({ channel, gatewayUrl, onSave, onTest }: Channel
     }
   }
 
+  // WhatsApp Baileys: solo badge + campos de config opcionales
+  if (isBaileys) {
+    return (
+      <section className="channel-settings" aria-label={`Configuración del canal ${channel.name}`}>
+        <div className="channel-settings__header">
+          <ChannelTypeIcon type={channel.type} size={24} />
+          <div>
+            <h3 className="channel-settings__channel-name">{channel.name}</h3>
+            <span className="channel-settings__type-badge">whatsapp · baileys</span>
+          </div>
+          <span
+            className={[
+              'channel-settings__status',
+              channel.isActive
+                ? 'channel-settings__status--active'
+                : 'channel-settings__status--inactive',
+            ].join(' ')}
+          >
+            {channel.isActive ? 'Activo' : 'Inactivo'}
+          </span>
+        </div>
+
+        <WhatsAppBaileysBadge />
+
+        {/* Test */}
+        <div className="channel-settings__test-row">
+          <button
+            type="button"
+            className="channel-settings__test-btn"
+            onClick={() => void handleTest()}
+            disabled={testing}
+            aria-busy={testing}
+          >
+            {testing ? 'Probando…' : '⚡ Test de conexión'}
+          </button>
+          <TestResultBanner result={testResult} testing={testing} />
+        </div>
+
+        {/* Campos de config opcionales de Baileys */}
+        <form
+          onSubmit={e => void handleSave(e)}
+          className="channel-settings__form"
+          aria-label="Configuración avanzada de WhatsApp Baileys"
+          noValidate
+        >
+          <fieldset className="channel-settings__fieldset">
+            <legend className="channel-settings__legend">Configuración avanzada (opcional)</legend>
+            {WHATSAPP_BAILEYS_CONFIG_FIELDS.map(field => (
+              <FieldInput
+                key={field.key}
+                field={field}
+                value={state.config[field.key] ?? ''}
+                onChange={v => dispatch({ type: 'SET_CONFIG', key: field.key, value: v })}
+              />
+            ))}
+          </fieldset>
+
+          {saveErr && (
+            <p className="channel-settings__error" role="alert">{saveErr}</p>
+          )}
+
+          <div className="channel-settings__footer">
+            <button
+              type="button"
+              className="channel-settings__btn-reset"
+              onClick={() => dispatch({ type: 'RESET', channel })}
+              disabled={!state.dirty || saving}
+            >
+              Descartar cambios
+            </button>
+            <button
+              type="submit"
+              className="channel-settings__btn-save"
+              disabled={!state.dirty || saving}
+              aria-busy={saving}
+            >
+              {saving ? 'Guardando…' : 'Guardar cambios'}
+            </button>
+          </div>
+        </form>
+      </section>
+    );
+  }
+
   if (configFields.length === 0 && secretFields.length === 0) {
     return (
       <div className="channel-settings channel-settings--empty">
         <p className="channel-settings__no-fields">
           Este tipo de canal no tiene configuración adicional editable.
         </p>
-        <WebhookUrlRow url={webhookUrl} />
+        <WebhookUrlRow
+          url={webhookUrl}
+          label={webhookUrlLabel[channel.type] ?? 'Webhook URL'}
+        />
       </div>
     );
   }
@@ -509,8 +723,11 @@ export function ChannelSettings({ channel, gatewayUrl, onSave, onTest }: Channel
         </span>
       </div>
 
-      {/* Webhook URL */}
-      <WebhookUrlRow url={webhookUrl} />
+      {/* Webhook URL — label descriptivo según el tipo */}
+      <WebhookUrlRow
+        url={webhookUrl}
+        label={webhookUrlLabel[channel.type] ?? 'Webhook URL'}
+      />
 
       {/* Test de conexión */}
       <div className="channel-settings__test-row">

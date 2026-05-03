@@ -4,17 +4,30 @@
  * Maneja slash commands e interacciones de Discord.
  * Flujo: Discord → POST /gateway/discord → handleInteraction() → emit()
  *        Router → agent → send() → PATCH followup endpoint
+ *
+ * Fixes F5-04:
+ *   - PING handshake (type=1) → responde { type: 1 } para registro de webhook
+ *   - type=3 (components) manejado sin crash
+ *   - Audit hooks conectados desde discord.adapter.audit.ts
+ *   - loadConfig() usa PrismaService por DI (no más new PrismaService())
+ *   - decryptSecrets() dev mode hasta F3b-05
  */
 
 import type { IncomingMessage, OutgoingMessage } from './channel-adapter.interface.js'
 import { BaseChannelAdapter } from './channel-adapter.interface.js'
+import {
+  auditDiscordProvisioned,
+  auditDiscordMessageInbound,
+  auditDiscordMessageOutbound,
+  auditDiscordError,
+} from './discord.adapter.audit.js'
 
 // ── Tipos Discord ───────────────────────────────────────────────────────
 
 interface DiscordInteraction {
-  id:         string
-  type:       number
-  token:      string
+  id:          string
+  type:        number   // 1=PING, 2=APPLICATION_COMMAND, 3=MESSAGE_COMPONENT
+  token:       string
   channel_id?: string
   data?: {
     name:    string
@@ -24,11 +37,12 @@ interface DiscordInteraction {
   user?:   { id?: string; username?: string }
 }
 
-interface DiscordWebhookBody {
-  application_id: string
-  interaction_id:    string
-  interaction_token: string
-}
+/**
+ * Resultado devuelto por handleInteraction().
+ * null  → mensaje procesado normalmente (emit al dispatcher)
+ * { type: 1 } → PONG — el controller debe responder res.json({ type: 1 })
+ */
+export type DiscordInteractionResult = { type: 1 } | null
 
 // ── Adapter ─────────────────────────────────────────────────────────────
 
@@ -41,10 +55,24 @@ export class DiscordAdapter extends BaseChannelAdapter {
   private interactionId     = ''
   private replied           = false
 
+  /**
+   * @param prisma  PrismaService inyectado por DI (NestJS o manual)
+   */
+  constructor(private readonly prisma: {
+    channelConfig: {
+      findUnique(args: { where: { id: string } }): Promise<{
+        id: string
+        secretsEncrypted?: string | null
+        config: unknown
+      } | null>
+    }
+  }) {
+    super()
+  }
+
   async initialize(channelConfigId: string): Promise<void> {
     this.channelConfigId = channelConfigId
 
-    // AUDIT-24: leer secretsEncrypted, NO credentials
     const config = await this.loadConfig(channelConfigId)
     const secrets = config.secretsEncrypted
       ? JSON.parse(this.decryptSecrets(config.secretsEncrypted))
@@ -53,6 +81,15 @@ export class DiscordAdapter extends BaseChannelAdapter {
     const cfg = config.config as Record<string, unknown>
     this.applicationId = (cfg.applicationId as string) ?? ''
     this.publicKey     = (secrets.publicKey  as string) ?? ''
+
+    // Audit: canal provisionado exitosamente
+    auditDiscordProvisioned({
+      channelId:   this.channelConfigId,
+      channelName: 'discord',
+      agentId:     String((cfg.agentId     as string | undefined) ?? ''),
+      workspaceId: String((cfg.workspaceId as string | undefined) ?? ''),
+      guildId:     String((cfg.guildId     as string | undefined) ?? ''),
+    })
   }
 
   async dispose(): Promise<void> {
@@ -62,9 +99,32 @@ export class DiscordAdapter extends BaseChannelAdapter {
   /**
    * Procesa una interacción de Discord recibida vía webhook HTTP.
    * Llamado desde discord.controller.ts tras verificar la firma Ed25519.
+   *
+   * @returns { type: 1 } si es PING — el controller DEBE hacer res.json({ type: 1 })
+   * @returns null        para cualquier interacción procesada normalmente
    */
-  async handleInteraction(interaction: DiscordInteraction): Promise<void> {
-    // Reset state per interaction
+  async handleInteraction(
+    interaction: DiscordInteraction,
+  ): Promise<DiscordInteractionResult> {
+    // ── PASO 1: PING handshake (type=1) ─────────────────────────────────
+    // Discord envía un PING al registrar el webhook URL.
+    // Sin esta respuesta, Discord rechaza el endpoint.
+    if (interaction.type === 1) {
+      return { type: 1 }  // PONG
+    }
+
+    // ── PASO 2: MESSAGE_COMPONENT (type=3) ──────────────────────────────
+    // Botones, select menus, etc. No los procesamos aún — solo log.
+    if (interaction.type === 3) {
+      console.info(
+        `[discord] MESSAGE_COMPONENT interaction received — not handled yet`,
+        { interactionId: interaction.id },
+      )
+      return null
+    }
+
+    // ── PASO 3: APPLICATION_COMMAND (type=2) ────────────────────────────
+    // Reset state por interacción
     this.replied           = false
     this.interactionToken  = interaction.token
     this.interactionId     = interaction.id
@@ -76,12 +136,12 @@ export class DiscordAdapter extends BaseChannelAdapter {
         `[discord] interaction without channel_id — dropped`,
         { interactionId: interaction.id },
       )
-      return
+      return null
     }
 
-    const user      = interaction.member?.user ?? interaction.user
-    const senderId  = user?.id ?? externalId
-    const text      = interaction.data?.options?.find((o) => o.name === 'message')?.value
+    const user     = interaction.member?.user ?? interaction.user
+    const senderId = user?.id ?? externalId
+    const text     = interaction.data?.options?.find((o) => o.name === 'message')?.value
       ?? interaction.data?.name
       ?? ''
 
@@ -91,11 +151,31 @@ export class DiscordAdapter extends BaseChannelAdapter {
       externalId,
       senderId,
       text,
-      type:        'text',
-      receivedAt:  this.makeTimestamp(),
+      type:       'text',
+      receivedAt: this.makeTimestamp(),
     }
 
-    await this.emit(msg)
+    // Audit inbound ANTES de emitir al dispatcher
+    auditDiscordMessageInbound({
+      channelId: this.channelConfigId,
+      messageId: interaction.id,
+    })
+
+    try {
+      await this.emit(msg)
+    } catch (err: unknown) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      auditDiscordError({
+        channelId:    this.channelConfigId,
+        errorCode:    String((e as NodeJS.ErrnoException).code ?? 'UNKNOWN'),
+        errorMessage: e.message,
+        recoverable:  false,
+        stack:        e.stack,
+      })
+      throw e
+    }
+
+    return null
   }
 
   /**
@@ -109,34 +189,59 @@ export class DiscordAdapter extends BaseChannelAdapter {
 
     const url = `https://discord.com/api/v10/webhooks/${this.applicationId}/${this.interactionToken}/messages/@original`
 
-    const res = await fetch(url, {
-      method:  'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ content: message.text }),
-    })
+    try {
+      const res = await fetch(url, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ content: message.text }),
+      })
 
-    // AUDIT-13: verificar res.ok ANTES de marcar replied=true
-    if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      throw new Error(
-        `[discord] send() failed: HTTP ${res.status} — ${body.slice(0, 200)}`,
-      )
+      // AUDIT-13: verificar res.ok ANTES de marcar replied=true
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        throw new Error(
+          `[discord] send() failed: HTTP ${res.status} — ${body.slice(0, 200)}`,
+        )
+      }
+
+      this.replied = true  // ← AUDIT-13: solo aquí, tras confirmar entrega
+
+      // Audit outbound
+      auditDiscordMessageOutbound({
+        channelId: this.channelConfigId,
+        messageId: this.interactionId,
+      })
+    } catch (err: unknown) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      auditDiscordError({
+        channelId:    this.channelConfigId,
+        errorCode:    String((e as NodeJS.ErrnoException).code ?? 'UNKNOWN'),
+        errorMessage: e.message,
+        recoverable:  false,
+        stack:        e.stack,
+      })
+      throw e
     }
-
-    this.replied = true  // ← AUDIT-13: solo aquí, tras confirmar entrega
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────
 
-  private decryptSecrets(_enc: string): string {
-    // F3b-05: decrypt AES-256-GCM — placeholder hasta implementación completa
-    return '{}'
+  /**
+   * TODO F3b-05: reemplazar con CryptoService.decrypt(AES-256-GCM).
+   * Dev mode: secretsEncrypted contiene JSON en plaintext hasta que
+   * F3b-05 implemente el cifrado real.
+   */
+  private decryptSecrets(enc: string): string {
+    return enc
   }
 
+  /**
+   * Carga la configuración del canal desde Prisma (DI — no new PrismaService()).
+   */
   private async loadConfig(channelConfigId: string) {
-    const { PrismaService } = await import('../prisma/prisma.service.js')
-    const db = new PrismaService()
-    const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } })
+    const config = await this.prisma.channelConfig.findUnique({
+      where: { id: channelConfigId },
+    })
     if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`)
     return config
   }

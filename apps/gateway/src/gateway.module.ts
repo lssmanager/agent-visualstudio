@@ -1,52 +1,65 @@
 /**
- * gateway.module.ts — [F3a-01]
+ * gateway.module.ts — [F3a-01 / F5-01 / F5-03]
  *
  * Módulo NestJS que agrupa los servicios centrales del Gateway:
  *
- *   - GatewayService        → dispatch, session, encryption, adapter lifecycle
- *   - AgentResolverService  → resolución de agente por ChannelBinding + scope priority
- *   - HealthController      → GET /health (liveness probe — no inyecta GatewayService)
- *   - PrismaModule          → re-exportado para que AppModule no duplique el import
+ *   - GatewayService            → dispatch, session, encryption, adapter lifecycle
+ *   - AgentResolverService      → resolución de agente por ChannelBinding + scope priority
+ *   - WhatsAppBaileysAdapter    → adapter WhatsApp via Baileys (F5-01)
+ *   - SlackAdapter              → adapter Slack Events API con HMAC (F5-03)
+ *   - HealthController          → GET /health (liveness probe)
+ *   - PrismaModule              → re-exportado para que AppModule no duplique el import
  *
- * ── Qué NO va aquí ──────────────────────────────────────────────────────────
- *
- *   MessageDispatcher  → clase pura (extends EventEmitter), NO @Injectable().
- *                        GatewayService la instancia internamente si la necesita.
- *
- *   loadCredentials /
- *   invalidateCredentialsCache → funciones sueltas en channel-credentials.loader.ts,
- *                                no son clases; los adapters las llaman directamente.
- *
- * ── Dependencias del grafo DI ───────────────────────────────────────────────
- *
- *   GatewayService       ← PrismaService (via PrismaModule) + AgentResolverService
- *   AgentResolverService ← PrismaService (via PrismaModule)
- *   HealthController     ← (ninguna inyección — responde ok estático)
- *
- * ── Re-export de PrismaModule ────────────────────────────────────────────────
- *
- *   AppModule importa GatewayModule. Al re-exportar PrismaModule desde aquí,
- *   AppModule obtiene PrismaService transitivamente sin necesidad de importar
- *   PrismaModule por separado, evitando la duplicación de instancias y la
- *   dependencia circular latente que aparecería en F3a-02/F3a-03.
- *
- * ── forwardRef ───────────────────────────────────────────────────────────────
- *
- *   NO se usa forwardRef. AppModule importa GatewayModule (unidireccional).
- *   Si en fases futuras aparece una dependencia circular real, añadir forwardRef
- *   solo en ese momento y documentar el motivo.
+ * F5-01: WhatsAppBaileysAdapter registrado como provider y exportado.
+ *        GatewayModule.onModuleInit() inyecta PrismaService en el singleton
+ *        whatsappSessionStore para persistir credenciales en BD (D-22b).
+ * F5-03: SlackAdapter registrado como provider y exportado.
+ *        Inyecta PrismaService via DI (no más new PrismaService() directo).
  */
 
-import { Module }               from '@nestjs/common';
-import { GatewayService }       from './gateway.service';
-import { AgentResolverService } from './agent-resolver.service';
-import { HealthController }     from './health/health.controller';
-import { PrismaModule }         from './prisma/prisma.module';
+import { Module, OnModuleInit }      from '@nestjs/common';
+import { GatewayService }            from './gateway.service.js';
+import { AgentResolverService }      from './agent-resolver.service.js';
+import { HealthController }          from './health/health.controller.js';
+import { PrismaModule }              from './prisma/prisma.module.js';
+import { PrismaService }             from './prisma/prisma.service.js';
+import { WhatsAppBaileysAdapter }    from './channels/whatsapp-baileys.adapter.js';
+import { SlackAdapter }              from './channels/slack.adapter.js';
+import { setGlobalWhatsAppSessionStorePrisma } from './whatsapp-session.store.js';
 
 @Module({
   imports:     [PrismaModule],
-  providers:   [GatewayService, AgentResolverService],
+  providers:   [
+    GatewayService,
+    AgentResolverService,
+    {
+      provide:    WhatsAppBaileysAdapter,
+      useFactory: (prisma: PrismaService) => new WhatsAppBaileysAdapter(prisma),
+      inject:     [PrismaService],
+    },
+    {
+      provide:    SlackAdapter,
+      useFactory: (prisma: PrismaService) => new SlackAdapter(prisma),
+      inject:     [PrismaService],
+    },
+  ],
   controllers: [HealthController],
-  exports:     [GatewayService, AgentResolverService, PrismaModule],
+  exports:     [
+    GatewayService,
+    AgentResolverService,
+    WhatsAppBaileysAdapter,
+    SlackAdapter,
+    PrismaModule,
+  ],
 })
-export class GatewayModule {}
+export class GatewayModule implements OnModuleInit {
+  constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Inyecta PrismaService en el singleton global de WhatsAppSessionStore
+   * para que la persistencia de credenciales Baileys use BD (D-22b).
+   */
+  onModuleInit(): void {
+    setGlobalWhatsAppSessionStorePrisma(this.prisma);
+  }
+}
