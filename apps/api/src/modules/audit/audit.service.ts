@@ -159,10 +159,10 @@ export function sanitizeAuditMeta(
  */
 function sanitizeErrorMessage(msg: string): string {
   return msg
-    .replace(/sk-[a-zA-Z0-9]{20,}/g, '[REDACTED]')
-    .replace(/Bearer\s+[\w\-\.]+/gi, 'Bearer [REDACTED]')
-    .replace(/token[=:\s]+[\w\-\.]{16,}/gi, 'token=[REDACTED]')
-    .substring(0, 300);
+    .replace(/sk-[a-zA-Z0-9]{20,}/g,   '[REDACTED]')   // OpenAI keys
+    .replace(/Bearer\s+\S{10,}/gi,      '[REDACTED]')   // Bearer tokens
+    .replace(/ghp_[a-zA-Z0-9]{30,}/g,  '[REDACTED]')   // GitHub tokens
+    .substring(0, 200);
 }
 
 // ── AuditService ──────────────────────────────────────────────────────────────
@@ -399,8 +399,8 @@ export class AuditService {
       ? `Run ${params.runId} completado en ${params.meta.durationMs}ms` +
         (params.meta.totalTokens != null ? ` — ${params.meta.totalTokens} tokens` : '')
       : `Run ${params.runId} terminó con status "${params.meta.status}"` +
-        (params.meta.errorCode ? ` [${params.meta.errorCode}]` : '') +
-        (safeErrorMessage ? `: ${safeErrorMessage}` : '');
+        (params.meta.errorCode    ? ` [${params.meta.errorCode}]`  : '') +
+        (safeErrorMessage         ? `: ${safeErrorMessage}`         : '');
 
     this.logAsync({
       resource:   'run',

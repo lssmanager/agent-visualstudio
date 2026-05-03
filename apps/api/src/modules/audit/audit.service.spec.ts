@@ -19,6 +19,7 @@ import {
   RunStartedMeta,
   RunCompletedMeta,
   AgentCreatedMeta,
+  sanitizeAuditMeta,
 } from './audit.service';
 
 function flushImmediate(): Promise<void> {
@@ -324,6 +325,21 @@ describe('logRunCompleted', () => {
     const entry = entries.find(e => e.resourceId === 'run-005');
     expect(entry?.severity).toBe('info');
   });
+
+  it('logRunCompleted redacta tokens de API en errorMessage', async () => {
+    const meta: RunCompletedMeta = {
+      runId: 'run-secret', agentId: 'a', workspaceId: 'w',
+      status: 'error', durationMs: 500,
+      errorCode: 'LLM_ERROR',
+      errorMessage: 'OpenAI error: sk-abcdefghijklmnopqrstuvwx12345678 invalid',
+    };
+    service.logRunCompleted({ runId: 'run-secret', meta });
+    await flushImmediate();
+    const entries = service.query({ action: 'run.completed' });
+    const entry = entries.find(e => e.resourceId === 'run-secret');
+    expect(entry?.detail).not.toContain('sk-abcdefghijklmnopqrstuvwx12345678');
+    expect(entry?.detail).toContain('[REDACTED]');
+  });
 });
 
 // ── agent.created ─────────────────────────────────────────────────────────────
@@ -379,8 +395,8 @@ describe('logAgentCreated', () => {
       workspaceId: 'ws-1',
       scopeLevel:  'agent',
       createdBy:   'user-1',
-      apiKey:      'sk-secret-key',
-    } as unknown as AgentCreatedMeta;
+      apiKey:      'sk-secret-key',   // campo extra para probar sanitización
+    } as unknown as AgentCreatedMeta; // cast a través de unknown — seguro en tests
     const entry = service.logAgentCreated({ agentId: 'agent-sec', meta });
     expect(entry.metadata?.apiKey).toBe('[REDACTED]');
   });
@@ -395,5 +411,26 @@ describe('logAgentCreated', () => {
     };
     const entry = service.logAgentCreated({ agentId: 'agent-userid', meta });
     expect(entry.userId).toBe('user-from-meta');
+  });
+});
+
+// ── sanitizeAuditMeta (unit) ──────────────────────────────────────────────────
+describe('sanitizeAuditMeta', () => {
+  it('sanitizeAuditMeta redacta secretos dentro de arrays', () => {
+    const result = sanitizeAuditMeta({
+      items: [
+        { apiKey: 'sk-secret', label: 'visible' },
+        { token: 'tok-123',    label: 'visible2' },
+        'string-item-no-object',
+      ],
+    });
+    expect((result['items'] as Array<Record<string, unknown>>)[0]?.['apiKey'])
+      .toBe('[REDACTED]');
+    expect((result['items'] as Array<Record<string, unknown>>)[0]?.['label'])
+      .toBe('visible');
+    expect((result['items'] as Array<Record<string, unknown>>)[1]?.['token'])
+      .toBe('[REDACTED]');
+    expect((result['items'] as unknown[])[2])
+      .toBe('string-item-no-object'); // primitivos en array pasan tal cual
   });
 });
