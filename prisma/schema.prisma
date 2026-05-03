@@ -1,4 +1,4 @@
-// ─────────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────────
 // prisma/schema.prisma
 // Agent Visual Studio — Full Platform Schema — Versión F0 (canónica)
 //
@@ -11,12 +11,12 @@
 // Audit:        AuditEvent
 // Settings:     SystemConfig  (single-tenant admin keys — plaintext, same trust as .env)
 //
-// ── D-15 ───────────────────────────────────────────────────────────────────────────────
+// ── D-15 ─────────────────────────────────────────────────────────────────────────────────────
 // GatewaySession.messageHistory ELIMINADO.
 // Reemplazado por activeContextJson Json? (contexto activo de la sesión)
 // + modelo ConversationMessage (historial append-only, indexado).
 //
-// ── D-24d ──────────────────────────────────────────────────────────────────────────
+// ── D-24d ───────────────────────────────────────────────────────────────────────────────
 // isLevelOrchestrator Boolean @default(false) en Agent, Workspace, Department.
 // Solo UN agente/workspace/department por scope puede tener isLevelOrchestrator=true.
 // Prisma no puede expresar "​​@@unique donde el valor sea true";
@@ -25,29 +25,48 @@
 //     ON "Agent" ("workspaceId") WHERE "isLevelOrchestrator" = true;
 //   (ídem para Workspace y Department — ver C-20 en Plan Maestro)
 //
-// ── D-07 ─────────────────────────────────────────────────────────────────────────────────
+// ── D-07 ─────────────────────────────────────────────────────────────────────────────────────
 // Flow.agentId: el ownership real es Flow → Agent → Workspace → Department → Agency.
 //
-// ── Exactly-one-FK invariant on Policy tables ────────────────────────────────────────
+// ── Exactly-one-FK invariant on Policy tables ────────────────────────────────────────────
 // BudgetPolicy and ModelPolicy each belong to exactly ONE scope level.
 // Enforced at two layers:
 //   1. DB layer — raw CHECK constraint added via a manual migration.
 //   2. App layer — PolicyScopeGuard in apps/api validates before upsert.
 //
-// ── AUDIT-23 ─────────────────────────────────────────────────────────────────────────
+// ── AUDIT-23 ────────────────────────────────────────────────────────────────────────────
 // enum ChannelType ya es el nombre canónico (no ChannelKind).
 // Valores exactos: telegram, whatsapp, webchat, discord, teams, slack, webhook.
 //
-// ── AUDIT-24 ─────────────────────────────────────────────────────────────────────────
+// ── AUDIT-24 ────────────────────────────────────────────────────────────────────────────
 // ChannelConfig.secretsEncrypted es String? (nullable).
 // AES-256-GCM se aplica en F3b-05; hasta entonces puede estar vacío.
 // Los adapters deben leer secretsEncrypted (NO tokenEnc ni credentials).
 //
-// ── AUDIT-25 ─────────────────────────────────────────────────────────────────────────
-// ChannelConfig.isActive Boolean @default(false) es el ÚNICO campo de estado persistido.
+// ── AUDIT-25 ────────────────────────────────────────────────────────────────────────────
+// ChannelConfig.isActive Boolean @default(false) es el Único campo de estado persistido.
 // Los campos fantasma status/errorMessage/lastStartedAt/lastStoppedAt han sido ELIMINADOS.
 // El estado en memoria se maneja con RuntimeChannelStatus en channel-lifecycle.service.ts.
-// ─────────────────────────────────────────────────────────────────────────────────
+//
+// ── AUDIT-37 ────────────────────────────────────────────────────────────────────────────
+// BudgetPolicy ya implementa el patrón exactly-one-FK con agentId String? @unique
+// y FK directa a Agent con onDelete: Cascade. AUDIT-37 está RESUELTO en el schema actual.
+// No requiere migración adicional.
+//
+// ── AUDIT-39 ────────────────────────────────────────────────────────────────────────────
+// Run.parentRunId, Run.parentStepId, Run.hierarchyRoot promovidos de
+// Run.metadata (JSON) a columnas explícitas con índices.
+// HierarchyStatusService debe migrar:
+//   ANTES: where: { metadata: { path: ['parentRunId'], equals: id } }
+//   DESPUÉS: where: { parentRunId: id }
+// Ejecutar scripts/migrate-run-hierarchy.ts para backfill de datos existentes.
+//
+// ── AUDIT-38 ────────────────────────────────────────────────────────────────────────────
+// AuditEvent.workspaceId: planificado para migración F4-observabilidad.
+// El modelo actual usa scopeType/scopeId genéricos. Hacer workspaceId NOT NULL
+// requiere rellenar todos los call sites de AuditEvent (20-50 ubicaciones).
+// Ver issue de seguimiento: [F4-OBS] AuditEvent.workspaceId obligatorio.
+// ───────────────────────────────────────────────────────────────────────────────────
 
 generator client {
   provider = "prisma-client-js"
@@ -58,7 +77,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ─── Hierarchy ──────────────────────────────────────────────────────────────────────────────
+// ─── Hierarchy ────────────────────────────────────────────────────────────────────────────────────
 
 model Agency {
   id           String       @id @default(uuid())
@@ -170,7 +189,7 @@ model Subagent {
   @@unique([agentId, slug])
 }
 
-// ─── Skills / Tools ────────────────────────────────────────────────────────────────────────────
+// ─── Skills / Tools ────────────────────────────────────────────────────────────────────────────────────────
 
 model Skill {
   id          String   @id @default(uuid())
@@ -210,7 +229,7 @@ model SubagentSkill {
   @@id([subagentId, skillId])
 }
 
-// ─── Flows ──────────────────────────────────────────────────────────────────────────────────
+// ─── Flows ───────────────────────────────────────────────────────────────────────────────────────
 
 model Flow {
   id          String   @id @default(uuid())
@@ -229,7 +248,7 @@ model Flow {
   runs Run[]
 }
 
-// ─── Runs ────────────────────────────────────────────────────────────────────────────────────
+// ─── Runs ──────────────────────────────────────────────────────────────────────────────────────
 
 model Run {
   id           String    @id @default(uuid())
@@ -251,11 +270,40 @@ model Run {
   metadata     Json?
   createdAt    DateTime  @default(now())
 
+  // ─── AUDIT-39: jerarquía explícita (promovida de metadata) ─────────────────────────
+  // Antes estos valores vivían en Run.metadata como keys JSON, lo que
+  // obligaba a HierarchyStatusService a usar path operators de Postgres o
+  // filtros en memoria — costoso y no indexable.
+  //
+  // MIGRACIÓN: ejecutar scripts/migrate-run-hierarchy.ts para backfill.
+  // HierarchyStatusService debe usar estos campos directamente:
+  //   ANTES: where: { metadata: { path: ['parentRunId'], equals: id } }
+  //   DESPUÉS: where: { parentRunId: id }
+
+  /// ID del Run padre que lanzó este Run (null = run raíz).
+  /// Self-relation "RunHierarchy" — indexado para queries de hijos.
+  parentRunId    String?
+  parentRun      Run?    @relation("RunHierarchy", fields: [parentRunId], references: [id], onDelete: SetNull)
+  childRuns      Run[]   @relation("RunHierarchy")
+
+  /// ID del RunStep padre que lanzó este Run (null si fue lanzado directamente).
+  /// Permite reconstruir el árbol completo Runs ↔ RunSteps.
+  parentStepId   String?
+  parentStep     RunStep? @relation("StepChildRuns", fields: [parentStepId], references: [id], onDelete: SetNull)
+
+  /// ID del Run raíz del árbol de ejecución — desnormalizado para queries rápidas.
+  /// Null si este Run es el raíz. Permite obtener todos los Runs de un árbol
+  /// con un único WHERE hierarchyRoot = :rootId sin joins recursivos.
+  hierarchyRoot  String?
+
   steps RunStep[]
 
   @@index([flowId, status])
   /// D-10: índice corregido — agrega status al compuesto
   @@index([agencyId, status, createdAt])
+  /// AUDIT-39: índices para HierarchyStatusService
+  @@index([parentRunId])
+  @@index([hierarchyRoot])
 }
 
 model RunStep {
@@ -279,6 +327,9 @@ model RunStep {
   retryCount  Int       @default(0)
   startedAt   DateTime  @default(now())
   completedAt DateTime?
+
+  /// AUDIT-39: Runs hijos lanzados desde este RunStep.
+  childRuns   Run[]     @relation("StepChildRuns")
 
   /// D-10: índices de performance obligatorios
   @@index([runId, status])
@@ -308,9 +359,9 @@ enum BotStatus {
   webhook_error
 }
 
-// ─── Gateway / Channels ─────────────────────────────────────────────────────────────────────
+// ─── Gateway / Channels ───────────────────────────────────────────────────────────────────────────────────
 
-/// AUDIT-25: isActive es el ÚNICO campo de estado persistido en ChannelConfig.
+/// AUDIT-25: isActive es el Único campo de estado persistido en ChannelConfig.
 /// Los campos status/errorMessage/lastStartedAt/lastStoppedAt han sido ELIMINADOS.
 /// El estado en memoria (RuntimeChannelStatus) vive en channel-lifecycle.service.ts.
 ///
@@ -417,7 +468,7 @@ model ConversationMessage {
   @@index([scopeId, createdAt])
 }
 
-// ─── n8n Integration ─────────────────────────────────────────────────────────────────────────────
+// ─── n8n Integration ──────────────────────────────────────────────────────────────────────────────────────
 
 model N8nConnection {
   id              String   @id @default(uuid())
@@ -450,7 +501,7 @@ model N8nWorkflow {
   @@unique([connectionId, n8nWorkflowId])
 }
 
-// ─── Provider Credentials ────────────────────────────────────────────────────────────────────────────
+// ─── Provider Credentials ────────────────────────────────────────────────────────────────────────────────────
 
 model ProviderCredential {
   id               String    @id @default(uuid())
@@ -472,7 +523,7 @@ model ProviderCredential {
   @@index([agencyId, type, isActive])
 }
 
-// ─── Model Catalog ─────────────────────────────────────────────────────────────────────────────
+// ─── Model Catalog ───────────────────────────────────────────────────────────────────────────────────────
 
 model ModelCatalogEntry {
   id           String             @id @default(uuid())
@@ -492,7 +543,7 @@ model ModelCatalogEntry {
   @@index([modelId])
 }
 
-// ─── Budget / Model Policies ──────────────────────────────────────────────────────────────────────
+// ─── Budget / Model Policies ──────────────────────────────────────────────────────────────────────────────────
 
 model BudgetPolicy {
   id         String   @id @default(uuid())
@@ -533,8 +584,18 @@ model ModelPolicy {
   agent      Agent?      @relation("AgentModel",      fields: [agentId],      references: [id], onDelete: Cascade)
 }
 
-// ─── Audit ────────────────────────────────────────────────────────────────────────────────────
+// ─── Audit ───────────────────────────────────────────────────────────────────────────────────────
 
+/// TODO(AUDIT-38): Planificado para migración F4-observabilidad.
+/// El modelo actual usa scopeType/scopeId genéricos (string libre).
+/// Para trazabilidad completa por workspace se necesita:
+///   workspaceId  String  (NOT NULL con FK a Workspace)
+///   agencyId     String? (opcional, para filtros de dashboard)
+///   departmentId String? (opcional)
+///   agentId      String? (opcional, para logs de agente específico)
+/// Hacer workspaceId NOT NULL requiere rellenar todos los call sites de AuditEvent
+/// (estimado 20–50 ubicaciones en gateway, API y run-engine).
+/// Coordinación con F4-observabilidad para hacerlo en una sola migración.
 model AuditEvent {
   id        String   @id @default(uuid())
   eventType String
@@ -549,7 +610,7 @@ model AuditEvent {
   @@index([userId, createdAt])
 }
 
-// ─── System Config (single-tenant settings) ──────────────────────────────────────────────
+// ─── System Config (single-tenant settings) ───────────────────────────────────────────────────
 //
 // Almacena API keys y URLs configuradas desde Settings UI.
 // Sin cifrado — mismo nivel de confianza que process.env / .env en disco.
