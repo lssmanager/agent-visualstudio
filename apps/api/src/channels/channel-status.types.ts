@@ -36,6 +36,7 @@ export interface ChannelStatusResponse {
 
 /**
  * Payload de eventos SSE emitidos en GET /api/channels/:id/status-stream
+ * Estructura compatible con StatusTransitionEvent de channel-lifecycle.service.ts
  */
 export interface ChannelStatusSseEvent {
   channelConfigId: string
