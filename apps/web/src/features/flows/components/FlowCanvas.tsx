@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import ReactFlow, {
   Background,
   Controls,
@@ -31,6 +31,11 @@ interface FlowCanvasProps {
 export function FlowCanvas({ flow, activeRun, onNodeUpdate }: FlowCanvasProps) {
   const [selectedNode, setSelectedNode] = useState<FlowNode | null>(null);
 
+  // Clear selection when flow changes
+  useEffect(() => {
+    setSelectedNode(null);
+  }, [flow?.id]);
+
   const stepStatusMap = useMemo(() => {
     if (!activeRun) return new Map<string, string>();
     const map = new Map<string, string>();
@@ -60,7 +65,7 @@ export function FlowCanvas({ flow, activeRun, onNodeUpdate }: FlowCanvasProps) {
               ? { background: colors.bg, borderColor: colors.border, borderWidth: 2 }
               : undefined),
             ...(isN8n && !node.n8n?.workflowId
-              ? { borderStyle: 'dashed', borderColor: '#a5b4fc' }
+              ? { borderStyle: 'dotted', borderColor: '#a5b4fc' }
               : undefined),
           },
         };

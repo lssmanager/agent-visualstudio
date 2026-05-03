@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import type { AgentSpec, SkillSpec, FlowNodeType } from '../../../lib/types';
 import { ConditionBuilder } from './ConditionBuilder';
 
@@ -12,8 +13,56 @@ interface NodeEditorProps {
 }
 
 export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange, onDelete }: NodeEditorProps) {
+  // Local draft states for JSON textareas
+  const [inputMappingDraft, setInputMappingDraft] = useState(() =>
+    typeof config.inputMapping === 'object'
+      ? JSON.stringify(config.inputMapping, null, 2)
+      : (config.inputMapping as string) ?? '{}'
+  );
+  const [outputMappingDraft, setOutputMappingDraft] = useState(() =>
+    typeof config.outputMapping === 'object'
+      ? JSON.stringify(config.outputMapping, null, 2)
+      : (config.outputMapping as string) ?? '{}'
+  );
+
+  // Sync draft state when config changes externally
+  useEffect(() => {
+    setInputMappingDraft(
+      typeof config.inputMapping === 'object'
+        ? JSON.stringify(config.inputMapping, null, 2)
+        : (config.inputMapping as string) ?? '{}'
+    );
+    setOutputMappingDraft(
+      typeof config.outputMapping === 'object'
+        ? JSON.stringify(config.outputMapping, null, 2)
+        : (config.outputMapping as string) ?? '{}'
+    );
+  }, [config.inputMapping, config.outputMapping]);
+
   function updateField(key: string, value: unknown) {
     onChange({ ...config, [key]: value });
+  }
+
+  function commitInputMapping() {
+    try {
+      const parsed = JSON.parse(inputMappingDraft);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        updateField('inputMapping', parsed);
+      }
+    } catch {
+      // Keep draft state, don't commit invalid JSON
+    }
+  }
+
+  function commitOutputMapping() {
+    try {
+      const parsed = JSON.parse(outputMappingDraft);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        updateField('outputMapping', parsed);
+      }
+    } catch {
+      // Keep draft state, don't commit invalid JSON
+    }
   }
 
   return (
@@ -311,18 +360,9 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
             Input Mapping (JSON)
           </label>
           <textarea
-            value={
-              typeof config.inputMapping === 'object'
-                ? JSON.stringify(config.inputMapping, null, 2)
-                : ((config.inputMapping as string) ?? '{}')
-            }
-            onChange={(e) => {
-              try {
-                updateField('inputMapping', JSON.parse(e.target.value));
-              } catch {
-                // allow partial editing — don't update on parse error
-              }
-            }}
+            value={inputMappingDraft}
+            onChange={(e) => setInputMappingDraft(e.target.value)}
+            onBlur={commitInputMapping}
             placeholder='{ "agentOutput": "$.body.result" }'
             rows={3}
             className="w-full rounded border px-2 py-1 text-[10px] font-mono resize-none"
@@ -334,18 +374,9 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
             Output Mapping (JSON)
           </label>
           <textarea
-            value={
-              typeof config.outputMapping === 'object'
-                ? JSON.stringify(config.outputMapping, null, 2)
-                : ((config.outputMapping as string) ?? '{}')
-            }
-            onChange={(e) => {
-              try {
-                updateField('outputMapping', JSON.parse(e.target.value));
-              } catch {
-                // allow partial editing
-              }
-            }}
+            value={outputMappingDraft}
+            onChange={(e) => setOutputMappingDraft(e.target.value)}
+            onBlur={commitOutputMapping}
             placeholder='{ "result": "$.body.data" }'
             rows={3}
             className="w-full rounded border px-2 py-1 text-[10px] font-mono resize-none"

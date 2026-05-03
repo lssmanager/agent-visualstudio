@@ -68,6 +68,8 @@ function InputMappingEditor({ mapping, onChange }: MappingEditorProps) {
 
   const renameKey = (oldKey: string, newKey: string) => {
     if (oldKey === newKey) return;
+    // Prevent overwriting existing keys
+    if (newKey in mapping && newKey !== oldKey) return;
     const next: N8nInputMapping = {};
     for (const [k, v] of Object.entries(mapping)) {
       next[k === oldKey ? newKey : k] = v;
@@ -362,7 +364,7 @@ export function N8nNodePanel({ node, flowId, onSave, onClose }: N8nNodePanelProp
             <p className="text-xs font-medium text-slate-600">Input mapping</p>
             <p className="text-[11px] text-slate-400">
               Mapea entradas del canvas al payload que recibirá el workflow n8n.
-              Usa <code className="font-mono">{'{'}{'{'}'output.campo'{'}'}{'}'}}</code> para referencias dinámicas.
+              Usa <code className="font-mono">{'{{output.campo}}'}</code> para referencias dinámicas.
             </p>
           </div>
           <InputMappingEditor

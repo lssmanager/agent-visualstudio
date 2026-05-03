@@ -49,14 +49,16 @@ const INITIAL_NODES: Node[] = [
 ];
 const INITIAL_EDGES: Edge[] = [];
 
-// ─── Props ────────────────────────────────────────────────────────────────────interface EditableFlowCanvasProps {
+// ─── Props ────────────────────────────────────────────────────────────────────
+interface EditableFlowCanvasProps {
   flowId?: string;
   runId?: string;
   onSave?: (nodes: Node[], edges: Edge[]) => void;
   readonly?: boolean;
 }
 
-// ─── Component ─────────────────────────────────────────────────────────────────export function EditableFlowCanvas({
+// ─── Component ─────────────────────────────────────────────────────────────────
+export function EditableFlowCanvas({
   flowId: _flowId,
   runId,
   onSave,

@@ -48,7 +48,7 @@ export function N8nWorkflowNode({ data, selected }: NodeProps<N8nWorkflowData>) 
 
       {/* Label / Workflow name */}
       <div style={{ fontWeight: 600, color: '#1c1917', marginBottom: 2 }}>
-        {label ?? workflowName ?? 'Untitled Workflow'}
+        {(label && label.trim()) || (workflowName && workflowName.trim()) || 'Untitled Workflow'}
       </div>
 
       {/* Workflow ID */}
