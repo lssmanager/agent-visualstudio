@@ -14,7 +14,7 @@
  */
 
 import { Injectable } from '@nestjs/common';
-import type { PrismaClient } from '@prisma/client';
+import { PrismaService } from '../../lib/prisma.service';
 
 import { N8nService }          from '../n8n/n8n.service';
 import { resolveModelPolicy }  from '../../../../../packages/run-engine/src/policy-resolver';
@@ -126,7 +126,7 @@ export interface CreateWorkflowFromDescriptionResult {
 export class N8nStudioHelper {
   constructor(
     private readonly n8nService: N8nService,
-    private readonly prisma: PrismaClient,
+    private readonly prisma: PrismaService,
   ) {}
 
   /**
@@ -176,16 +176,19 @@ export class N8nStudioHelper {
 
     let rawContent: string;
     try {
-      const response = await llmClient.chat({
-        messages: [
+      const response = await llmClient.chat(
+        [
           { role: 'system', content: N8N_SYSTEM_PROMPT },
           { role: 'user',   content: `Create an n8n workflow for: ${description}` },
         ],
-        temperature:     LLM_TEMPERATURE,
-        max_tokens:      LLM_MAX_TOKENS,
-        response_format: { type: 'json_object' },
-      });
-      rawContent = response.choices[0]?.message?.content ?? '';
+        [],
+        {
+          model:       primaryModel,
+          temperature: LLM_TEMPERATURE,
+          maxTokens:   LLM_MAX_TOKENS,
+        },
+      );
+      rawContent = response.content ?? '';
     } catch (err: unknown) {
       throw new Error(
         `[N8nStudioHelper] LLM call failed: ${
@@ -217,11 +220,12 @@ export class N8nStudioHelper {
 
     // ── Paso 5: Crear el workflow en n8n via N8nService ───────────────────────
     //
-    // N8nService.createWorkflow() en apps/api recibe { name, nodes, connections, settings }.
-    // Construimos el partial compatible con la interfaz N8nWorkflow del servicio.
+    // N8nService has a client with createWorkflow() that receives { name, nodes, connections, settings }.
+    // We construct the partial compatible with the N8nWorkflow interface.
     let createdWorkflow: { id: string; name: string; active: boolean };
     try {
-      createdWorkflow = await this.n8nService.createWorkflowRaw({
+      // Access the private client method through the service
+      createdWorkflow = await (this.n8nService as any).client.createWorkflow({
         name:        spec.name,
         nodes:       spec.nodes,
         connections: spec.connections,
@@ -230,7 +234,7 @@ export class N8nStudioHelper {
       });
     } catch (err: unknown) {
       throw new Error(
-        `[N8nStudioHelper] N8nService.createWorkflowRaw() failed: ${
+        `[N8nStudioHelper] N8nService.createWorkflow() failed: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );

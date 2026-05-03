@@ -12,10 +12,12 @@ import { Module }                    from '@nestjs/common';
 import { BuilderAgentService }       from './builder-agent.service';
 import { N8nStudioHelper }           from './n8n-studio-helper';
 import { ProfilePropagatorService }  from './profile-propagator.service';
+import { PrismaModule }              from '../../lib/prisma.module';
 import { N8nModule }                 from '../n8n/n8n.module';
 
 @Module({
   imports: [
+    PrismaModule,
     N8nModule,
   ],
   providers: [

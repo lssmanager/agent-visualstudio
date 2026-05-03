@@ -9,6 +9,7 @@
  *   N8N_API_KEY    – n8n API key (Settings → API)
  */
 
+import { Injectable } from '@nestjs/common';
 import type { FlowSpec } from '../../../../../packages/core-types/src';
 import { N8nBridgeService } from '../flows/n8n-bridge.service';
 
@@ -114,6 +115,7 @@ class N8nClient {
   }
 }
 
+@Injectable()
 export class N8nService {
   private readonly client = new N8nClient();
   private readonly bridge = new N8nBridgeService();
