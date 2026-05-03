@@ -20,6 +20,6 @@ export type {
   CredentialsByType,
 } from './credentials-schema.js'
 
-// [F3b-05] API AES-256-GCM con SECRETS_ENCRYPTION_KEY (hex 64 chars).
+// [F3b-05] API de bajo nivel AES-256-GCM con SECRETS_ENCRYPTION_KEY (hex 64 chars).
 // Formato: <iv_b64url>.<tag_b64url>.<ct_b64url> — distinto del formato binario de channel-secrets.
 export { encrypt, decrypt, encryptObject, decryptObject } from './aes.js'

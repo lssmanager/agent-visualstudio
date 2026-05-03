@@ -87,9 +87,9 @@ export function decrypt(stored: string): string {
   }
 
   const [ivB64, tagB64, ciphertextB64] = parts as [string, string, string]
-  const iv         = Buffer.from(ivB64,         'base64url')
-  const tag        = Buffer.from(tagB64,         'base64url')
-  const ciphertext = Buffer.from(ciphertextB64,  'base64url')
+  const iv         = Buffer.from(ivB64,        'base64url')
+  const tag        = Buffer.from(tagB64,        'base64url')
+  const ciphertext = Buffer.from(ciphertextB64, 'base64url')
 
   if (iv.length !== IV_BYTES) {
     throw new Error(
@@ -112,6 +112,8 @@ export function decrypt(stored: string): string {
     ])
     return decrypted.toString('utf8')
   } catch {
+    // Node lanza 'Unsupported state or unable to authenticate data'
+    // al fallar la verificación del authTag — convertir en error legible.
     throw new Error(
       '[crypto] Decryption failed: authentication tag mismatch. ' +
       'Key may be wrong or data tampered.',

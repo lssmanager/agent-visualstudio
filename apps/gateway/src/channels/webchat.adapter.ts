@@ -16,12 +16,18 @@
  *   { type: 'history', messages: HistoryEntry[] }
  *   { type: 'error', code, message }
  *   { type: 'connected', sessionId }  ← primer frame al conectar
+ *
+ * FIX [F3b-05]: initialize() ya no lee config.credentials (texto plano).
+ * Usa decryptSecrets(config.secretsEncrypted) desde @lss/crypto para
+ * leer las credenciales descifradas en memoria. Si secretsEncrypted es null
+ * (canal webchat sin credenciales adicionales) usa {} como fallback.
  */
 
 import { WebSocketServer, WebSocket, type RawData } from 'ws'
 import type { IncomingMessage as HttpIncomingMessage, Server } from 'http'
 import type { PrismaClient } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service.js'
+import { decryptSecrets } from '@lss/crypto'
 import {
   BaseChannelAdapter,
   type IncomingMessage,
@@ -105,12 +111,8 @@ export class WebChatAdapter extends BaseChannelAdapter {
     })
     if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`)
 
-    // FIX-6: ChannelConfig no tiene campo `credentials`.
-    // Leer secretsEncrypted (string | null) y parsear como JSON.
-    // WebChat no requiere secrets en runtime (auth vía sessionId),
-    // por lo que un valor null resulta en objeto vacío sin error.
     this.credentials = config.secretsEncrypted
-      ? (JSON.parse(config.secretsEncrypted) as Record<string, unknown>)
+      ? decryptSecrets(config.secretsEncrypted)
       : {}
 
     // Crear WebSocketServer adjunto al httpServer existente.
