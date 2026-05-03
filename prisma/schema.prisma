@@ -76,6 +76,10 @@
 // Campos agregados en Run: workspaceId, agentId, inputData, outputData
 // Campos agregados en RunStep: index, model
 // deletedAt DateTime? en Department, Workspace, Agent
+//
+// ── PR #229 REVIEW FIXES ─────────────────────────────────────────────────────────────────
+// Run.workspaceId → FK relation a Workspace (onDelete: SetNull) para evitar IDs huérfanos.
+// Run.status → RunStatus enum (antes String) para type-safety en queries Prisma.
 // ───────────────────────────────────────────────────────────────────────────────────
 
 generator client {
@@ -205,6 +209,8 @@ model Workspace {
   channelConfigs ChannelConfig[]
   budgetPolicy   BudgetPolicy? @relation("WorkspaceBudget")
   modelPolicy    ModelPolicy?  @relation("WorkspaceModel")
+  /// PR #229 fix: campo recíproco para Run.workspace (FK con onDelete: SetNull).
+  runs           Run[]         @relation("RunWorkspace")
 
   @@unique([departmentId, slug])
 }
@@ -328,8 +334,10 @@ model Run {
   /// El ownership real es el path Flow → Agent → Workspace → Department → Agency (D-07).
   agencyId     String?
   agency       Agency?   @relation(fields: [agencyId], references: [id])
-  /// BUILD-FIX: workspaceId para queries directas por workspace (GatewayService.dispatch)
+  /// BUILD-FIX: workspaceId para queries directas por workspace (GatewayService.dispatch).
+  /// PR #229 fix: FK con onDelete: SetNull para evitar workspaceIds huérfanos.
   workspaceId  String?
+  workspace    Workspace? @relation("RunWorkspace", fields: [workspaceId], references: [id], onDelete: SetNull)
   /// BUILD-FIX: agentId directo para queries de runs por agente (run-repository)
   agentId      String?
   agent        Agent?    @relation("RunAgent", fields: [agentId], references: [id])
@@ -337,10 +345,9 @@ model Run {
   inputData    Json?
   /// BUILD-FIX: resultado final del Run
   outputData   Json?
-  /// Estado de ejecución — usa string para compatibilidad retroactiva.
-  /// Valores canónicos: queued | running | completed | failed | cancelled | waiting_approval
-  /// El enum RunStatus define los valores válidos.
-  status       String    @default("queued")
+  /// PR #229 fix: usa RunStatus enum (antes String) para type-safety en queries Prisma.
+  /// Migración: ALTER TABLE "Run" ALTER COLUMN "status" TYPE "RunStatus" USING "status"::"RunStatus"
+  status       RunStatus @default(queued)
   /// { type: 'manual' | 'channel' | 'schedule' | 'replay:<runId>', payload? }
   trigger      Json
   error        String?   @db.Text
