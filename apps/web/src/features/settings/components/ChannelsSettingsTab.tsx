@@ -8,13 +8,15 @@ import {
   deleteChannel, subscribeChannelStatus,
 } from '../../../lib/channels-api';
 
-// AUDIT-23: añadidos slack y webhook alineados con enum ChannelKind del schema Prisma
+// FIX-1: 7 entries — added 'teams' and 'webhook' to match ChannelKind enum
 const CHANNEL_KINDS: { kind: ChannelKind; label: string; needsToken: boolean }[] = [
-  { kind: 'telegram',  label: 'Telegram',  needsToken: true },
-  { kind: 'whatsapp',  label: 'WhatsApp',  needsToken: true },
-  { kind: 'discord',   label: 'Discord',   needsToken: true },
-  { kind: 'webchat',   label: 'Web Chat',  needsToken: false },
-  { kind: 'slack',     label: 'Slack',     needsToken: true },
+  { kind: 'telegram',  label: 'Telegram',        needsToken: true  },
+  { kind: 'whatsapp',  label: 'WhatsApp',         needsToken: true  },
+  { kind: 'discord',   label: 'Discord',          needsToken: true  },
+  { kind: 'webchat',   label: 'Web Chat',         needsToken: false },
+  { kind: 'slack',     label: 'Slack',            needsToken: true  },
+  { kind: 'teams',     label: 'Microsoft Teams',  needsToken: true  },
+  { kind: 'webhook',   label: 'Webhook',          needsToken: false },
 ];
 
 // AUDIT-25: STATUS_ICON alineado con enum ChannelStatus del schema Prisma
@@ -35,15 +37,22 @@ const STATUS_LABEL: Record<ChannelRecord['status'], string> = {
   error:       'Error',
 };
 
+// FIX-2: valid statuses set — guard against unexpected SSE values
+// Placed here alongside STATUS_LABEL so all status-related constants are grouped.
+const VALID_STATUSES = new Set<string>(['provisioned', 'bound', 'error', 'offline']);
+
 interface Props {
   workspaceId: string;
   agents: { id: string; name: string }[];
 }
 
+// FIX-3: AddForm extended with appId + appSecret for Slack / Teams
 interface AddForm {
-  kind: ChannelKind;
-  name: string;
-  token: string;
+  kind:      ChannelKind;
+  name:      string;
+  token:     string;   // Telegram, WhatsApp, Discord
+  appId:     string;   // Slack, Teams
+  appSecret: string;   // Slack, Teams
 }
 
 export function ChannelsSettingsTab({ workspaceId, agents }: Props) {
@@ -55,9 +64,13 @@ export function ChannelsSettingsTab({ workspaceId, agents }: Props) {
   const sseCleanups             = useRef<Map<string, () => void>>(new Map());
 
   const { register, handleSubmit, watch, reset, formState: { errors } } =
-    useForm<AddForm>({ defaultValues: { kind: 'telegram', name: '', token: '' } });
-  const selectedKind = watch('kind');
-  const needsToken = CHANNEL_KINDS.find((c) => c.kind === selectedKind)?.needsToken ?? false;
+    useForm<AddForm>({
+      defaultValues: { kind: 'telegram', name: '', token: '', appId: '', appSecret: '' },
+    });
+  const selectedKind       = watch('kind');
+  const needsToken         = CHANNEL_KINDS.find((c) => c.kind === selectedKind)?.needsToken ?? false;
+  // FIX-3: helper — Slack and Teams need appId + appSecret instead of a plain bot token
+  const needsAppCredentials = selectedKind === 'slack' || selectedKind === 'teams';
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
@@ -79,8 +92,12 @@ export function ChannelsSettingsTab({ workspaceId, agents }: Props) {
     channels.forEach((ch) => {
       if (!map.has(ch.id)) {
         const unsub = subscribeChannelStatus(workspaceId, ch.id, (data) => {
+          // FIX-2: guard — discard unexpected status values before casting
+          if (!VALID_STATUSES.has(data.status)) return;
           setChannels((prev) =>
-            prev.map((c) => c.id === ch.id ? { ...c, status: data.status as ChannelRecord['status'] } : c),
+            prev.map((c) =>
+              c.id === ch.id ? { ...c, status: data.status as ChannelRecord['status'] } : c,
+            ),
           );
         });
         map.set(ch.id, unsub);
@@ -96,10 +113,13 @@ export function ChannelsSettingsTab({ workspaceId, agents }: Props) {
   async function handleAdd(values: AddForm) {
     setBusy('new'); setErr(null);
     try {
+      // FIX-3: route credentials correctly based on kind
       await provisionChannel(workspaceId, {
-        kind: values.kind,
-        name: values.name,
-        token: values.token || undefined,
+        kind:      values.kind,
+        name:      values.name,
+        token:     needsAppCredentials ? undefined              : (values.token     || undefined),
+        appId:     needsAppCredentials ? (values.appId     || undefined) : undefined,
+        appSecret: needsAppCredentials ? (values.appSecret || undefined) : undefined,
       });
       reset();
       setShowAdd(false);
@@ -142,8 +162,9 @@ export function ChannelsSettingsTab({ workspaceId, agents }: Props) {
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Channels</h3>
+          {/* FIX-1: header text updated to include Teams and Webhook */}
           <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            Connect Telegram, WhatsApp, Discord, Slack, or Web Chat. Tokens are encrypted at rest.
+            Connect Telegram, WhatsApp, Discord, Slack, Web Chat, Teams, or Webhook. Tokens are encrypted at rest.
           </p>
         </div>
         <button
@@ -191,17 +212,44 @@ export function ChannelsSettingsTab({ workspaceId, agents }: Props) {
             </div>
           </div>
 
-          {needsToken && (
+          {/* FIX-3: simple bot token for telegram/whatsapp/discord */}
+          {needsToken && !needsAppCredentials && (
             <div>
-              <label className="block text-xs text-[var(--text-muted)] mb-1">Bot Token / Credential</label>
+              <label className="block text-xs text-[var(--text-muted)] mb-1">Bot Token</label>
               <input
-                {...register('token', { required: needsToken ? 'Token required' : false })}
+                {...register('token', { required: 'Token required' })}
                 type="password"
                 autoComplete="off"
-                placeholder="Paste token…"
+                placeholder="Paste bot token…"
                 className="w-full rounded-lg border border-[var(--input-border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--input-text)] focus:outline-none"
               />
               {errors.token && <p className="text-xs text-red-500 mt-0.5">{errors.token.message}</p>}
+            </div>
+          )}
+
+          {/* FIX-3: appId + appSecret grid for slack/teams */}
+          {needsAppCredentials && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-[var(--text-muted)] mb-1">App ID</label>
+                <input
+                  {...register('appId', { required: 'App ID required' })}
+                  placeholder="App ID…"
+                  className="w-full rounded-lg border border-[var(--input-border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--input-text)] focus:outline-none"
+                />
+                {errors.appId && <p className="text-xs text-red-500 mt-0.5">{errors.appId.message}</p>}
+              </div>
+              <div>
+                <label className="block text-xs text-[var(--text-muted)] mb-1">App Secret</label>
+                <input
+                  {...register('appSecret', { required: 'App Secret required' })}
+                  type="password"
+                  autoComplete="off"
+                  placeholder="App Secret…"
+                  className="w-full rounded-lg border border-[var(--input-border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--input-text)] focus:outline-none"
+                />
+                {errors.appSecret && <p className="text-xs text-red-500 mt-0.5">{errors.appSecret.message}</p>}
+              </div>
             </div>
           )}
 
