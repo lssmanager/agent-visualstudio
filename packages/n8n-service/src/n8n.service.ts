@@ -18,6 +18,10 @@
  *    so that skillsToMcpTools() can mount them as LLM tools.
  *    No n8n API call — pure DB read + type mapping.
  *
+ * 4. createWorkflow() — Creation path (F4a-01)
+ *    Creates a new workflow in n8n via POST /api/v1/workflows.
+ *    Optionally activates it and syncs N8nWorkflow + Skill rows to Prisma.
+ *
  * ── Architectural distinction from skill-invoker.invokeN8nWebhook() ──
  *
  *   invokeN8nWebhook()            N8nService
@@ -110,6 +114,67 @@ export interface N8nServiceConfig extends N8nClientConfig {
    * The generated PrismaClient satisfies N8nPrismaClient automatically.
    */
   prisma?:         N8nPrismaClient;
+}
+
+// ── CreateWorkflow types ───────────────────────────────────────────────────
+
+/** Minimal n8n workflow node definition for creation */
+export interface N8nWorkflowNodeDefinition {
+  id:           string;
+  name:         string;
+  type:         string;
+  typeVersion:  number;
+  position:     [number, number];
+  parameters?:  Record<string, unknown>;
+  credentials?: Record<string, { id: string; name: string }>;
+}
+
+/** Connection between nodes in the workflow graph */
+export interface N8nWorkflowConnection {
+  [sourceNode: string]: {
+    main: Array<Array<{ node: string; type: string; index: number }>>;
+  };
+}
+
+export interface CreateWorkflowOptions {
+  /**
+   * connectionId of the N8nConnection to use for the API call.
+   * The API key and baseUrl are loaded from Prisma (same as syncWorkflows).
+   */
+  connectionId:  string;
+  /** Human-readable name for the new workflow */
+  name:          string;
+  /** Workflow nodes. At minimum, one trigger node is recommended. */
+  nodes:         N8nWorkflowNodeDefinition[];
+  /** Node connections. Can be empty {} for single-node workflows. */
+  connections?:  N8nWorkflowConnection;
+  /**
+   * Whether to activate the workflow immediately after creation.
+   * Default: false — n8n creates workflows inactive by default.
+   */
+  activate?:     boolean;
+  /**
+   * If true, upsert a Skill row in Prisma after successful creation.
+   * Only useful if the workflow has a webhook trigger node.
+   * Default: false
+   */
+  syncToSkills?: boolean;
+}
+
+export interface CreateWorkflowResult {
+  /** n8n internal workflow ID assigned by the server */
+  n8nWorkflowId:  string;
+  /** The workflow name as confirmed by n8n */
+  name:           string;
+  /** Whether the workflow is active in n8n */
+  active:         boolean;
+  /**
+   * The Prisma N8nWorkflow row ID if syncToSkills=true and a webhook was found.
+   * undefined if no webhook node or syncToSkills=false.
+   */
+  prismaWorkflowId?: string;
+  /** Webhook URL if a webhook node was detected */
+  webhookUrl?:    string;
 }
 
 // ── N8nService ────────────────────────────────────────────────────────────
@@ -424,8 +489,6 @@ export class N8nService {
 
     // ── Step 2: map each row to BridgedSkillSpec ─────────────────────
     return workflows.map((wf) => {
-      // inputSchema null → omit the field (undefined) so skill-bridge
-      // falls back to z.object({}).passthrough() instead of receiving null.
       const inputSchema =
         wf.inputSchema != null
           ? (wf.inputSchema as Record<string, unknown>)
@@ -436,7 +499,7 @@ export class N8nService {
         name:        wf.name,
         description: wf.description ?? wf.name,
         category:    'n8n',
-        endpoint:    wf.webhookUrl!,   // non-null guaranteed by WHERE { not: null }
+        endpoint:    wf.webhookUrl!,
         functions: [
           {
             name:        'invoke',
@@ -480,9 +543,173 @@ export class N8nService {
 
     return perConnection.flat();
   }
+
+  // ── createWorkflow() ──────────────────────────────────────────────────
+
+  /**
+   * Creates a new workflow in n8n via REST API and optionally syncs it
+   * to Prisma (N8nWorkflow + Skill rows).
+   *
+   * Steps:
+   *  1. Load N8nConnection from Prisma (same pattern as syncWorkflows).
+   *  2. Decrypt API key.
+   *  3. POST /api/v1/workflows — create the workflow in n8n.
+   *  4. If activate=true: POST /api/v1/workflows/:id/activate.
+   *  5. If syncToSkills=true and a webhook node exists: upsert N8nWorkflow
+   *     and Skill rows in Prisma (same logic as syncWorkflows Step 4c+4d).
+   *  6. Return CreateWorkflowResult.
+   *
+   * @throws Error if N8nConnection not found, inactive, decrypt fails,
+   *         or n8n API returns a non-2xx status.
+   */
+  async createWorkflow(options: CreateWorkflowOptions): Promise<CreateWorkflowResult> {
+    if (!this.prisma) {
+      throw new Error('N8nService: prisma client is required for createWorkflow()');
+    }
+    const prisma = this.prisma;
+
+    // ── Step 1: load connection ──────────────────────────────────────
+    const conn = await prisma.n8nConnection.findUniqueOrThrow({
+      where: { id: options.connectionId },
+    });
+
+    if (!conn.isActive) {
+      throw new Error('N8nConnection is inactive');
+    }
+
+    // ── Step 2: decrypt API key ──────────────────────────────────────
+    let apiKey: string;
+    try {
+      apiKey = decrypt(conn.apiKeyEncrypted);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `[N8nService] Failed to decrypt apiKeyEncrypted for connection ${options.connectionId}: ${msg}`,
+      );
+    }
+
+    const base = conn.baseUrl.replace(/\/$/, '');
+
+    // ── Step 3: POST /api/v1/workflows ──────────────────────────────
+    const createRes = await fetch(`${base}/api/v1/workflows`, {
+      method:  'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'X-N8N-API-KEY': apiKey,
+      },
+      body: JSON.stringify({
+        name:        options.name,
+        nodes:       options.nodes,
+        connections: options.connections ?? {},
+        settings:    {},
+      }),
+    });
+
+    if (!createRes.ok) {
+      const text = await createRes.text().catch(() => '');
+      throw new Error(
+        `[N8nService] createWorkflow failed (${createRes.status}): ${text}`,
+      );
+    }
+
+    const created = await createRes.json() as {
+      id:     string;
+      name:   string;
+      active: boolean;
+      nodes?: N8nWorkflowNodeDefinition[];
+    };
+
+    // ── Step 4: activate if requested ───────────────────────────────
+    let isActive = created.active;
+    if (options.activate && !isActive) {
+      const activateRes = await fetch(
+        `${base}/api/v1/workflows/${created.id}/activate`,
+        {
+          method:  'POST',
+          headers: { 'X-N8N-API-KEY': apiKey },
+        },
+      );
+      // Non-fatal: log but don't throw — workflow was created
+      if (!activateRes.ok) {
+        console.warn(
+          `[N8nService] createWorkflow: activation failed (${activateRes.status}) for workflow ${created.id}`,
+        );
+      } else {
+        isActive = true;
+      }
+    }
+
+    // ── Step 5: sync to Prisma if requested ─────────────────────────
+    let prismaWorkflowId: string | undefined;
+    let webhookUrl:       string | undefined;
+
+    if (options.syncToSkills) {
+      const webhookNode = options.nodes.find(
+        (n) => n.type === 'n8n-nodes-base.webhook',
+      );
+
+      if (webhookNode) {
+        const webhookPath = (webhookNode.parameters?.['path'] as string | undefined) ?? created.id;
+        const method      = ((webhookNode.parameters?.['httpMethod'] as string | undefined) ?? 'POST').toUpperCase();
+        webhookUrl        = `${base}/webhook/${webhookPath}`;
+
+        await prisma.$transaction(async (tx) => {
+          const upserted = await tx.n8nWorkflow.upsert({
+            where: {
+              connectionId_n8nWorkflowId: {
+                connectionId:   options.connectionId,
+                n8nWorkflowId: created.id,
+              },
+            },
+            create: {
+              connectionId:   options.connectionId,
+              n8nWorkflowId: created.id,
+              name:           created.name,
+              webhookUrl,
+              isActive,
+            },
+            update: {
+              name:       created.name,
+              webhookUrl,
+              isActive,
+              updatedAt:  new Date(),
+            },
+          });
+
+          prismaWorkflowId = upserted.id;
+
+          const skillName = `n8n:${options.connectionId}:${created.id}`;
+          await tx.skill.upsert({
+            where:  { name: skillName },
+            create: {
+              name:        skillName,
+              description: created.name,
+              type:        'n8n_webhook',
+              config:      { webhookUrl, method },
+              schema:      null,
+            },
+            update: {
+              description: created.name,
+              config:      { webhookUrl, method },
+              updatedAt:   new Date(),
+            },
+          });
+        });
+      }
+    }
+
+    // ── Step 6: return ───────────────────────────────────────────────
+    return {
+      n8nWorkflowId:   created.id,
+      name:            created.name,
+      active:          isActive,
+      prismaWorkflowId,
+      webhookUrl,
+    };
+  }
 }
 
-  // ── Utility ───────────────────────────────────────────────────────────────
+// ── Utility ───────────────────────────────────────────────────────────────
 
 function sleep(ms: number): Promise<void> {
   return new Promise<void>(resolve => setTimeout(resolve, ms));

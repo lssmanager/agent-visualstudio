@@ -5,6 +5,10 @@ export type {
   N8nServiceConfig,
   TriggerWorkflowOptions,
   TriggerWorkflowResult,
+  CreateWorkflowOptions,
+  CreateWorkflowResult,
+  N8nWorkflowNodeDefinition,
+  N8nWorkflowConnection,
 } from './n8n.service';
 
 export type {
