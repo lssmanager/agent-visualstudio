@@ -12,8 +12,8 @@ import {
 } from '../../middleware/user-rate-limiter.js'
 
 const CHANNEL = 'channel-uuid-123'
-const USER_A  = 'user-A'
-const USER_B  = 'user-B'
+const USER_A = 'user-A'
+const USER_B = 'user-B'
 
 beforeEach(() => {
   clearUserBucket(CHANNEL, USER_A)
