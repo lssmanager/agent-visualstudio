@@ -32,6 +32,7 @@ import { registerDashboardRoutes } from './modules/dashboard/dashboard.controlle
 import { registerLlmProvidersRoutes } from './modules/llm-providers/llm-providers.controller';
 import { registerCatalogRoutes } from './modules/catalog/catalog.controller';
 import { registerSettingsRoutes } from './modules/settings/settings.controller';
+import { registerN8nConnectionRoutes } from './modules/n8n/n8n-connections.controller';
 
 export function registerRoutes(app: Express) {
   const router = Router();
@@ -74,6 +75,8 @@ export function registerRoutes(app: Express) {
   registerCatalogRoutes(router);
   // Settings: API keys de providers LLM + conexión n8n
   registerSettingsRoutes(router);
+  // N8n Connections CRUD (F4a-02)
+  registerN8nConnectionRoutes(router);
 
   app.use(studioConfig.apiPrefix, router);
 }
