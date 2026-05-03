@@ -148,7 +148,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
       )}
 
       {/* ── Tool / Skill ─────────────────────────────────────────────────── */}
-      {(nodeType === 'tool' || nodeType === 'skill') && (
+      {nodeType === 'tool' && (
         <div className="space-y-2">
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Skill</label>
           <select
@@ -179,57 +179,6 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         />
       )}
 
-      {/* ── Handoff ──────────────────────────────────────────────────────── */}
-      {nodeType === 'handoff' && (
-        <div className="space-y-2">
-          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Target Agent</label>
-          <select
-            value={(config.targetAgentId as string) ?? ''}
-            onChange={(e) => {
-              const agent = agents.find((a) => a.id === e.target.value);
-              if (agent) onChange({ ...config, targetAgentId: agent.id, targetAgentName: agent.name });
-              else updateField('targetAgentId', e.target.value);
-            }}
-            className="w-full rounded border px-2 py-1 text-xs"
-            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
-          >
-            <option value="">-- Select target agent --</option>
-            {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
-          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Reason / Context</label>
-          <input
-            value={(config.reason as string) ?? ''}
-            onChange={(e) => updateField('reason', e.target.value)}
-            placeholder="Why this handoff?"
-            className="w-full rounded border px-2 py-1 text-xs"
-            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
-          />
-        </div>
-      )}
-
-      {/* ── Loop ─────────────────────────────────────────────────────────── */}
-      {nodeType === 'loop' && (
-        <div className="space-y-2">
-          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Max Iterations</label>
-          <input
-            type="number"
-            value={(config.maxIterations as number) ?? 3}
-            onChange={(e) => updateField('maxIterations', Number(e.target.value))}
-            min={1} max={100}
-            className="w-full rounded border px-2 py-1 text-xs"
-            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
-          />
-          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Exit Condition</label>
-          <input
-            value={(config.expression as string) ?? ''}
-            onChange={(e) => updateField('expression', e.target.value)}
-            placeholder="e.g. context.done === true"
-            className="w-full rounded border px-2 py-1 text-xs font-mono"
-            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
-          />
-        </div>
-      )}
-
       {/* ── Approval ─────────────────────────────────────────────────────── */}
       {nodeType === 'approval' && (
         <div className="space-y-2">
@@ -253,6 +202,36 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
             style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
             min={1}
           />
+        </div>
+      )}
+
+      {/* ── Sub-Flow ─────────────────────────────────────────────────────── */}
+      {nodeType === 'subflow' && (
+        <div className="space-y-2">
+          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Sub-Flow ID</label>
+          <input
+            value={(config.subFlowId as string) ?? ''}
+            onChange={(e) => updateField('subFlowId', e.target.value)}
+            placeholder="flow-id or slug"
+            className="w-full rounded border px-2 py-1 text-xs font-mono"
+            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
+          />
+          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Display Label</label>
+          <input
+            value={(config.label as string) ?? ''}
+            onChange={(e) => updateField('label', e.target.value)}
+            placeholder="Human-readable name"
+            className="w-full rounded border px-2 py-1 text-xs"
+            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
+          />
+          <label className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+            <input
+              type="checkbox"
+              checked={(config.passthrough as boolean) ?? false}
+              onChange={(e) => updateField('passthrough', e.target.checked)}
+            />
+            Pass parent context through sub-flow
+          </label>
         </div>
       )}
 
@@ -328,6 +307,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
             className="w-full rounded border px-2 py-1 text-xs"
             style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
           />
+
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
             Workflow ID
           </label>
@@ -338,6 +318,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
             className="w-full rounded border px-2 py-1 text-xs font-mono"
             style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
           />
+
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
             Trigger Mode
           </label>
@@ -351,6 +332,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
             <option value="schedule">Schedule</option>
             <option value="manual">Manual</option>
           </select>
+
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
             Input Mapping (JSON)
           </label>
@@ -361,13 +343,18 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
                 : ((config.inputMapping as string) ?? '{}')
             }
             onChange={(e) => {
-              try { updateField('inputMapping', JSON.parse(e.target.value)); } catch { /* allow partial */ }
+              try {
+                updateField('inputMapping', JSON.parse(e.target.value));
+              } catch {
+                // allow partial editing
+              }
             }}
             placeholder='{ "agentOutput": "$.body.result" }'
             rows={3}
             className="w-full rounded border px-2 py-1 text-[10px] font-mono resize-none"
             style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
           />
+
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
             Output Mapping (JSON)
           </label>
@@ -378,13 +365,18 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
                 : ((config.outputMapping as string) ?? '{}')
             }
             onChange={(e) => {
-              try { updateField('outputMapping', JSON.parse(e.target.value)); } catch { /* allow partial */ }
+              try {
+                updateField('outputMapping', JSON.parse(e.target.value));
+              } catch {
+                // allow partial editing
+              }
             }}
             placeholder='{ "result": "$.body.data" }'
             rows={3}
             className="w-full rounded border px-2 py-1 text-[10px] font-mono resize-none"
             style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
           />
+
           <label className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--text-muted)' }}>
             <input
               type="checkbox"
@@ -392,66 +384,6 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
               onChange={(e) => updateField('waitForResult', e.target.checked)}
             />
             Wait for workflow result (sync)
-          </label>
-        </div>
-      )}
-
-      {/* ── Sub-Flow (F6-01) ─────────────────────────────────────────────── */}
-      {nodeType === 'subflow' && (
-        <div className="space-y-2">
-          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Label</label>
-          <input
-            value={(config.label as string) ?? ''}
-            onChange={(e) => updateField('label', e.target.value)}
-            placeholder="Sub-flow display name"
-            className="w-full rounded border px-2 py-1 text-xs"
-            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
-          />
-          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Flow ID</label>
-          <input
-            value={(config.flowId as string) ?? ''}
-            onChange={(e) => updateField('flowId', e.target.value)}
-            placeholder="Flow UUID"
-            className="w-full rounded border px-2 py-1 text-xs font-mono"
-            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
-          />
-          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Input Mapping (JSON)</label>
-          <textarea
-            value={
-              typeof config.inputMap === 'object'
-                ? JSON.stringify(config.inputMap, null, 2)
-                : ((config.inputMap as string) ?? '{}')
-            }
-            onChange={(e) => {
-              try { updateField('inputMap', JSON.parse(e.target.value)); } catch { /* allow partial */ }
-            }}
-            placeholder='{ "parentVar": "subVar" }'
-            rows={3}
-            className="w-full rounded border px-2 py-1 text-[10px] font-mono resize-none"
-            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
-          />
-          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Output Mapping (JSON)</label>
-          <textarea
-            value={
-              typeof config.outputMap === 'object'
-                ? JSON.stringify(config.outputMap, null, 2)
-                : ((config.outputMap as string) ?? '{}')
-            }
-            onChange={(e) => {
-              try { updateField('outputMap', JSON.parse(e.target.value)); } catch { /* allow partial */ }
-            }}
-            placeholder='{ "subResult": "parentResult" }'
-            rows={3}
-            className="w-full rounded border px-2 py-1 text-[10px] font-mono resize-none"
-            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
-          />
-          <label className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--text-muted)' }}>
-            <input
-              type="checkbox"
-              checked={(config.waitForEnd as boolean) ?? true}
-              onChange={(e) => updateField('waitForEnd', e.target.checked)}
-            />
-            Wait for sub-flow to finish (sync)
           </label>
         </div>
       )}

@@ -41,9 +41,8 @@ const NODE_TYPES = {
   supervisor:    SupervisorNode,
   n8n_webhook:   N8nWebhookNode,
   n8n_workflow:  N8nWorkflowNode,
-  // F6-01: subflow agregado
   subflow:       SubFlowNode,
-} as const;
+};
 
 const STATUS_COLORS: Record<string, string> = {
   completed:        '#d1fae5',

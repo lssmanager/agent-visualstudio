@@ -71,6 +71,22 @@ export interface StudioState {
 
 // ── Flow Node types ───────────────────────────────────────────────────────────
 
+export type FlowNodeType =
+  | 'trigger'
+  | 'agent'
+  | 'subagent'
+  | 'skill'
+  | 'tool'
+  | 'condition'
+  | 'handoff'
+  | 'loop'
+  | 'approval'
+  | 'end'
+  | 'supervisor'
+  | 'n8n_webhook'
+  | 'n8n_workflow'
+  | 'subflow';
+
 /** Mapeado de entradas del canvas al payload del workflow n8n.
  *  Cada entrada es una expresión libre: puede ser un valor literal
  *  o una referencia tipo "{{output.fieldName}}". */

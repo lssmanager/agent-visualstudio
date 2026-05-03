@@ -6,7 +6,7 @@ export interface NodeTemplate {
   icon: string;
   color: string;
   defaultConfig: Record<string, unknown>;
-  group?: 'core' | 'control' | 'hierarchy' | 'n8n' | 'subflow';
+  group?: 'core' | 'control' | 'hierarchy' | 'n8n';
 }
 
 export const NODE_TEMPLATES: NodeTemplate[] = [
@@ -50,6 +50,10 @@ export const NODE_TEMPLATES: NodeTemplate[] = [
     defaultConfig: { approvalRole: 'operator', timeoutMs: 300000 },
   },
   {
+    type: 'subflow', label: 'Sub-Flow', icon: '🔗', color: '#7c3aed', group: 'control',
+    defaultConfig: { subFlowId: '', label: '', passthrough: false },
+  },
+  {
     type: 'end', label: 'End', icon: '⏹', color: '#4b5563', group: 'control',
     defaultConfig: { outcome: 'completed' },
   },
@@ -77,19 +81,6 @@ export const NODE_TEMPLATES: NodeTemplate[] = [
       inputMapping:  {},
       outputMapping: {},
       waitForResult: false,
-    },
-  },
-
-  // ── Sub-Flow (F6-01) ───────────────────────────────────────────────────────
-  {
-    type: 'subflow', label: 'Sub-Flow', icon: '🔀', color: '#9333ea', group: 'subflow',
-    defaultConfig: {
-      flowId:     '',
-      flowName:   '',
-      label:      '',
-      inputMap:   {},
-      outputMap:  {},
-      waitForEnd: true,
     },
   },
 ];
