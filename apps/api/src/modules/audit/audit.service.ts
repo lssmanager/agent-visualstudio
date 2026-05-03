@@ -16,6 +16,26 @@ export const CHANNEL_AUDIT_ACTIONS = {
 export type ChannelAuditAction =
   (typeof CHANNEL_AUDIT_ACTIONS)[keyof typeof CHANNEL_AUDIT_ACTIONS];
 
+// ── Run action enum ────────────────────────────────────────────────────────────
+export const RUN_AUDIT_ACTIONS = {
+  STARTED:   'run.started',
+  COMPLETED: 'run.completed',
+  FAILED:    'run.failed',
+} as const;
+
+export type RunAuditAction =
+  (typeof RUN_AUDIT_ACTIONS)[keyof typeof RUN_AUDIT_ACTIONS];
+
+// ── Agent action enum ──────────────────────────────────────────────────────────
+export const AGENT_AUDIT_ACTIONS = {
+  CREATED:   'agent.created',
+  UPDATED:   'agent.updated',
+  DELETED:   'agent.deleted',
+} as const;
+
+export type AgentAuditAction =
+  (typeof AGENT_AUDIT_ACTIONS)[keyof typeof AGENT_AUDIT_ACTIONS];
+
 // ── Typed metadata per event ──────────────────────────────────────────────────
 export interface ChannelProvisionedMeta {
   channelType:      string;
@@ -43,6 +63,41 @@ export interface ChannelErrorMeta {
   recoverable:   boolean;
   stackTrace?:   string;
   attemptCount?: number;
+}
+
+// ── Run metadata ──────────────────────────────────────────────────────────────
+export interface RunStartedMeta {
+  runId:           string;
+  agentId:         string;
+  workspaceId:     string;
+  triggeredBy:     'user' | 'schedule' | 'webhook' | 'api' | 'chain';
+  channelType?:    string;
+  conversationId?: string;
+  inputTokens?:    number;
+}
+
+export interface RunCompletedMeta {
+  runId:          string;
+  agentId:        string;
+  workspaceId:    string;
+  status:         'success' | 'error' | 'cancelled' | 'timeout';
+  durationMs:     number;
+  totalTokens?:   number;
+  outputTokens?:  number;
+  stepCount?:     number;
+  errorCode?:     string;
+  errorMessage?:  string;
+}
+
+// ── Agent metadata ─────────────────────────────────────────────────────────────
+export interface AgentCreatedMeta {
+  agentId:      string;
+  agentName:    string;
+  workspaceId:  string;
+  scopeLevel:   string;
+  parentId?:    string;
+  templateId?:  string;
+  createdBy:    string;
 }
 
 // ── AuditEntry (backward-compatible: severity is optional) ────────────────────
@@ -75,7 +130,7 @@ const REDACTED_KEYS = new Set([
   'privateKey', 'private_key', 'credential', 'credentials',
 ]);
 
-function sanitizeAuditMeta(
+export function sanitizeAuditMeta(
   meta: Record<string, unknown>,
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
@@ -269,6 +324,88 @@ export class AuditService {
                   (params.meta.recoverable ? ' (recuperable)' : ' (fatal)'),
       userId:     params.userId,
       severity:   params.severity ?? (params.meta.recoverable ? 'warn' : 'error'),
+      metadata:   sanitizeAuditMeta(params.meta as unknown as Record<string, unknown>),
+    });
+  }
+
+  // ── High-level run event helpers ──────────────────────────────────────────────
+
+  /**
+   * Log run.started — non-blocking.
+   * Llamar al iniciar la ejecución de un agente, antes del primer LLM call.
+   */
+  logRunStarted(params: {
+    runId:    string;
+    userId?:  string;
+    meta:     RunStartedMeta;
+  }): void {
+    this.logAsync({
+      resource:   'run',
+      resourceId: params.runId,
+      action:     RUN_AUDIT_ACTIONS.STARTED,
+      detail:     `Run ${params.runId} iniciado — agente: ${params.meta.agentId} ` +
+                  `(trigger: ${params.meta.triggeredBy})`,
+      userId:     params.userId,
+      severity:   'info',
+      metadata:   sanitizeAuditMeta(params.meta as unknown as Record<string, unknown>),
+    });
+  }
+
+  /**
+   * Log run.completed — non-blocking.
+   * Llamar al finalizar la ejecución (éxito, error o cancelación).
+   * El status 'error' eleva severity a 'warn'; 'timeout' a 'error'.
+   */
+  logRunCompleted(params: {
+    runId:    string;
+    userId?:  string;
+    meta:     RunCompletedMeta;
+  }): void {
+    const severityMap: Record<RunCompletedMeta['status'], AuditSeverity> = {
+      success:   'info',
+      error:     'warn',
+      cancelled: 'info',
+      timeout:   'error',
+    };
+
+    const detail = params.meta.status === 'success'
+      ? `Run ${params.runId} completado en ${params.meta.durationMs}ms` +
+        (params.meta.totalTokens != null ? ` — ${params.meta.totalTokens} tokens` : '')
+      : `Run ${params.runId} terminó con status "${params.meta.status}"` +
+        (params.meta.errorCode ? ` [${params.meta.errorCode}]` : '') +
+        (params.meta.errorMessage ? `: ${params.meta.errorMessage}` : '');
+
+    this.logAsync({
+      resource:   'run',
+      resourceId: params.runId,
+      action:     RUN_AUDIT_ACTIONS.COMPLETED,
+      detail,
+      userId:     params.userId,
+      severity:   severityMap[params.meta.status],
+      metadata:   sanitizeAuditMeta(params.meta as unknown as Record<string, unknown>),
+    });
+  }
+
+  // ── High-level agent event helpers ────────────────────────────────────────────
+
+  /**
+   * Log agent.created — SÍNCRONO (low-frequency, necesita confirmación).
+   * Llamar justo después de que el agente sea persistido en Prisma.
+   */
+  logAgentCreated(params: {
+    agentId:  string;
+    userId?:  string;
+    meta:     AgentCreatedMeta;
+  }): AuditEntry {
+    return this.log({
+      resource:   'agent',
+      resourceId: params.agentId,
+      action:     AGENT_AUDIT_ACTIONS.CREATED,
+      detail:     `Agente "${params.meta.agentName}" creado en workspace ` +
+                  `${params.meta.workspaceId} (scope: ${params.meta.scopeLevel})` +
+                  (params.meta.parentId ? ` — padre: ${params.meta.parentId}` : ''),
+      userId:     params.userId ?? params.meta.createdBy,
+      severity:   'info',
       metadata:   sanitizeAuditMeta(params.meta as unknown as Record<string, unknown>),
     });
   }
