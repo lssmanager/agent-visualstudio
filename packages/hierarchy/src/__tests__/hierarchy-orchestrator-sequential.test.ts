@@ -294,7 +294,7 @@ describe('HierarchyOrchestrator — sequential execution (parallel: false)', () 
     expect(typeof result.subtaskResults[0].output).toBe('string');
   });
 
-  it('sequential mode: consolidatedOutput is non-empty string on success', async () => {
+  it('sequential mode: consolidatedOutput.summary is non-empty string on success', async () => {
     const executorFn = makeExecutorFn();
     const orch = new HierarchyOrchestrator(
       singleAgentHierarchy,
@@ -305,8 +305,8 @@ describe('HierarchyOrchestrator — sequential execution (parallel: false)', () 
     );
     const result = await orch.orchestrate('ws-001', 'Consolidation check');
 
-    expect(typeof result.consolidatedOutput).toBe('string');
-    expect(result.consolidatedOutput.length).toBeGreaterThan(0);
+    expect(typeof result.consolidatedOutput.summary).toBe('string');
+    expect(result.consolidatedOutput.summary.length).toBeGreaterThan(0);
   });
 
   it('sequential mode: timeout option is respected — slow agent produces failed status', async () => {

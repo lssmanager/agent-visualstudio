@@ -81,7 +81,7 @@ export interface SubtaskResult {
   taskId:    string
   nodeId:    string
   stepId:    string          // ID del RunStep en Prisma
-  status:    'completed' | 'failed' | 'skipped' | 'rejected'
+  status:    'completed' | 'partial' | 'failed' | 'skipped' | 'rejected'
   output:    unknown
   error?:    string
   durationMs: number
@@ -92,7 +92,7 @@ export interface OrchestrationResult {
   runId:             string  // ID del Run en Prisma
   rootTaskId:        string
   status:            'completed' | 'partial' | 'failed'
-  consolidatedOutput: string
+  consolidatedOutput: ConsolidationResult
   subtaskResults:    SubtaskResult[]
   totalDurationMs:   number
 }
@@ -105,6 +105,7 @@ export interface ConsolidationResult {
   stats: {
     total:     number
     completed: number
+    partial:   number
     failed:    number
     rejected:  number
   }
@@ -409,16 +410,19 @@ export class HierarchyOrchestrator {
       const consolidatedOutput = await this.consolidateResults(rootTask, subtaskResults)
 
       const failed  = subtaskResults.filter((r) => r.status === 'failed' || r.status === 'rejected')
+      const partial = subtaskResults.filter((r) => r.status === 'partial')
       const success = subtaskResults.filter((r) => r.status === 'completed')
       const runStatus: OrchestrationResult['status'] =
-        failed.length === 0  ? 'completed'
-        : success.length === 0 ? 'failed'
-        : 'partial'
+        failed.length === 0
+          ? (partial.length > 0 ? 'partial' : 'completed')
+          : success.length === 0 && partial.length === 0
+            ? 'failed'
+            : 'partial'
 
       if (runStatus === 'failed') {
         await this.repo.failRun(run.id, `${failed.length} subtask(s) failed`)
       } else {
-        await this.repo.completeRun(run.id, { consolidatedOutput, subtaskResults })
+        await this.repo.completeRun(run.id, { consolidatedOutput: consolidatedOutput.summary, subtaskResults })
       }
 
       return {
@@ -837,45 +841,65 @@ export class HierarchyOrchestrator {
   private async consolidateResults(
     rootTask: string,
     results:  SubtaskResult[],
-  ): Promise<string> {
+  ): Promise<ConsolidationResult> {
     const completed = results.filter((r) => r.status === 'completed')
-    if (completed.length === 0) {
-      return 'All subtasks failed. No output available.'
+    const partial = results.filter((r) => r.status === 'partial')
+    const successful = [...completed, ...partial]
+
+    if (successful.length === 0) {
+      return {
+        summary: 'All subtasks failed or were rejected. No output available.',
+        stats: {
+          total:     results.length,
+          completed: 0,
+          partial:   partial.length,
+          failed:    results.filter((r) => r.status === 'failed').length,
+          rejected:  results.filter((r) => r.status === 'rejected').length,
+        },
+      }
     }
 
     const stats: ConsolidationResult['stats'] = {
       total:     results.length,
       completed: completed.length,
+      partial:   partial.length,
       failed:    results.filter((r) => r.status === 'failed').length,
       rejected:  results.filter((r) => r.status === 'rejected').length,
     }
 
     if (this.supervisorFn) {
       try {
-        return await this.consolidateWithSupervisor(rootTask, completed, stats)
+        const failed = results.filter((r) => r.status === 'failed' || r.status === 'rejected')
+        return await this.consolidateWithSupervisor(rootTask, successful, failed, stats)
       } catch {
         // fallback a concatenación
       }
     }
 
-    return [
-      `Consolidated output for: "${rootTask}"`,
-      `(${completed.length}/${results.length} subtasks succeeded)`,
-      '',
-      ...completed.map((r, i) =>
-        `[${i + 1}] Agent ${r.nodeId}:\n${String(r.output)}`
-      ),
-    ].join('\n\n')
+    return {
+      summary: [
+        `Consolidated output for: "${rootTask}"`,
+        `(${successful.length}/${results.length} subtasks completed or partial)`,
+        '',
+        ...successful.map((r, i) => {
+          const marker = r.status === 'partial' ? ' [PARTIAL]' : ''
+          return `[${i + 1}] Agent ${r.nodeId}${marker}:\n${String(r.output)}`
+        }),
+      ].join('\n\n'),
+      stats,
+    }
   }
 
   private async consolidateWithSupervisor(
     rootTask:  string,
     completed: SubtaskResult[],
+    failed:    SubtaskResult[],
     stats:     ConsolidationResult['stats'],
-  ): Promise<string> {
+  ): Promise<ConsolidationResult> {
     const statusLine =
-      stats.failed > 0 || stats.rejected > 0
+      stats.failed > 0 || stats.partial > 0 || stats.rejected > 0
         ? `Note: ${stats.completed} of ${stats.total} subtasks completed` +
+          (stats.partial  > 0 ? `, ${stats.partial} partial` : '') +
           (stats.failed   > 0 ? `, ${stats.failed} failed`   : '') +
           (stats.rejected > 0 ? `, ${stats.rejected} rejected` : '') +
           '. Synthesize only from the available completed results.'
@@ -885,6 +909,14 @@ export class HierarchyOrchestrator {
       .map((r, i) => `[${i + 1}] Agent ${r.nodeId}: ${String(r.output ?? '')}`)
       .join('\n')
 
+    const failureSummary = failed.length > 0
+      ? failed
+          .map((r) =>
+            `[FAILED] Agent ${r.nodeId} (${r.status}): ${r.error ?? 'unknown error'}`
+          )
+          .join('\n')
+      : ''
+
     const prompt = [
       'You are a supervisor synthesizing results from multiple agents.',
       `Original task: "${rootTask}"`,
@@ -892,13 +924,19 @@ export class HierarchyOrchestrator {
       '',
       'Agent results:',
       resultsSummary,
+      failureSummary ? '\nFailed agents (context only — do not include their output):' : '',
+      failureSummary,
       '',
       'Provide a single, coherent, complete answer.',
-      'Do not mention agents, task numbers, or partial failures.',
+      'When some agents failed, acknowledge the limitation briefly in your synthesis.',
+      'Do not blame individual agents by ID — use "some components" or "partial information".',
       'Just provide the final synthesized answer.',
     ].filter(Boolean).join('\n')
 
-    return this.supervisorFn!(prompt)
+    return {
+      summary: await this.supervisorFn!(prompt),
+      stats,
+    }
   }
 
   // ── Utilidades privadas ──────────────────────────────────────────────────────────────────
@@ -943,8 +981,15 @@ export class HierarchyOrchestrator {
     }
 
     try {
-      const profiles = await this.repo.findAgentProfiles(agents.map((a) => a.id))
-      const profileMap = new Map(profiles.map((p) => [p.agentId, p]))
+      const profiles = await this.repo.findAgentProfiles(agents.map((a) => a.id)) as Array<{
+        agentId: string
+        systemPrompt?: string
+        persona?: unknown
+        knowledgeBase?: unknown
+      }>
+      const profileMap = new Map<string, (typeof profiles)[number]>(
+        profiles.map((p) => [p.agentId, p]),
+      )
       const taskTokens = tokenize(taskDescription)
 
       const scores: CapabilityScore[] = agents.map((node) => {
@@ -1080,17 +1125,23 @@ export class HierarchyOrchestrator {
 
       await this.repo.completeStep({
         stepId: step.id,
-        output: subResult.consolidatedOutput,
+        output: subResult.consolidatedOutput.summary,
       })
 
       return {
         taskId:     task.id,
         nodeId:     decision.node.id,
         stepId:     step.id,
-        status:     subResult.status === 'failed' ? 'failed' : 'completed',
-        output:     subResult.consolidatedOutput,
+        status:     subResult.status === 'failed'
+                      ? 'failed'
+                      : subResult.status === 'partial'
+                        ? 'partial'
+                        : 'completed',
+        output:     subResult.consolidatedOutput.summary,
         error:      subResult.status === 'failed'
                       ? `Sub-orchestration failed: ${subResult.status}`
+                      : subResult.status === 'partial'
+                        ? 'Sub-orchestration partial: some subtasks failed'
                       : undefined,
         durationMs: Date.now() - start,
         retries:    0,

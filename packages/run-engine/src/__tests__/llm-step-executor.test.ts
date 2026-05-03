@@ -46,9 +46,12 @@ function makeStep(overrides: Partial<RunStep> = {}): RunStep {
 function makeRun(overrides: Partial<RunSpec> = {}): RunSpec {
   return {
     id:      'run-1',
+    workspaceId: 'ws-1',
     flowId:  'flow-1',
     status:  'running',
-    trigger: { payload: { userId: 'u1' } },
+    trigger: { type: 'manual', payload: { userId: 'u1' } },
+    steps:   [],
+    startedAt: new Date().toISOString(),
     ...overrides,
   };
 }
@@ -68,7 +71,7 @@ jest.mock(
 
 // Mock profile-engine — optional dependency
 jest.mock(
-  '../../profile-engine/src/index.js',
+  '../../profile-engine/src/index.ts',
   () => ({
     ProfilePropagatorService: class {
       async resolveForAgent(_id: string) {
@@ -81,7 +84,7 @@ jest.mock(
 
 // Mock hierarchy orchestrator — used in orchestrated path
 jest.mock(
-  '../../hierarchy/src/index.js',
+  '../../hierarchy/src/index.ts',
   () => ({
     HierarchyOrchestrator: class {
       constructor(
@@ -95,7 +98,16 @@ jest.mock(
         return {
           status:             'completed',
           runId:              'orch-run-1',
-          consolidatedOutput: 'orchestration done',
+          consolidatedOutput: {
+            summary: 'orchestration done',
+            stats: {
+              total: 0,
+              completed: 0,
+              partial: 0,
+              failed: 0,
+              rejected: 0,
+            },
+          },
           subtaskResults:     [],
           totalDurationMs:    42,
         };
@@ -348,12 +360,31 @@ describe('LlmStepExecutor', () => {
 
       const node = makeAgentNode({ executionMode: 'orchestrated' });
       const result = await (executor as unknown as {
-        executeAgent(n: FlowNode, s: RunStep, r: RunSpec): Promise<{ status: string; output: Record<string, unknown> }>;
+        executeAgent(n: FlowNode, s: RunStep, r: RunSpec): Promise<{
+          status: string;
+          output: {
+            agentId: string;
+            executionMode: string;
+            orchestrationRunId: string;
+            consolidatedOutput: {
+              summary: string;
+              stats: {
+                total: number;
+                completed: number;
+                partial: number;
+                failed: number;
+                rejected: number;
+              };
+            };
+            subtaskResults: unknown[];
+            totalDurationMs: number;
+          };
+        }>;
       }).executeAgent(node, makeStep(), makeRun());
 
       expect(result.status).toBe('completed');
       expect(result.output.executionMode).toBe('orchestrated');
-      expect(result.output.consolidatedOutput).toBe('orchestration done');
+      expect(result.output.consolidatedOutput.summary).toBe('orchestration done');
     });
   });
 
@@ -369,7 +400,7 @@ describe('LlmStepExecutor', () => {
     it('evaluates a truthy expression → first branch', async () => {
       const db = makePrisma();
       const executor = makeExecutor(db);
-      const run = makeRun({ trigger: { payload: { score: 95 } } });
+      const run = makeRun({ trigger: { type: 'manual', payload: { score: 95 } } });
 
       const result = await (executor as unknown as {
         executeCondition(n: FlowNode, s: RunStep, r: RunSpec): Promise<{ status: string; output: Record<string, unknown>; branch?: string }>;
@@ -383,7 +414,7 @@ describe('LlmStepExecutor', () => {
     it('evaluates a falsy expression → second branch', async () => {
       const db = makePrisma();
       const executor = makeExecutor(db);
-      const run = makeRun({ trigger: { payload: { score: 50 } } });
+      const run = makeRun({ trigger: { type: 'manual', payload: { score: 50 } } });
 
       const result = await (executor as unknown as {
         executeCondition(n: FlowNode, s: RunStep, r: RunSpec): Promise<{ status: string; output: Record<string, unknown>; branch?: string }>;

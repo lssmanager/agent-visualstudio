@@ -277,7 +277,7 @@ export class LlmStepExecutor extends StepExecutor {
         subtaskResults:     result.subtaskResults,
         totalDurationMs:    result.totalDurationMs,
       },
-      error: result.status === 'failed' ? result.consolidatedOutput : undefined,
+      error: result.status === 'failed' ? result.consolidatedOutput.summary : undefined,
     };
   }
 
