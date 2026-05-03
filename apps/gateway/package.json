@@ -4,9 +4,13 @@
   "description": "Gateway NestJS — WebChat + Telegram + Channel adapters",
   "private": true,
   "scripts": {
-    "dev":   "ts-node -r tsconfig-paths/register -P tsconfig.json src/main.ts",
-    "build": "tsc -p tsconfig.json",
-    "start": "node dist/main.js"
+    "dev":            "ts-node -r tsconfig-paths/register -P tsconfig.json src/main.ts",
+    "build":          "tsc -p tsconfig.json",
+    "start":          "node dist/main.js",
+    "test":           "vitest run --config vitest.config.ts",
+    "test:watch":     "vitest --config vitest.config.ts",
+    "test:e2e":       "vitest run --config vitest.config.e2e.ts",
+    "verify:headers": "curl -fsSI ${GATEWAY_URL:-http://localhost:3001}/health | tee /dev/stderr | { grep -c 'strict-transport-security' && grep -c 'content-security-policy' && grep -c 'x-frame-options' && grep -c 'x-content-type-options' && grep -c 'referrer-policy'; } && echo 'All required headers present'"
   },
   "dependencies": {
     "@nestjs/common":            "^10.3.0",
@@ -25,12 +29,16 @@
     "ws":                        "^8.18.0"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
-    "@types/node":    "^20.0.0",
-    "@types/ws":      "^8.5.13",
-    "ts-node":        "^10.9.2",
-    "tsconfig-paths": "^4.2.0",
-    "typescript":     "^5.0.0"
+    "@types/express":    "^4.17.21",
+    "@types/node":       "^20.0.0",
+    "@types/supertest":  "^6.0.0",
+    "@types/ws":         "^8.5.13",
+    "@vitest/coverage-v8": "^1.0.0",
+    "supertest":         "^7.0.0",
+    "ts-node":           "^10.9.2",
+    "tsconfig-paths":    "^4.2.0",
+    "typescript":        "^5.0.0",
+    "vitest":            "^1.0.0"
   },
   "overrides": {
     "@whiskeysockets/baileys": {

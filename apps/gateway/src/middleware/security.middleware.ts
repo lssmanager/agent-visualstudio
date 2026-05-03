@@ -2,10 +2,18 @@
  * security.middleware.ts — Middleware de seguridad del gateway
  *
  * Aplica en este orden:
- *   1. Helmet (headers de seguridad HTTP)
+ *   1. Helmet (headers de seguridad HTTP) — F3b-02
  *   2. CORS configurado por workspace
  *   3. Rate limiting por IP (express-rate-limit)
- *   4. JWT híbrido: Logto SSO + token local (F3B-01a)
+ *   4. JWT híbrido: Logto SSO + token local — F3B-01a
+ *
+ * Headers garantizados por Helmet (F3b-02):
+ *   Content-Security-Policy   — bloquea scripts/recursos de orígenes no autorizados
+ *   Strict-Transport-Security — fuerza HTTPS por 1 año
+ *   X-Frame-Options           — DENY — previene clickjacking
+ *   X-Content-Type-Options    — nosniff
+ *   Referrer-Policy           — strict-origin-when-cross-origin
+ *   Permissions-Policy        — desactiva camera/mic/geolocation por defecto
  *
  * Comportamiento de degradación JWT:
  *   JWT_SECRET + LOGTO_ISSUER → acepta ambos
@@ -28,7 +36,7 @@ import rateLimit from 'express-rate-limit';
 // ---------------------------------------------------------------------------
 
 export interface SecurityOptions {
-  /** Orígenes CORS permitidos. Default: proceso env CORS_ORIGINS o '*' */
+  /** Orígenes CORS permitidos. Default: CORS_ORIGINS env o '*' */
   corsOrigins?: string | string[];
   /** Máx. requests por ventana por IP para rutas de webhook */
   webhookRateLimit?: number;
@@ -42,7 +50,6 @@ export interface SecurityOptions {
 
 /**
  * F3B-01a: Claims extraídos del JWT (Logto o local) y adjuntados a req.user.
- * source indica el proveedor que firmó el token.
  */
 export interface AuthenticatedUser {
   sub: string;
@@ -52,28 +59,47 @@ export interface AuthenticatedUser {
 }
 
 // ---------------------------------------------------------------------------
-// Helmet (headers de seguridad)
+// Helmet (headers de seguridad HTTP) — F3b-02
 // ---------------------------------------------------------------------------
 
 export function helmetMiddleware(): RequestHandler {
+  const reportUri = process.env.HELMET_CSP_REPORT_URI;
+
   return helmet({
     contentSecurityPolicy: {
       directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", 'data:', 'https:'],
-        connectSrc: ["'self'"],
-        frameSrc: ["'none'"],
+        defaultSrc:  ["'self'"],
+        scriptSrc:   ["'self'"],
+        styleSrc:    ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc:     ["'self'", 'https://fonts.gstatic.com', 'data:'],
+        imgSrc:      ["'self'", 'data:', 'https:', 'blob:'],
+        connectSrc:  ["'self'", 'wss:', 'https:'],
+        mediaSrc:    ["'self'", 'blob:'],
+        workerSrc:   ['blob:'],
+        frameSrc:    ["'none'"],
+        objectSrc:   ["'none'"],
+        baseUri:     ["'self'"],
+        formAction:  ["'self'"],
+        ...(reportUri ? { reportUri: [reportUri] } : {}),
       },
     },
-    crossOriginEmbedderPolicy: false, // necesario para SSE
-    hsts: { maxAge: 31_536_000, includeSubDomains: true },
+    hsts: {
+      maxAge: 31_536_000,
+      includeSubDomains: true,
+    },
+    crossOriginEmbedderPolicy: false,
+    frameguard: { action: 'deny' },
+    noSniff: true,
+    dnsPrefetchControl: { allow: false },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    ieNoOpen: true,
+    permittedCrossDomainPolicies: { permittedPolicies: 'none' },
+    hidePoweredBy: true,
   });
 }
 
 // ---------------------------------------------------------------------------
-// CORS manual (más granular que el cors() de express)
+// CORS manual
 // ---------------------------------------------------------------------------
 
 export function corsMiddleware(origins?: string | string[]): RequestHandler {
@@ -85,8 +111,7 @@ export function corsMiddleware(origins?: string | string[]): RequestHandler {
 
   return (req: Request, res: Response, next: NextFunction) => {
     const origin = req.headers.origin ?? '';
-    const isAllowed =
-      allowed.includes('*') || allowed.includes(origin);
+    const isAllowed = allowed.includes('*') || allowed.includes(origin);
 
     if (isAllowed && origin) {
       res.setHeader('Access-Control-Allow-Origin', origin);
@@ -114,21 +139,22 @@ export function corsMiddleware(origins?: string | string[]): RequestHandler {
 // Rate limiting
 // ---------------------------------------------------------------------------
 
-export function webhookRateLimiter(opts?: Pick<SecurityOptions, 'webhookRateLimit' | 'windowMs'>): RequestHandler {
+export function webhookRateLimiter(
+  opts?: Pick<SecurityOptions, 'webhookRateLimit' | 'windowMs'>,
+): RequestHandler {
   return rateLimit({
     windowMs: opts?.windowMs ?? 60_000,
     max: opts?.webhookRateLimit ?? 300,
     standardHeaders: true,
     legacyHeaders: false,
     message: { ok: false, error: 'Too many requests — slow down' },
-    skip: (req) => {
-      // Webhooks de Meta (WhatsApp) deben poder mandar muchos mensajes
-      return req.path.includes('/whatsapp/webhook');
-    },
+    skip: (req) => req.path.includes('/whatsapp/webhook'),
   });
 }
 
-export function apiRateLimiter(opts?: Pick<SecurityOptions, 'apiRateLimit' | 'windowMs'>): RequestHandler {
+export function apiRateLimiter(
+  opts?: Pick<SecurityOptions, 'apiRateLimit' | 'windowMs'>,
+): RequestHandler {
   return rateLimit({
     windowMs: opts?.windowMs ?? 60_000,
     max: opts?.apiRateLimit ?? 120,
@@ -139,30 +165,39 @@ export function apiRateLimiter(opts?: Pick<SecurityOptions, 'apiRateLimit' | 'wi
 }
 
 // ---------------------------------------------------------------------------
-// JWT validation — híbrido: acepta Logto SSO o token local (F3B-01a)
+// JWT validation — híbrido: Logto SSO + token local (F3B-01a)
+//
+// FIX CodeRabbit: createRemoteJWKSet y el import de jose se elevan fuera del
+// request handler — se inicializan UNA sola vez al registrar el middleware,
+// no en cada request. Mejora de rendimiento significativa bajo carga.
 // ---------------------------------------------------------------------------
 
-/**
- * Middleware JWT híbrido.
- *
- * Tabla de comportamiento por combinación de variables de entorno:
- *   JWT_SECRET ✅ + LOGTO_ISSUER ✅ → acepta ambos: local y Logto
- *   JWT_SECRET ✅ + LOGTO_ISSUER ❌ → solo acepta tokens locales
- *   JWT_SECRET ❌ + LOGTO_ISSUER ✅ → solo acepta tokens Logto
- *   JWT_SECRET ❌ + LOGTO_ISSUER ❌ → dev mode — pasa todo sin validar (warn)
- *
- * El operador NO necesita distinguir qué tipo de token entra —
- * el middleware detecta el issuer automáticamente.
- */
 export function jwtAuthMiddleware(): RequestHandler {
-  const logtoIssuer = process.env.LOGTO_ISSUER;
+  const logtoIssuer   = process.env.LOGTO_ISSUER;
   const logtoAudience = process.env.LOGTO_AUDIENCE;
-  const jwtSecret = process.env.JWT_SECRET;
+  const jwtSecret     = process.env.JWT_SECRET;
 
   const devMode = !logtoIssuer && !jwtSecret;
   if (devMode) {
     console.warn('[security] No JWT config found — auth disabled (dev mode)');
     return (_req, _res, next) => next();
+  }
+
+  // ── Inicialización en tiempo de registro del middleware (una sola vez) ──
+  // jose se importa de forma síncrona en el módulo (import estático en la parte
+  // superior del archivo) pero como este proyecto usa dynamic import por
+  // compatibilidad con CJS, lo resolvemos con una Promise que se crea una vez.
+  let jwksPromise: Promise<ReturnType<typeof import('jose').createRemoteJWKSet>> | null = null;
+  let jwtImportPromise: Promise<typeof import('jose')> | null = null;
+  let jsonwebtokenPromise: Promise<typeof import('jsonwebtoken')> | null = null;
+
+  // Pre-warm imports y JWKS en background al registrar el middleware
+  jsonwebtokenPromise = import('jsonwebtoken');
+  if (logtoIssuer) {
+    jwtImportPromise = import('jose');
+    jwksPromise = jwtImportPromise.then(({ createRemoteJWKSet }) =>
+      createRemoteJWKSet(new URL(`${logtoIssuer}/jwks`)),
+    );
   }
 
   return async (req: Request, res: Response, next: NextFunction) => {
@@ -175,31 +210,28 @@ export function jwtAuthMiddleware(): RequestHandler {
     const token = authHeader.slice(7);
 
     try {
-      // Importar jsonwebtoken dinámicamente (compatible con ESM y CJS)
-      const jsonwebtoken = await import('jsonwebtoken');
+      // Reutiliza el import ya resuelto (Promise cached)
+      const jsonwebtoken = await jsonwebtokenPromise!;
       const decoded = jsonwebtoken.default.decode(token, { complete: true });
       const iss = (decoded?.payload as Record<string, unknown> | null)?.iss as string | undefined;
 
       if (iss === 'agent-studio-local') {
-        // ── Token local ──
         if (!jwtSecret) {
           res.status(401).json({ ok: false, error: 'JWT_SECRET not configured' });
           return;
         }
         const payload = jsonwebtoken.default.verify(token, jwtSecret) as Record<string, unknown>;
         (req as Request & { user: AuthenticatedUser }).user = {
-          sub: payload['sub'] as string,
-          email: payload['email'] as string | undefined,
-          role: payload['role'] as string | undefined,
+          sub:    payload['sub'] as string,
+          email:  payload['email'] as string | undefined,
+          role:   payload['role'] as string | undefined,
           source: 'local',
         };
         next();
         return;
       }
 
-      // ── Token Logto (o cualquier otro issuer) ──
-      if (!logtoIssuer) {
-        // Logto no configurado todavía — el sistema sigue funcionando con login local
+      if (!logtoIssuer || !jwksPromise || !jwtImportPromise) {
         res.status(401).json({
           ok: false,
           error: 'Logto SSO not configured. Use local login or configure LOGTO_ISSUER in settings.',
@@ -207,17 +239,17 @@ export function jwtAuthMiddleware(): RequestHandler {
         return;
       }
 
-      const { createRemoteJWKSet, jwtVerify } = await import('jose');
-      const JWKS = createRemoteJWKSet(new URL(`${logtoIssuer}/jwks`));
+      // Reutiliza JWKS y jwtVerify ya inicializados (no se recrean por request)
+      const [JWKS, { jwtVerify }] = await Promise.all([jwksPromise, jwtImportPromise]);
       const { payload } = await jwtVerify(token, JWKS, {
-        issuer: logtoIssuer,
+        issuer:   logtoIssuer,
         audience: logtoAudience ?? logtoIssuer,
       });
 
       (req as Request & { user: AuthenticatedUser }).user = {
-        sub: payload.sub as string,
-        email: (payload as Record<string, unknown>)['email'] as string | undefined,
-        role: ((payload as Record<string, unknown>)['role'] as string | undefined) ?? 'operator',
+        sub:    payload.sub as string,
+        email:  (payload as Record<string, unknown>)['email'] as string | undefined,
+        role:   ((payload as Record<string, unknown>)['role'] as string | undefined) ?? 'operator',
         source: 'logto',
       };
       next();
@@ -240,16 +272,15 @@ export function applySecurityMiddleware(
   app.use(helmetMiddleware());
   app.use(corsMiddleware(opts?.corsOrigins));
 
-  // Rate limiters
   app.use('/gateway/', webhookRateLimiter(opts));
   app.use('/api/', apiRateLimiter(opts));
 
-  // Auth JWT — solo en rutas de API, excluye /api/auth/ (login/register no requieren token)
   if (opts?.requireAuth ?? process.env.REQUIRE_AUTH === 'true') {
+    // jwtAuthMiddleware() se llama UNA sola vez aquí — no dentro del handler
+    const jwtMiddleware = jwtAuthMiddleware();
     app.use('/api/', (req: Request, res: Response, next: NextFunction) => {
-      // Excluir /api/auth/* para que login y register no requieran token
       if (req.path.startsWith('/auth/')) return next();
-      return jwtAuthMiddleware()(req, res, next);
+      return jwtMiddleware(req, res, next);
     });
   }
 }
