@@ -8,6 +8,7 @@ const GROUP_LABELS: Record<NonNullable<NodeTemplate['group']>, string> = {
   control:    'Control Flow',
   hierarchy:  'Hierarchy',
   n8n:        'n8n Integration',
+  subflow:    'Sub-Flows',
 };
 
 interface NodePaletteProps {
@@ -21,8 +22,7 @@ export function NodePalette({ onDragStart }: NodePaletteProps) {
     onDragStart?.(type);
   }
 
-  // Group templates
-  const groups = (['core', 'control', 'hierarchy', 'n8n'] as const).map((group) => ({
+  const groups = (['core', 'control', 'hierarchy', 'n8n', 'subflow'] as const).map((group) => ({
     group,
     label:     GROUP_LABELS[group],
     templates: NODE_TEMPLATES.filter((t) => t.group === group),

@@ -6,7 +6,7 @@ export interface NodeTemplate {
   icon: string;
   color: string;
   defaultConfig: Record<string, unknown>;
-  group?: 'core' | 'control' | 'hierarchy' | 'n8n';
+  group?: 'core' | 'control' | 'hierarchy' | 'n8n' | 'subflow';
 }
 
 export const NODE_TEMPLATES: NodeTemplate[] = [
@@ -77,6 +77,19 @@ export const NODE_TEMPLATES: NodeTemplate[] = [
       inputMapping:  {},
       outputMapping: {},
       waitForResult: false,
+    },
+  },
+
+  // ── Sub-Flow (F6-01) ───────────────────────────────────────────────────────
+  {
+    type: 'subflow', label: 'Sub-Flow', icon: '🔀', color: '#9333ea', group: 'subflow',
+    defaultConfig: {
+      flowId:     '',
+      flowName:   '',
+      label:      '',
+      inputMap:   {},
+      outputMap:  {},
+      waitForEnd: true,
     },
   },
 ];
