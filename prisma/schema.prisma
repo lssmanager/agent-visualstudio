@@ -6,8 +6,10 @@
 // Execution:    Flow → Run → RunStep  (LangGraph-style checkpoints)
 // Gateway:      ChannelConfig → ChannelBinding → GatewaySession → ConversationMessage
 // Integrations: N8nConnection → N8nWorkflow
-// Providers:    ProviderCredential → ModelCatalogEntry
+// Providers:    LlmProvider → OAuthToken | ProviderCredential → ModelCatalogEntry
+// Catalog:      ProviderCatalog (modelos públicos sincronizados)
 // Policies:     BudgetPolicy, ModelPolicy  (scope-inherited, exactly-one-FK)
+// Execution:    AgentProfile, Approval, CostEvent
 // Audit:        AuditEvent
 // Settings:     SystemConfig  (single-tenant admin keys — plaintext, same trust as .env)
 //
@@ -19,7 +21,7 @@
 // ── D-24d ───────────────────────────────────────────────────────────────────────────────
 // isLevelOrchestrator Boolean @default(false) en Agent, Workspace, Department.
 // Solo UN agente/workspace/department por scope puede tener isLevelOrchestrator=true.
-// Prisma no puede expresar "​​@@unique donde el valor sea true";
+// Prisma no puede expresar "@@unique donde el valor sea true";
 // por eso el partial unique index se aplica vía SQL raw en la migración:
 //   CREATE UNIQUE INDEX "agent_one_orchestrator_per_workspace"
 //     ON "Agent" ("workspaceId") WHERE "isLevelOrchestrator" = true;
@@ -66,6 +68,14 @@
 // El modelo actual usa scopeType/scopeId genéricos. Hacer workspaceId NOT NULL
 // requiere rellenar todos los call sites de AuditEvent (20-50 ubicaciones).
 // Ver issue de seguimiento: [F4-OBS] AuditEvent.workspaceId obligatorio.
+//
+// ── BUILD-FIX ───────────────────────────────────────────────────────────────────────────
+// Modelos agregados en este commit para resolver errores TypeScript en Coolify CI:
+//   LlmProvider, ProviderCatalog, OAuthToken, AgentProfile, Approval, CostEvent
+// Enums agregados: RunStatus, RunStepStatus, ProviderAuthType
+// Campos agregados en Run: workspaceId, agentId, inputData, outputData
+// Campos agregados en RunStep: index, model
+// deletedAt DateTime? en Department, Workspace, Agent
 // ───────────────────────────────────────────────────────────────────────────────────
 
 generator client {
@@ -75,6 +85,58 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────────────────────────
+
+/// Estado de ejecución de un Run.
+enum RunStatus {
+  queued
+  running
+  completed
+  failed
+  cancelled
+  waiting_approval
+}
+
+/// Estado de ejecución de un RunStep.
+enum RunStepStatus {
+  queued
+  running
+  completed
+  failed
+  skipped
+  waiting_approval
+}
+
+/// Tipo de autenticación de un LlmProvider.
+enum ProviderAuthType {
+  oauth
+  api_key
+  none
+}
+
+/// AUDIT-23: enum canónico — nombre ChannelType (NO ChannelKind).
+/// Valores exactos (7): telegram, whatsapp, webchat, discord, teams, slack, webhook.
+enum ChannelType {
+  telegram
+  whatsapp
+  webchat
+  discord
+  teams
+  slack
+  webhook
+}
+
+/// Estado operacional del adaptador del canal.
+/// Actualizado por ChannelAdapterManager tras cada cambio de estado.
+enum BotStatus {
+  initializing
+  online
+  offline
+  error
+  rate_limited
+  webhook_error
 }
 
 // ─── Hierarchy ────────────────────────────────────────────────────────────────────────────────────
@@ -112,6 +174,8 @@ model Department {
   isLevelOrchestrator Boolean  @default(false)
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
+  /// Soft-delete — null = activo, non-null = eliminado.
+  deletedAt    DateTime?
 
   workspaces   Workspace[]
   budgetPolicy BudgetPolicy? @relation("DepartmentBudget")
@@ -134,11 +198,13 @@ model Workspace {
   isLevelOrchestrator Boolean  @default(false)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
+  /// Soft-delete — null = activo, non-null = eliminado.
+  deletedAt    DateTime?
 
-  agents       Agent[]
+  agents         Agent[]
   channelConfigs ChannelConfig[]
-  budgetPolicy BudgetPolicy? @relation("WorkspaceBudget")
-  modelPolicy  ModelPolicy?  @relation("WorkspaceModel")
+  budgetPolicy   BudgetPolicy? @relation("WorkspaceBudget")
+  modelPolicy    ModelPolicy?  @relation("WorkspaceModel")
 
   @@unique([departmentId, slug])
 }
@@ -160,14 +226,18 @@ model Agent {
   profileJson  Json?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+  /// Soft-delete — null = activo, non-null = eliminado.
+  deletedAt    DateTime?
 
   skills          AgentSkill[]
   channelBindings ChannelBinding[]
   flows           Flow[]
   subagents       Subagent[]
   runSteps        RunStep[]
-  budgetPolicy    BudgetPolicy? @relation("AgentBudget")
-  modelPolicy     ModelPolicy?  @relation("AgentModel")
+  runs            Run[]           @relation("RunAgent")
+  budgetPolicy    BudgetPolicy?   @relation("AgentBudget")
+  modelPolicy     ModelPolicy?    @relation("AgentModel")
+  profiles        AgentProfile[]
 
   @@unique([workspaceId, slug])
 }
@@ -258,7 +328,18 @@ model Run {
   /// El ownership real es el path Flow → Agent → Workspace → Department → Agency (D-07).
   agencyId     String?
   agency       Agency?   @relation(fields: [agencyId], references: [id])
-  /// 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'waiting_approval'
+  /// BUILD-FIX: workspaceId para queries directas por workspace (GatewayService.dispatch)
+  workspaceId  String?
+  /// BUILD-FIX: agentId directo para queries de runs por agente (run-repository)
+  agentId      String?
+  agent        Agent?    @relation("RunAgent", fields: [agentId], references: [id])
+  /// BUILD-FIX: payload de entrada al Run (channel message, manual input, etc.)
+  inputData    Json?
+  /// BUILD-FIX: resultado final del Run
+  outputData   Json?
+  /// Estado de ejecución — usa string para compatibilidad retroactiva.
+  /// Valores canónicos: queued | running | completed | failed | cancelled | waiting_approval
+  /// El enum RunStatus define los valores válidos.
   status       String    @default("queued")
   /// { type: 'manual' | 'channel' | 'schedule' | 'replay:<runId>', payload? }
   trigger      Json
@@ -271,37 +352,25 @@ model Run {
   createdAt    DateTime  @default(now())
 
   // ─── AUDIT-39: jerarquía explícita (promovida de metadata) ─────────────────────────
-  // Antes estos valores vivían en Run.metadata como keys JSON, lo que
-  // obligaba a HierarchyStatusService a usar path operators de Postgres o
-  // filtros en memoria — costoso y no indexable.
-  //
-  // MIGRACIÓN: ejecutar scripts/migrate-run-hierarchy.ts para backfill.
-  // HierarchyStatusService debe usar estos campos directamente:
-  //   ANTES: where: { metadata: { path: ['parentRunId'], equals: id } }
-  //   DESPUÉS: where: { parentRunId: id }
-
   /// ID del Run padre que lanzó este Run (null = run raíz).
-  /// Self-relation "RunHierarchy" — indexado para queries de hijos.
   parentRunId    String?
   parentRun      Run?    @relation("RunHierarchy", fields: [parentRunId], references: [id], onDelete: SetNull)
   childRuns      Run[]   @relation("RunHierarchy")
 
   /// ID del RunStep padre que lanzó este Run (null si fue lanzado directamente).
-  /// Permite reconstruir el árbol completo Runs ↔ RunSteps.
   parentStepId   String?
   parentStep     RunStep? @relation("StepChildRuns", fields: [parentStepId], references: [id], onDelete: SetNull)
 
   /// ID del Run raíz del árbol de ejecución — desnormalizado para queries rápidas.
-  /// Null si este Run es el raíz. Permite obtener todos los Runs de un árbol
-  /// con un único WHERE hierarchyRoot = :rootId sin joins recursivos.
   hierarchyRoot  String?
 
-  steps RunStep[]
+  steps     RunStep[]
+  approvals Approval[]
 
   @@index([flowId, status])
-  /// D-10: índice corregido — agrega status al compuesto
   @@index([agencyId, status, createdAt])
-  /// AUDIT-39: índices para HierarchyStatusService
+  @@index([workspaceId, status])
+  @@index([agentId, status])
   @@index([parentRunId])
   @@index([hierarchyRoot])
 }
@@ -314,8 +383,12 @@ model RunStep {
   nodeId      String
   /// 'agent' | 'tool' | 'condition' | 'loop' | 'approval' | 'input' | 'output'
   nodeType    String
+  /// BUILD-FIX: posición/orden del step dentro del Run
+  index       Int       @default(0)
   agentId     String?
   agent       Agent?    @relation(fields: [agentId], references: [id])
+  /// BUILD-FIX: modelo LLM usado en este step (e.g. "openai/gpt-4o")
+  model       String?
   /// 'queued' | 'running' | 'completed' | 'failed' | 'skipped' | 'waiting_approval'
   status      String    @default("queued")
   input       Json?
@@ -330,33 +403,154 @@ model RunStep {
 
   /// AUDIT-39: Runs hijos lanzados desde este RunStep.
   childRuns   Run[]     @relation("StepChildRuns")
+  approvals   Approval[]
+  costEvents  CostEvent[]
 
-  /// D-10: índices de performance obligatorios
   @@index([runId, status])
   @@index([agentId, startedAt])
 }
 
-/// AUDIT-23: enum canónico — nombre ChannelType (NO ChannelKind).
-/// Valores exactos (7): telegram, whatsapp, webchat, discord, teams, slack, webhook.
-enum ChannelType {
-  telegram
-  whatsapp
-  webchat
-  discord
-  teams
-  slack
-  webhook
+// ─── Providers (LLM) ──────────────────────────────────────────────────────────────────────────────────────
+
+/// Proveedor LLM configurado por el tenant.
+/// Soporta api_key, oauth (PKCE), y none (para modelos locales/gratuitos).
+model LlmProvider {
+  id          String           @id @default(uuid())
+  /// Identificador canónico del provider: 'openai', 'anthropic', 'mistral', 'ollama', etc.
+  provider    String
+  /// Nombre descriptivo para la UI: "Mi OpenAI", "Anthropic Prod", etc.
+  name        String
+  authType    ProviderAuthType
+  /// API key cifrada (AES-256-GCM). Solo para authType = api_key.
+  apiKeyEnc   String?          @db.Text
+  /// URL base para providers custom / self-hosted.
+  baseUrl     String?
+  /// Modelo por defecto para este provider.
+  defaultModel String          @default("gpt-4o")
+  isActive    Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  oAuthToken OAuthToken?
+
+  @@unique([provider, name])
 }
 
-/// Estado operacional del adaptador del canal.
-/// Actualizado por ChannelAdapterManager tras cada cambio de estado.
-enum BotStatus {
-  initializing
-  online
-  offline
-  error
-  rate_limited
-  webhook_error
+/// Catálogo público de modelos disponibles por provider.
+/// Sincronizado periódicamente por CatalogSyncScheduler.
+model ProviderCatalog {
+  id           String   @id @default(uuid())
+  /// Provider canónico: 'openai', 'anthropic', etc.
+  provider     String
+  /// ID del modelo en la API del provider: 'gpt-4o', 'claude-3-5-sonnet-20241022', etc.
+  modelId      String
+  /// Nombre legible.
+  displayName  String
+  /// Familia del modelo: 'gpt-4', 'claude-3', etc.
+  family       String?
+  contextWindow Int?
+  maxOutputTokens Int?
+  /// Costo de entrada en USD por 1M tokens.
+  inputCostPer1M  Float?
+  /// Costo de salida en USD por 1M tokens.
+  outputCostPer1M Float?
+  /// Capacidades: { vision, tools, json_mode, ... }
+  capabilities Json?
+  isDeprecated Boolean  @default(false)
+  syncedAt     DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([provider, modelId])
+  @@index([provider, isDeprecated])
+}
+
+/// Token OAuth (PKCE) cifrado para un LlmProvider.
+/// Relación 1:1 con LlmProvider (solo si authType = oauth).
+model OAuthToken {
+  id               String      @id @default(uuid())
+  llmProviderId    String      @unique
+  llmProvider      LlmProvider @relation(fields: [llmProviderId], references: [id], onDelete: Cascade)
+  /// Access token cifrado AES-256-GCM.
+  accessTokenEnc   String      @db.Text
+  /// Refresh token cifrado AES-256-GCM (null si el provider no emite refresh token).
+  refreshTokenEnc  String?     @db.Text
+  expiresAt        DateTime
+  /// sub/account_id extraído del JWT (para mostrar en UI).
+  accountId        String?
+  /// Scopes concedidos por el provider.
+  scopes           String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+}
+
+// ─── Agent Profiles ───────────────────────────────────────────────────────────────────────────────────────
+
+/// Perfil de capacidades calculado de un Agent.
+/// Construido por AgentBuilder / ProfilePropagatorService.
+/// Versión snapshot — permite rollback y comparación de versiones.
+model AgentProfile {
+  id          String   @id @default(uuid())
+  agentId     String
+  agent       Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  /// Versión incremental del perfil.
+  version     Int      @default(1)
+  /// JSON completo del perfil (skills, tools, constraints, etc.)
+  profileJson Json
+  /// true = esta es la versión activa del perfil.
+  isActive    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([agentId, isActive])
+  @@index([agentId, version])
+}
+
+// ─── Approvals ────────────────────────────────────────────────────────────────────────────────────────────
+
+/// Aprobación humana requerida por un RunStep de tipo 'approval'.
+/// El Run queda en estado 'waiting_approval' hasta que se apruebe o rechace.
+model Approval {
+  id          String    @id @default(uuid())
+  runId       String
+  run         Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runStepId   String
+  runStep     RunStep   @relation(fields: [runStepId], references: [id], onDelete: Cascade)
+  /// 'pending' | 'approved' | 'rejected'
+  status      String    @default("pending")
+  /// Payload que espera aprobación (resumen de la acción a ejecutar).
+  payload     Json?
+  /// Comentario del aprobador.
+  comment     String?   @db.Text
+  /// ID del usuario que aprobó/rechazó (externo — no FK a tabla de usuarios aún).
+  resolvedBy  String?
+  resolvedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([runId, status])
+  @@index([runStepId])
+}
+
+// ─── Cost Events ──────────────────────────────────────────────────────────────────────────────────────────
+
+/// Evento de costo por llamada LLM.
+/// Creado por LlmStepExecutor por cada llamada al provider.
+/// Permite auditoría granular y reconciliación de costos.
+model CostEvent {
+  id           String    @id @default(uuid())
+  runStepId    String
+  runStep      RunStep   @relation(fields: [runStepId], references: [id], onDelete: Cascade)
+  /// Provider canónico: 'openai', 'anthropic', etc.
+  provider     String
+  model        String
+  inputTokens  Int       @default(0)
+  outputTokens Int       @default(0)
+  costUsd      Float     @default(0)
+  /// Metadatos adicionales: { finishReason, latencyMs, etc. }
+  metadata     Json?
+  createdAt    DateTime  @default(now())
+
+  @@index([runStepId])
+  @@index([provider, model, createdAt])
 }
 
 // ─── Gateway / Channels ───────────────────────────────────────────────────────────────────────────────────
@@ -501,126 +695,116 @@ model N8nWorkflow {
   @@unique([connectionId, n8nWorkflowId])
 }
 
-// ─── Provider Credentials ────────────────────────────────────────────────────────────────────────────────────
+// ─── Provider Credentials (legacy — para providers sin OAuth) ────────────────────────────────────────────
 
+/// Credenciales de provider LLM a nivel Agency (legacy).
+/// Para providers modernos usar LlmProvider + OAuthToken.
 model ProviderCredential {
-  id               String    @id @default(uuid())
-  agencyId         String
-  agency           Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  name             String
-  type             String
-  baseUrl          String?
-  apiKeyEncrypted  String    @db.Text
-  extraHeaders     Json?
-  isActive         Boolean   @default(true)
-  syncedAt         DateTime?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  id          String   @id @default(uuid())
+  agencyId    String
+  agency      Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  /// 'openai' | 'anthropic' | 'mistral' | 'google' | etc.
+  provider    String
+  /// API key cifrada (AES-256-GCM)
+  keyEncrypted String  @db.Text
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  catalogEntries ModelCatalogEntry[]
-
-  @@unique([agencyId, name])
-  @@index([agencyId, type, isActive])
+  @@unique([agencyId, provider])
 }
 
-// ─── Model Catalog ───────────────────────────────────────────────────────────────────────────────────────
-
+/// Entrada del catálogo de modelos (legacy — usar ProviderCatalog para nuevos).
 model ModelCatalogEntry {
-  id           String             @id @default(uuid())
-  providerId   String
-  provider     ProviderCredential @relation(fields: [providerId], references: [id], onDelete: Cascade)
-  modelId      String
-  displayName  String
-  families     String[]
-  contextK     Int                @default(0)
-  isActive     Boolean            @default(true)
-  raw          Json?
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
+  id             String   @id @default(uuid())
+  provider       String
+  modelId        String
+  displayName    String
+  contextWindow  Int?
+  inputCostPer1M Float?
+  outputCostPer1M Float?
+  capabilities   Json?
+  isDeprecated   Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  @@unique([providerId, modelId])
-  @@index([providerId, isActive])
-  @@index([modelId])
+  @@unique([provider, modelId])
 }
 
-// ─── Budget / Model Policies ──────────────────────────────────────────────────────────────────────────────────
+// ─── Policies ─────────────────────────────────────────────────────────────────────────────────────────────
 
+/// Budget policy — exactly-one-FK invariant:
+/// Exactamente uno de agencyId/departmentId/workspaceId/agentId debe ser non-null.
+/// Enforced a nivel DB con CHECK constraint (ver migración C-20).
 model BudgetPolicy {
-  id         String   @id @default(uuid())
-  limitUsd   Float
-  periodDays Int      @default(30)
-  alertAt    Float    @default(0.8)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  agencyId     String? @unique
-  departmentId String? @unique
-  workspaceId  String? @unique
-  agentId      String? @unique
-
-  agency     Agency?     @relation("AgencyBudget",     fields: [agencyId],     references: [id], onDelete: Cascade)
-  department Department? @relation("DepartmentBudget", fields: [departmentId], references: [id], onDelete: Cascade)
-  workspace  Workspace?  @relation("WorkspaceBudget",  fields: [workspaceId],  references: [id], onDelete: Cascade)
-  agent      Agent?      @relation("AgentBudget",      fields: [agentId],      references: [id], onDelete: Cascade)
+  id             String      @id @default(uuid())
+  agencyId       String?     @unique
+  agency         Agency?     @relation("AgencyBudget", fields: [agencyId], references: [id], onDelete: Cascade)
+  departmentId   String?     @unique
+  department     Department? @relation("DepartmentBudget", fields: [departmentId], references: [id], onDelete: Cascade)
+  workspaceId    String?     @unique
+  workspace      Workspace?  @relation("WorkspaceBudget", fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentId        String?     @unique
+  agent          Agent?      @relation("AgentBudget", fields: [agentId], references: [id], onDelete: Cascade)
+  /// Límite en USD por período.
+  limitUsd       Float
+  /// 'daily' | 'weekly' | 'monthly'
+  period         String      @default("monthly")
+  /// Gasto acumulado en el período actual.
+  spentUsd       Float       @default(0)
+  periodStart    DateTime    @default(now())
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
 }
 
+/// Model policy — exactly-one-FK invariant.
 model ModelPolicy {
-  id            String   @id @default(uuid())
-  primaryModel  String
-  fallbackChain String[]
-  temperature   Float?   @default(0.7)
-  maxTokens     Int?     @default(4096)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  agencyId     String? @unique
-  departmentId String? @unique
-  workspaceId  String? @unique
-  agentId      String? @unique
-
-  agency     Agency?     @relation("AgencyModel",     fields: [agencyId],     references: [id], onDelete: Cascade)
-  department Department? @relation("DepartmentModel", fields: [departmentId], references: [id], onDelete: Cascade)
-  workspace  Workspace?  @relation("WorkspaceModel",  fields: [workspaceId],  references: [id], onDelete: Cascade)
-  agent      Agent?      @relation("AgentModel",      fields: [agentId],      references: [id], onDelete: Cascade)
+  id             String      @id @default(uuid())
+  agencyId       String?     @unique
+  agency         Agency?     @relation("AgencyModel", fields: [agencyId], references: [id], onDelete: Cascade)
+  departmentId   String?     @unique
+  department     Department? @relation("DepartmentModel", fields: [departmentId], references: [id], onDelete: Cascade)
+  workspaceId    String?     @unique
+  workspace      Workspace?  @relation("WorkspaceModel", fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentId        String?     @unique
+  agent          Agent?      @relation("AgentModel", fields: [agentId], references: [id], onDelete: Cascade)
+  /// Modelos permitidos (whitelist). Null = todos permitidos.
+  allowedModels  String[]
+  /// Modelos bloqueados (blacklist).
+  blockedModels  String[]
+  /// Costo máximo por request en USD.
+  maxCostPerRequest Float?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
 }
 
-// ─── Audit ───────────────────────────────────────────────────────────────────────────────────────
+// ─── Audit ───────────────────────────────────────────────────────────────────────────────────────────────
 
-/// TODO(AUDIT-38): Planificado para migración F4-observabilidad.
-/// El modelo actual usa scopeType/scopeId genéricos (string libre).
-/// Para trazabilidad completa por workspace se necesita:
-///   workspaceId  String  (NOT NULL con FK a Workspace)
-///   agencyId     String? (opcional, para filtros de dashboard)
-///   departmentId String? (opcional)
-///   agentId      String? (opcional, para logs de agente específico)
-/// Hacer workspaceId NOT NULL requiere rellenar todos los call sites de AuditEvent
-/// (estimado 20–50 ubicaciones en gateway, API y run-engine).
-/// Coordinación con F4-observabilidad para hacerlo en una sola migración.
+/// AUDIT-38: workspaceId planificado para F4-observabilidad.
+/// Actualmente usa scopeType/scopeId genéricos.
 model AuditEvent {
-  id        String   @id @default(uuid())
-  eventType String
-  scopeType String?
-  scopeId   String?
-  userId    String?
-  payload   Json
-  createdAt DateTime @default(now())
+  id         String   @id @default(uuid())
+  /// Tipo de evento: 'run.started', 'run.completed', 'channel.connected', etc.
+  eventType  String
+  /// 'agency' | 'department' | 'workspace' | 'agent' | 'system'
+  scopeType  String
+  scopeId    String
+  /// Payload del evento (JSON libre).
+  payload    Json?
+  /// IP o identificador del actor (si aplica).
+  actor      String?
+  createdAt  DateTime @default(now())
 
+  @@index([scopeId, eventType, createdAt])
   @@index([eventType, createdAt])
-  @@index([scopeType, scopeId, createdAt])
-  @@index([userId, createdAt])
 }
 
-// ─── System Config (single-tenant settings) ───────────────────────────────────────────────────
-//
-// Almacena API keys y URLs configuradas desde Settings UI.
-// Sin cifrado — mismo nivel de confianza que process.env / .env en disco.
-// El admin es el único usuario del sistema (single-tenant).
-// resolveApiKey() en llm-client.ts prioriza estos valores sobre process.env.
+// ─── Settings ────────────────────────────────────────────────────────────────────────────────────────────
 
+/// Configuración de sistema — single-tenant, misma confianza que .env.
+/// Claves: 'gateway_encryption_key', 'default_llm_provider', etc.
 model SystemConfig {
-  /// Nombre de la variable de entorno, ej: 'OPENAI_API_KEY', 'N8N_BASE_URL'
   key       String   @id
-  /// Valor plaintext — misma confianza que .env
-  value     String
+  value     String   @db.Text
   updatedAt DateTime @updatedAt
 }
