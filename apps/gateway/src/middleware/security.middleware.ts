@@ -5,7 +5,13 @@
  *   1. Helmet (headers de seguridad HTTP)
  *   2. CORS configurado por workspace
  *   3. Rate limiting por IP (express-rate-limit)
- *   4. Validación de Logto JWT (si LOGTO_ISSUER está en env)
+ *   4. JWT híbrido: Logto SSO + token local (F3B-01a)
+ *
+ * Comportamiento de degradación JWT:
+ *   JWT_SECRET + LOGTO_ISSUER → acepta ambos
+ *   JWT_SECRET solo           → solo tokens locales
+ *   LOGTO_ISSUER solo         → solo tokens Logto
+ *   Ninguno                   → dev mode, pasa sin validar (warn)
  *
  * Inspirado en:
  * - n8n: CORS y rate limiting en servidor webhook
@@ -30,8 +36,19 @@ export interface SecurityOptions {
   apiRateLimit?: number;
   /** Ventana en ms (default: 60_000 = 1 min) */
   windowMs?: number;
-  /** Si true, valida JWT de Logto en rutas /api/** */
+  /** Si true, valida JWT en rutas /api/** (excluye /api/auth/) */
   requireAuth?: boolean;
+}
+
+/**
+ * F3B-01a: Claims extraídos del JWT (Logto o local) y adjuntados a req.user.
+ * source indica el proveedor que firmó el token.
+ */
+export interface AuthenticatedUser {
+  sub: string;
+  email?: string;
+  role?: string;
+  source: 'logto' | 'local';
 }
 
 // ---------------------------------------------------------------------------
@@ -122,31 +139,32 @@ export function apiRateLimiter(opts?: Pick<SecurityOptions, 'apiRateLimit' | 'wi
 }
 
 // ---------------------------------------------------------------------------
-// Logto JWT validation
+// JWT validation — híbrido: acepta Logto SSO o token local (F3B-01a)
 // ---------------------------------------------------------------------------
 
 /**
- * Middleware que valida el Bearer JWT emitido por Logto.
- * Requiere:
- *   LOGTO_ISSUER   = https://auth.tu-dominio.com/oidc
- *   LOGTO_AUDIENCE = https://api.agent-studio.com (o el identifier configurado)
+ * Middleware JWT híbrido.
  *
- * En desarrollo sin LOGTO_ISSUER, pasa sin validar (warn en consola).
+ * Tabla de comportamiento por combinación de variables de entorno:
+ *   JWT_SECRET ✅ + LOGTO_ISSUER ✅ → acepta ambos: local y Logto
+ *   JWT_SECRET ✅ + LOGTO_ISSUER ❌ → solo acepta tokens locales
+ *   JWT_SECRET ❌ + LOGTO_ISSUER ✅ → solo acepta tokens Logto
+ *   JWT_SECRET ❌ + LOGTO_ISSUER ❌ → dev mode — pasa todo sin validar (warn)
+ *
+ * El operador NO necesita distinguir qué tipo de token entra —
+ * el middleware detecta el issuer automáticamente.
  */
-export function logtoJwtMiddleware(): RequestHandler {
-  const issuer = process.env.LOGTO_ISSUER;
-  const audience = process.env.LOGTO_AUDIENCE;
+export function jwtAuthMiddleware(): RequestHandler {
+  const logtoIssuer = process.env.LOGTO_ISSUER;
+  const logtoAudience = process.env.LOGTO_AUDIENCE;
+  const jwtSecret = process.env.JWT_SECRET;
 
-  if (!issuer) {
-    console.warn(
-      '[security] LOGTO_ISSUER not set — JWT validation disabled (dev mode)',
-    );
-    // En dev, pasar siempre
+  const devMode = !logtoIssuer && !jwtSecret;
+  if (devMode) {
+    console.warn('[security] No JWT config found — auth disabled (dev mode)');
     return (_req, _res, next) => next();
   }
 
-  // Validación real usando jose (jsonwebtoken no soporta JWKS remoto bien)
-  // jose se importa dinámicamente para no requerir el paquete si no está configurado
   return async (req: Request, res: Response, next: NextFunction) => {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
@@ -157,19 +175,53 @@ export function logtoJwtMiddleware(): RequestHandler {
     const token = authHeader.slice(7);
 
     try {
-      // Importar jose dinámicamente
+      // Importar jsonwebtoken dinámicamente (compatible con ESM y CJS)
+      const jsonwebtoken = await import('jsonwebtoken');
+      const decoded = jsonwebtoken.default.decode(token, { complete: true });
+      const iss = (decoded?.payload as Record<string, unknown> | null)?.iss as string | undefined;
+
+      if (iss === 'agent-studio-local') {
+        // ── Token local ──
+        if (!jwtSecret) {
+          res.status(401).json({ ok: false, error: 'JWT_SECRET not configured' });
+          return;
+        }
+        const payload = jsonwebtoken.default.verify(token, jwtSecret) as Record<string, unknown>;
+        (req as Request & { user: AuthenticatedUser }).user = {
+          sub: payload['sub'] as string,
+          email: payload['email'] as string | undefined,
+          role: payload['role'] as string | undefined,
+          source: 'local',
+        };
+        next();
+        return;
+      }
+
+      // ── Token Logto (o cualquier otro issuer) ──
+      if (!logtoIssuer) {
+        // Logto no configurado todavía — el sistema sigue funcionando con login local
+        res.status(401).json({
+          ok: false,
+          error: 'Logto SSO not configured. Use local login or configure LOGTO_ISSUER in settings.',
+        });
+        return;
+      }
+
       const { createRemoteJWKSet, jwtVerify } = await import('jose');
-      const JWKS = createRemoteJWKSet(
-        new URL(`${issuer}/jwks`),
-      );
+      const JWKS = createRemoteJWKSet(new URL(`${logtoIssuer}/jwks`));
       const { payload } = await jwtVerify(token, JWKS, {
-        issuer,
-        audience: audience ?? issuer,
+        issuer: logtoIssuer,
+        audience: logtoAudience ?? logtoIssuer,
       });
 
-      // Adjuntar claims al request para uso en controllers
-      (req as Request & { user: unknown }).user = payload;
+      (req as Request & { user: AuthenticatedUser }).user = {
+        sub: payload.sub as string,
+        email: (payload as Record<string, unknown>)['email'] as string | undefined,
+        role: ((payload as Record<string, unknown>)['role'] as string | undefined) ?? 'operator',
+        source: 'logto',
+      };
       next();
+
     } catch (err) {
       console.error('[security] JWT validation failed:', err);
       res.status(401).json({ ok: false, error: 'Invalid or expired token' });
@@ -192,8 +244,12 @@ export function applySecurityMiddleware(
   app.use('/gateway/', webhookRateLimiter(opts));
   app.use('/api/', apiRateLimiter(opts));
 
-  // Auth JWT — solo en rutas de API, no en webhooks públicos de canales
+  // Auth JWT — solo en rutas de API, excluye /api/auth/ (login/register no requieren token)
   if (opts?.requireAuth ?? process.env.REQUIRE_AUTH === 'true') {
-    app.use('/api/', logtoJwtMiddleware());
+    app.use('/api/', (req: Request, res: Response, next: NextFunction) => {
+      // Excluir /api/auth/* para que login y register no requieran token
+      if (req.path.startsWith('/auth/')) return next();
+      return jwtAuthMiddleware()(req, res, next);
+    });
   }
 }
