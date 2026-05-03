@@ -67,6 +67,9 @@ export function ChannelsSettingsTab({ workspaceId, agents }: Props) {
   const { register, handleSubmit, watch, reset, formState: { errors } } =
     useForm<AddForm>({
       defaultValues: { kind: 'telegram', name: '', token: '', appId: '', appSecret: '', appPassword: '' },
+      // CodeRabbit: shouldUnregister ensures hidden fields lose their validation
+      // rules when the user switches kinds, preventing blocked submissions.
+      shouldUnregister: true,
     });
   const selectedKind        = watch('kind');
   const needsToken          = CHANNEL_KINDS.find((c) => c.kind === selectedKind)?.needsToken ?? false;
@@ -103,9 +106,10 @@ export function ChannelsSettingsTab({ workspaceId, agents }: Props) {
         const unsub = subscribeChannelStatus(workspaceId, ch.id, (data) => {
           // FIX-2: guard SSE events
           if (!isValidStatus(data.status)) return;
+          // CodeRabbit nitpick: isValidStatus is a type predicate — no cast needed.
           setChannels((prev) =>
             prev.map((c) =>
-              c.id === ch.id ? { ...c, status: data.status as ChannelRecord['status'] } : c,
+              c.id === ch.id ? { ...c, status: data.status } : c,
             ),
           );
         });

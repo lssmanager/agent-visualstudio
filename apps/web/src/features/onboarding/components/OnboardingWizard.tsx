@@ -87,13 +87,28 @@ export function OnboardingWizard({ open, workspaceId, agents, onComplete, onClos
       }
       // 2. Provision channel if selected
       if (values.channelKind) {
-        const ch = await provisionChannel(workspaceId, {
-          kind: values.channelKind as ChannelKind,
-          name: values.channelName || values.channelKind,
-          token: values.channelToken || undefined,
-        });
+        // CodeRabbit: discriminate payload by kind to satisfy ProvisionPayload union.
+        // Onboarding wizard only exposes telegram/whatsapp/discord/webchat so the
+        // slack/teams branches are future-proofing against CHANNEL_KINDS expansion.
+        const kind = values.channelKind as ChannelKind;
+        const name = values.channelName || kind;
+
+        let ch;
+        if (kind === 'slack') {
+          // Slack requires appId + appSecret (not surfaced in wizard yet, skip provision)
+          ch = null;
+        } else if (kind === 'teams') {
+          // Teams requires appId + appPassword (not surfaced in wizard yet, skip provision)
+          ch = null;
+        } else if (kind === 'webchat' || kind === 'webhook') {
+          ch = await provisionChannel(workspaceId, { kind, name });
+        } else {
+          // telegram | whatsapp | discord — token field
+          ch = await provisionChannel(workspaceId, { kind, name, token: values.channelToken });
+        }
+
         // 3. Bind to selected agent
-        if (values.agentId && ch.id) {
+        if (ch && values.agentId && ch.id) {
           const { bindChannel } = await import('../../../lib/channels-api');
           await bindChannel(workspaceId, ch.id, values.agentId);
         }
