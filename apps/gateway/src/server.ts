@@ -29,7 +29,8 @@ export function createApp(opts: AppOptions = {}): Application {
   const db = opts.db ?? new PrismaClient();
 
   if (!registry.has('telegram')) registry.register(new TelegramAdapter());
-  if (!registry.has('webchat')) registry.register(new WebChatAdapter());
+  // Pass shared db to WebChatAdapter so it reuses the same PrismaClient pool
+  if (!registry.has('webchat')) registry.register(new WebChatAdapter(db));
 
   applySecurityMiddleware(app, {
     corsOrigins: opts.corsOrigins,
