@@ -40,20 +40,23 @@
 
 import { createHash }               from 'crypto';
 import { Router, type Request, type Response } from 'express';
-import { WebChatAdapter }           from '@agent-vs/gateway-sdk';
+import { registry, WebChatAdapter } from '@agent-vs/gateway-sdk';
 import type { GatewayService }      from '../gateway.service';
 
 // ---------------------------------------------------------------------------
-// Adapter cache: one WebChatAdapter per ChannelConfig row
+// Adapter lookup: always use the shared instance registered in server.ts
+// so that the same PrismaClient pool is reused (no per-channel leaks).
 // ---------------------------------------------------------------------------
 
-const adapterCache = new Map<string, WebChatAdapter>();
-
-function getAdapter(channelId: string): WebChatAdapter {
-  if (!adapterCache.has(channelId)) {
-    adapterCache.set(channelId, new WebChatAdapter());
+function getAdapter(_channelId: string): WebChatAdapter {
+  const adapter = registry.get('webchat');
+  if (!adapter || !(adapter instanceof WebChatAdapter)) {
+    throw new Error(
+      '[webchat] WebChatAdapter not found in registry. ' +
+      'Make sure registry.register(new WebChatAdapter(db)) is called in server.ts before mounting routes.',
+    );
   }
-  return adapterCache.get(channelId)!;
+  return adapter;
 }
 
 // ---------------------------------------------------------------------------
@@ -64,13 +67,13 @@ export function webchatGatewayRouter(gatewayService: GatewayService): Router {
   const router = Router();
   const timeoutMs = Number(process.env.WEBCHAT_QUEUE_TIMEOUT_MS ?? 60_000);
 
-  // ── SSE stream ─────────────────────────────────────────────────────────
+  // ── SSE stream ──────────────────────────────────────────────────────
   router.get('/:channelId/stream', (req: Request, res: Response): void => {
     const adapter = getAdapter(req.params.channelId);
     adapter.createSseHandler()(req, res);
   });
 
-  // ── Inbound message from browser ───────────────────────────────────────
+  // ── Inbound message from browser ─────────────────────────────────────
   //
   // FIXED race condition from previous version:
   //   Before: handler() resolved the queue immediately, then dispatch ran
@@ -145,7 +148,7 @@ export function webchatGatewayRouter(gatewayService: GatewayService): Router {
     }
   });
 
-  // ── Session bootstrap ───────────────────────────────────────────────────
+  // ── Session bootstrap ────────────────────────────────────────────────────
   //
   // Called by the web widget on first load to get a stable sessionId.
   // Derives a deterministic UUID from the fingerprint so the same browser
