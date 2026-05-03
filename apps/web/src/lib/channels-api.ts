@@ -14,14 +14,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// ─── Channels ────────────────────────────────────────────────────────────────
+// ─── Channels ───────────────────────────────────────────────────────────────────────────────
 export function listChannels(workspaceId: string) {
   return request<ChannelRecord[]>(`/workspaces/${workspaceId}/channels`);
 }
 
 export function provisionChannel(
   workspaceId: string,
-  payload: { kind: ChannelKind; name: string; token?: string; appId?: string; secret?: string },
+  payload: {
+    kind:       ChannelKind;
+    name:       string;
+    token?:     string;   // Telegram, WhatsApp, Discord
+    appId?:     string;   // Slack, Teams
+    appSecret?: string;   // Slack, Teams (renamed from 'secret' for clarity)
+  },
 ) {
   return request<ChannelRecord>(`/workspaces/${workspaceId}/channels/provision`, {
     method: 'POST',
@@ -59,7 +65,7 @@ export function subscribeChannelStatus(
   return () => es.close();
 }
 
-// ─── LLM Providers ───────────────────────────────────────────────────────────
+// ─── LLM Providers ───────────────────────────────────────────────────────────────────────
 export function listLlmProviders(workspaceId: string) {
   return request<LlmProviderRecord[]>(`/workspaces/${workspaceId}/llm-providers`);
 }
