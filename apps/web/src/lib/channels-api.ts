@@ -19,15 +19,17 @@ export function listChannels(workspaceId: string) {
   return request<ChannelRecord[]>(`/workspaces/${workspaceId}/channels`);
 }
 
+// Discriminated union — TypeScript enforces correct credential fields per kind.
+// This prevents invalid mixes (e.g. teams + token) from compiling.
+type ProvisionPayload =
+  | { kind: 'telegram' | 'whatsapp' | 'discord'; name: string; token: string }
+  | { kind: 'slack';   name: string; appId: string; appSecret: string }
+  | { kind: 'teams';   name: string; appId: string; appPassword: string }
+  | { kind: 'webchat' | 'webhook'; name: string };
+
 export function provisionChannel(
   workspaceId: string,
-  payload: {
-    kind:       ChannelKind;
-    name:       string;
-    token?:     string;   // Telegram, WhatsApp, Discord
-    appId?:     string;   // Slack, Teams
-    appSecret?: string;   // Slack, Teams (renamed from 'secret' for clarity)
-  },
+  payload: ProvisionPayload,
 ) {
   return request<ChannelRecord>(`/workspaces/${workspaceId}/channels/provision`, {
     method: 'POST',
