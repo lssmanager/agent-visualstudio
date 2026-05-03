@@ -30,6 +30,7 @@ import SettingsPage from './features/settings/pages/SettingsPage';
 import { CommandsPage } from './features/commands/pages/CommandsPage';
 import OperationsPage from './features/operations/pages/OperationsPage';
 import { ChannelsPage } from './features/channels/ChannelsPage';
+import { ChannelDetail } from './features/channels/components/ChannelDetail';
 import { AlertTriangle } from 'lucide-react';
 
 export function App() {
@@ -173,31 +174,31 @@ export function App() {
 
             <Routes>
               <Route element={<MainLayout />}>
-                <Route path="/"                    element={<OverviewPage />} />
-                <Route path="/agency-builder"       element={<AgencyBuilderPage />} />
-                <Route path="/workspace-studio"     element={<WorkspaceStudioPage />} />
-                <Route path="/agency-topology"      element={<AgencyTopologyPage />} />
-                <Route path="/studio"               element={<Navigate to="/workspace-studio" replace />} />
-                <Route path="/observability"         element={<ObservabilityPage />} />
+                <Route path="/"            element={<OverviewPage />} />
+                <Route path="/agency-builder" element={<AgencyBuilderPage />} />
+                <Route path="/workspace-studio" element={<WorkspaceStudioPage />} />
+                <Route path="/agency-topology" element={<AgencyTopologyPage />} />
+                <Route path="/studio"      element={<Navigate to="/workspace-studio" replace />} />
+                <Route path="/observability" element={<ObservabilityPage />} />
                 <Route path="/observability/:runId" element={<ObservabilityRunPage />} />
-                <Route path="/workspaces"            element={<WorkspacesPage />} />
-                <Route path="/agents/new"            element={<AgentEditorPage />} />
-                <Route path="/agents/:id"            element={<AgentEditorPage />} />
-                <Route path="/agents"                element={<AgentListPage />} />
-                <Route path="/profiles"              element={<ProfilesPage />} />
-                <Route path="/diagnostics"           element={<DiagnosticsPage />} />
-                <Route path="/sessions"              element={<SessionsPage />} />
-                <Route path="/routing"               element={<RoutingPage />} />
-                <Route path="/runs"                  element={<RunsPage />} />
-                <Route path="/hooks"                 element={<HooksPage />} />
-                <Route path="/versions"              element={<VersionsPage />} />
-                <Route path="/settings"              element={<SettingsPage />} />
-                <Route path="/commands"              element={<CommandsPage />} />
-                <Route path="/operations"            element={<OperationsPage />} />
-                {/* F5-05 — Gestión de canales */}
-                <Route path="/channels"              element={<ChannelsPage />} />
-                <Route path="/channels/:id"          element={<ChannelsPage />} />
-                <Route path="*"                      element={<Navigate to="/" replace />} />
+                <Route path="/workspaces"  element={<WorkspacesPage />} />
+                <Route path="/agents/new"  element={<AgentEditorPage />} />
+                <Route path="/agents/:id" element={<AgentEditorPage />} />
+                <Route path="/agents"      element={<AgentListPage />} />
+                <Route path="/profiles"    element={<ProfilesPage />} />
+                <Route path="/diagnostics" element={<DiagnosticsPage />} />
+                <Route path="/sessions"    element={<SessionsPage />} />
+                <Route path="/routing"     element={<RoutingPage />} />
+                <Route path="/runs"        element={<RunsPage />} />
+                <Route path="/hooks"       element={<HooksPage />} />
+                <Route path="/versions"    element={<VersionsPage />} />
+                <Route path="/settings"    element={<SettingsPage />} />
+                <Route path="/commands"    element={<CommandsPage />} />
+                <Route path="/operations"  element={<OperationsPage />} />
+                {/* F5-05: Gestión de canales */}
+                <Route path="/channels"    element={<ChannelsPage />} />
+                <Route path="/channels/:id" element={<ChannelDetail />} />
+                <Route path="*"            element={<Navigate to="/" replace />} />
               </Route>
             </Routes>
           </BrowserRouter>
