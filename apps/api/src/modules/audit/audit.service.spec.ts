@@ -326,7 +326,6 @@ describe('logRunCompleted', () => {
     expect(entry?.severity).toBe('info');
   });
 
-  // Fix 3 — errorMessage redaction coverage
   it('logRunCompleted redacta tokens de API en errorMessage', async () => {
     const meta: RunCompletedMeta = {
       runId: 'run-secret', agentId: 'a', workspaceId: 'w',
@@ -389,7 +388,6 @@ describe('logAgentCreated', () => {
     expect(entry.detail).toContain('agent-parent-001');
   });
 
-  // Fix 1 — @ts-expect-error replaced with as unknown cast
   it('redacta campos sensibles en metadata', () => {
     const meta = {
       agentId:     'agent-sec',
@@ -417,9 +415,8 @@ describe('logAgentCreated', () => {
   });
 });
 
-// ── sanitizeAuditMeta (unit) ───────────────────────────────────────────────────
+// ── sanitizeAuditMeta ─────────────────────────────────────────────────────────
 describe('sanitizeAuditMeta', () => {
-  // Fix 2 — array sanitization coverage
   it('sanitizeAuditMeta redacta secretos dentro de arrays', () => {
     const result = sanitizeAuditMeta({
       items: [
@@ -435,6 +432,6 @@ describe('sanitizeAuditMeta', () => {
     expect((result['items'] as Array<Record<string, unknown>>)[1]?.['token'])
       .toBe('[REDACTED]');
     expect((result['items'] as unknown[])[2])
-      .toBe('string-item-no-object'); // primitivos en array pasan tal cual
+      .toBe('string-item-no-object');
   });
 });
