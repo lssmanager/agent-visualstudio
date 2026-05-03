@@ -172,15 +172,18 @@ export async function startTestApp(
     // Guardar respuesta
     appendHistory(msg.externalId, { role: 'assistant', content: reply })
 
-    // Notificar sessionManager mock — selector canónico
+    // FIX [PR#252 CR]: usar msg.externalId (no msg.senderId) para el upsert de sesión.
+    // handleIncoming() indexa historial y respuestas por externalId (chat.id),
+    // no por senderId (from.id). En chats de grupo ambos difieren — usar senderId
+    // desconectaría la sesión del hilo de conversación correcto.
     await _prismaMock.gatewaySession.upsert({
       where:  {
         channelConfigId_externalId: {
           channelConfigId: CHANNEL_CONFIG_ID,
-          externalId: msg.senderId,
+          externalId: msg.externalId,
         },
       },
-      create: { channelConfigId: CHANNEL_CONFIG_ID, externalId: msg.senderId, state: 'active', agentId: AGENT_ID },
+      create: { channelConfigId: CHANNEL_CONFIG_ID, externalId: msg.externalId, state: 'active', agentId: AGENT_ID },
       update: { state: 'active' },
     } as Parameters<PrismaMock['gatewaySession']['upsert']>[0])
 
@@ -279,7 +282,8 @@ export async function startTestApp(
     server,
     cleanup: async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()))
-      // sessionHistory es local: limpiar por buenas prácticas (GC)
+      // sessionHistory es local: se GC-ea con el closure. Limpiar explícitamente
+      // para liberar memoria en suites largas.
       sessionHistory.clear()
     },
   }

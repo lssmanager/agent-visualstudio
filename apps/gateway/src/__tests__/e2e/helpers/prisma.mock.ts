@@ -13,9 +13,14 @@
  * _reset(): limpia el estado entre tests (llamar en beforeEach).
  *
  * FIX [PR#144-C2]: Selectores alineados con el schema Prisma canónico:
- *   - @@unique([channelConfigId, externalId]) → selector channelConfigId_externalId
- *   - externalUserId → externalId en todos los where y data
+ *   - @@unique([channelConfigId, externalUserId]) → selector channelConfigId_externalUserId
  *   - buildSessionKey() centraliza la lógica de clave del Map
+ *   - fallbacks a externalId/externalUserId para retrocompatibilidad con callers legacy
+ *
+ * FIX [PR#252 CR]: selector canónico corregido de channelConfigId_externalId a
+ *   channelConfigId_externalUserId para alinearse con el @@unique real del schema
+ *   Prisma. Sin este fix los tests E2E pasaban contra un constraint inexistente
+ *   en producción, enmascarando regressions de resolución de sesión.
  */
 
 import { vi } from 'vitest'
@@ -29,9 +34,13 @@ import {
 // Estado en memoria
 const sessions = new Map<string, Record<string, unknown>>()
 
-/** Construye la clave canónica del Map para una sesión. */
-function buildSessionKey(channelConfigId: string, externalId: string): string {
-  return `${channelConfigId}:${externalId}`
+/**
+ * Construye la clave canónica del Map para una sesión.
+ * Usa channelConfigId + externalUserId para alinearse con el
+ * @@unique([channelConfigId, externalUserId]) del schema Prisma.
+ */
+function buildSessionKey(channelConfigId: string, externalUserId: string): string {
+  return `${channelConfigId}:${externalUserId}`
 }
 
 export const prismaMock = {
@@ -68,16 +77,22 @@ export const prismaMock = {
       create: Record<string, unknown>
       update: Record<string, unknown>
     }) => {
-      // FIX [PR#144-C2]: selector canónico channelConfigId_externalId (@@unique)
-      // con fallback a externalUserId para retrocompatibilidad con callers legacy.
-      const canonical = args.where.channelConfigId_externalId as
+      // FIX [PR#252 CR]: selector canónico channelConfigId_externalUserId (@@unique real)
+      // con fallback a channelConfigId_externalId y externalId/externalUserId para
+      // retrocompatibilidad con callers legacy.
+      const canonicalNew = args.where.channelConfigId_externalUserId as
+        | { channelConfigId: string; externalUserId: string }
+        | undefined
+      const canonicalLegacy = args.where.channelConfigId_externalId as
         | { channelConfigId: string; externalId: string }
         | undefined
 
-      const channelId = canonical?.channelConfigId
+      const channelId = canonicalNew?.channelConfigId
+        ?? canonicalLegacy?.channelConfigId
         ?? String(args.where.channelConfigId ?? CHANNEL_CONFIG_ID)
-      const extId     = canonical?.externalId
-        ?? String(args.where.externalId ?? args.where.externalUserId ?? args.where.id ?? '')
+      const extId     = canonicalNew?.externalUserId
+        ?? canonicalLegacy?.externalId
+        ?? String(args.where.externalUserId ?? args.where.externalId ?? args.where.id ?? '')
 
       const key      = buildSessionKey(channelId, extId)
       const existing = sessions.get(key) ?? {}
@@ -89,13 +104,14 @@ export const prismaMock = {
     findFirst: vi.fn((args: {
       where: {
         channelConfigId?: string
-        externalId?:      string
-        externalUserId?:  string   // legacy — aceptar pero preferir externalId
+        externalUserId?:  string
+        externalId?:      string   // legacy — aceptar pero preferir externalUserId
       }
     }) => {
-      // FIX [PR#144-C2]: preferir externalId, aceptar externalUserId como fallback
+      // FIX [PR#252 CR]: preferir externalUserId (campo canónico @@unique),
+      // aceptar externalId como fallback para callers legacy.
       const channelId = args.where.channelConfigId ?? CHANNEL_CONFIG_ID
-      const extId     = args.where.externalId ?? args.where.externalUserId ?? ''
+      const extId     = args.where.externalUserId ?? args.where.externalId ?? ''
       const key = buildSessionKey(channelId, extId)
       return Promise.resolve(sessions.get(key) ?? null)
     }),
@@ -103,8 +119,8 @@ export const prismaMock = {
     findUnique: vi.fn(() => Promise.resolve(null)),
 
     create: vi.fn((args: { data: Record<string, unknown> }) => {
-      // FIX [PR#144-C2]: preferir externalId en data
-      const extId = String(args.data.externalId ?? args.data.externalUserId ?? '')
+      // FIX [PR#252 CR]: preferir externalUserId (campo canónico) en data
+      const extId = String(args.data.externalUserId ?? args.data.externalId ?? '')
       const key   = buildSessionKey(CHANNEL_CONFIG_ID, extId)
       const record = { ...args.data, id: key }
       sessions.set(key, record)
@@ -115,15 +131,20 @@ export const prismaMock = {
       where: Record<string, unknown>
       data:  Record<string, unknown>
     }) => {
-      // FIX [PR#144-C2]: selector canónico con fallback
-      const canonical = args.where.channelConfigId_externalId as
+      // FIX [PR#252 CR]: selector canónico channelConfigId_externalUserId con fallback
+      const canonicalNew = args.where.channelConfigId_externalUserId as
+        | { channelConfigId: string; externalUserId: string }
+        | undefined
+      const canonicalLegacy = args.where.channelConfigId_externalId as
         | { channelConfigId: string; externalId: string }
         | undefined
 
-      const channelId = canonical?.channelConfigId
+      const channelId = canonicalNew?.channelConfigId
+        ?? canonicalLegacy?.channelConfigId
         ?? String(args.where.channelConfigId ?? CHANNEL_CONFIG_ID)
-      const extId     = canonical?.externalId
-        ?? String(args.where.externalId ?? args.where.externalUserId ?? args.where.id ?? '')
+      const extId     = canonicalNew?.externalUserId
+        ?? canonicalLegacy?.externalId
+        ?? String(args.where.externalUserId ?? args.where.externalId ?? args.where.id ?? '')
 
       const key      = buildSessionKey(channelId, extId)
       const existing = sessions.get(key) ?? {}

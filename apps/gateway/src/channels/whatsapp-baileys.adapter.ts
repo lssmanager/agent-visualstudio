@@ -13,6 +13,11 @@
  * normalizeMessage(), extractText(), extractType(), extractAttachment().
  *
  * F3a-23: ExponentialBackoff integrado para reconexiones.
+ *
+ * FIX [PR#252 CR]: baileysToIncoming() recibe this.channelConfigId como
+ * segundo argumento en messages.upsert y receive() para que el IncomingMessage
+ * mapeado siempre incluya channelConfigId y no sea descartado por
+ * BaseChannelAdapter.emit().
  */
 
 import path         from 'node:path'
@@ -247,13 +252,15 @@ export class WhatsAppBaileysAdapter extends BaseChannelAdapter {
     sock.ev.on('creds.update', saveCreds as unknown as (...args: unknown[]) => void)
 
     // ── messages.upsert: usa baileysToIncoming() (F3a-24) ──────────────────
+    // FIX [PR#252 CR]: pasar this.channelConfigId como segundo argumento para
+    // que el IncomingMessage mapeado incluya channelConfigId y no sea descartado
+    // por BaseChannelAdapter.emit().
     sock.ev.on('messages.upsert', ((event: { messages: unknown[]; type: string }) => {
       if (event.type !== 'notify') return
 
       for (const rawMsg of event.messages) {
-        // Castear a proto.IWebMessageInfo (estructura compatible)
         const waMsg = rawMsg as Parameters<typeof baileysToIncoming>[0]
-        const normalized = baileysToIncoming(waMsg)
+        const normalized = baileysToIncoming(waMsg, this.channelConfigId)
         if (!normalized) continue   // null = mensaje propio / sistema / no soportado
 
         this.emit(normalized).catch((err: unknown) =>
@@ -337,11 +344,15 @@ export class WhatsAppBaileysAdapter extends BaseChannelAdapter {
 
   // ── receive() ────────────────────────────────────────────────────────────
 
+  // FIX [PR#252 CR]: pasar this.channelConfigId como segundo argumento.
   async receive(
     rawPayload: Record<string, unknown>,
     _secrets:   Record<string, unknown>,
   ): Promise<ReturnType<typeof baileysToIncoming>> {
-    return baileysToIncoming(rawPayload as Parameters<typeof baileysToIncoming>[0])
+    return baileysToIncoming(
+      rawPayload as Parameters<typeof baileysToIncoming>[0],
+      this.channelConfigId,
+    )
   }
 
   // ── Callbacks públicos ──────────────────────────────────────────────────────

@@ -42,19 +42,23 @@ import { Server, Socket }  from 'socket.io'
  * FIX [PR#144-C4]: Contract aligned with run-engine emission:
  *   - 'run.status.changed'  → 'step.status.changed'
  *   - status + startedAt + completedAt → currentStatus + timestamp
+ *
+ * FIX [PR#252 CR]: agentId and error typed as string | null to match run-engine
+ * emission (packages/run-engine emits null, not undefined, for missing fields).
  */
 export interface StatusChangeEvent {
   runId:         string
   stepId:        string
-  agentId?:      string
+  agentId:       string | null
   nodeId:        string
   currentStatus: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'waitingapproval'
   timestamp:     Date
-  error?:        string
+  error:         string | null
 }
 
 /**
  * Payload pushed to WebSocket clients on every status change.
+ * Uses string | undefined (not null) so JSON serialisation omits absent fields.
  */
 export interface RunStatusPayload {
   runId:         string
@@ -157,6 +161,10 @@ export class StatusStreamGateway
    * Reads event.currentStatus (was event.status) and event.timestamp (was
    * event.startedAt / event.completedAt).
    *
+   * FIX [PR#252 CR]: event.agentId / event.error are string|null from the
+   * run-engine. Use ?? undefined so the WS payload omits the field rather than
+   * serialising null to JSON clients.
+   *
    * Broadcasts to the room identified by the runId so only subscribed
    * clients receive the update.
    */
@@ -167,12 +175,12 @@ export class StatusStreamGateway
     const payload: RunStatusPayload = {
       runId:         event.runId,
       stepId:        event.stepId,
-      agentId:       event.agentId,
+      agentId:       event.agentId   ?? undefined,
       nodeId:        event.nodeId,
       currentStatus: event.currentStatus,
       startedAt:     isoTimestamp,
       completedAt:   isoTimestamp,
-      error:         event.error,
+      error:         event.error     ?? undefined,
       ts:            new Date().toISOString(),
     }
 
