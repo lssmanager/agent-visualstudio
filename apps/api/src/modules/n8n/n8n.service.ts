@@ -119,7 +119,7 @@ export class N8nService {
   private readonly bridge = new N8nBridgeService();
 
   // ── Workflow management ─────────────────────────────────────────────────────
-  listWorkflows()       { return this.client.listWorkflows(); }
+  listWorkflows()         { return this.client.listWorkflows(); }
   getWorkflow(id: string) { return this.client.getWorkflow(id); }
 
   /** Create an n8n workflow from a FlowSpec.  Returns the created workflow. */
@@ -146,12 +146,21 @@ export class N8nService {
     return this.client.triggerWebhook(webhookPath, payload, method);
   }
 
-  getExecution(id: string)              { return this.client.getExecution(id); }
-  listExecutions(workflowId?: string)   { return this.client.listExecutions(workflowId); }
+  getExecution(id: string)            { return this.client.getExecution(id); }
+  listExecutions(workflowId?: string) { return this.client.listExecutions(workflowId); }
 
   // ── Bridge utilities ────────────────────────────────────────────────────────
   /** Returns the cross-reference map: canvas nodeId → n8n nodeId */
   getNodeIdMap(flow: FlowSpec): Map<string, string> {
     return this.bridge.buildNodeIdMap(flow);
+  }
+
+  /**
+   * Crea un workflow directamente desde un spec raw (sin FlowSpec).
+   * Usado por N8nStudioHelper para workflows generados por LLM.
+   * Refs: F4b-01 (#76)
+   */
+  createWorkflowRaw(workflow: Partial<N8nWorkflow>): Promise<N8nWorkflow> {
+    return this.client.createWorkflow(workflow);
   }
 }
