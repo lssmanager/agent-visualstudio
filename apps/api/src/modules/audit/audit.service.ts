@@ -156,13 +156,19 @@ export function sanitizeAuditMeta(
 /**
  * Truncate and strip common secret patterns from a free-text error message
  * before persisting it in the audit detail string.
+ *
+ * Patterns covered:
+ *   - OpenAI keys:  sk-<20+ alphanum>
+ *   - Bearer tokens: Bearer <10+ non-whitespace chars>
+ *   - GitHub PATs:  ghp_<30+ alphanum>
+ * Result is capped at 200 characters.
  */
 function sanitizeErrorMessage(msg: string): string {
   return msg
     .replace(/sk-[a-zA-Z0-9]{20,}/g, '[REDACTED]')
-    .replace(/Bearer\s+[\w\-\.]+/gi, 'Bearer [REDACTED]')
-    .replace(/token[=:\s]+[\w\-\.]{16,}/gi, 'token=[REDACTED]')
-    .substring(0, 300);
+    .replace(/Bearer\s+\S{10,}/gi,   '[REDACTED]')
+    .replace(/ghp_[a-zA-Z0-9]{30,}/g, '[REDACTED]')
+    .substring(0, 200);
 }
 
 // ── AuditService ──────────────────────────────────────────────────────────────
@@ -399,8 +405,8 @@ export class AuditService {
       ? `Run ${params.runId} completado en ${params.meta.durationMs}ms` +
         (params.meta.totalTokens != null ? ` — ${params.meta.totalTokens} tokens` : '')
       : `Run ${params.runId} terminó con status "${params.meta.status}"` +
-        (params.meta.errorCode ? ` [${params.meta.errorCode}]` : '') +
-        (safeErrorMessage ? `: ${safeErrorMessage}` : '');
+        (params.meta.errorCode    ? ` [${params.meta.errorCode}]`  : '') +
+        (safeErrorMessage         ? `: ${safeErrorMessage}`         : '');
 
     this.logAsync({
       resource:   'run',
