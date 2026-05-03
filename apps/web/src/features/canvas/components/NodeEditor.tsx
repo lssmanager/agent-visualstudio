@@ -102,7 +102,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
           </select>
           {config.agentName && (
             <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-              model: <span className="font-mono">{(config.model as string) ?? '—'}</span>
+              model: <span className="font-mono">{(config.model as string) ?? '\u2014'}</span>
             </div>
           )}
         </div>
@@ -267,7 +267,22 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
       {/* ── n8n Workflow ─────────────────────────────────────────────────── */}
       {nodeType === 'n8n_workflow' && (
         <div className="space-y-2">
-          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Workflow ID</label>
+          {/* Label visible en el canvas */}
+          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
+            Label (display name)
+          </label>
+          <input
+            value={(config.label as string) ?? ''}
+            onChange={(e) => updateField('label', e.target.value)}
+            placeholder="My Workflow"
+            className="w-full rounded border px-2 py-1 text-xs"
+            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
+          />
+
+          {/* Workflow ID */}
+          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
+            Workflow ID
+          </label>
           <input
             value={(config.workflowId as string) ?? ''}
             onChange={(e) => updateField('workflowId', e.target.value)}
@@ -275,6 +290,77 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
             className="w-full rounded border px-2 py-1 text-xs font-mono"
             style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
           />
+
+          {/* Trigger Mode */}
+          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
+            Trigger Mode
+          </label>
+          <select
+            value={(config.triggerMode as string) ?? 'webhook'}
+            onChange={(e) => updateField('triggerMode', e.target.value)}
+            className="w-full rounded border px-2 py-1 text-xs"
+            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
+          >
+            <option value="webhook">Webhook</option>
+            <option value="schedule">Schedule</option>
+            <option value="manual">Manual</option>
+          </select>
+
+          {/* Input Mapping — JSON object */}
+          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
+            Input Mapping (JSON)
+          </label>
+          <textarea
+            value={
+              typeof config.inputMapping === 'object'
+                ? JSON.stringify(config.inputMapping, null, 2)
+                : ((config.inputMapping as string) ?? '{}')
+            }
+            onChange={(e) => {
+              try {
+                updateField('inputMapping', JSON.parse(e.target.value));
+              } catch {
+                // allow partial editing — don't update on parse error
+              }
+            }}
+            placeholder='{ "agentOutput": "$.body.result" }'
+            rows={3}
+            className="w-full rounded border px-2 py-1 text-[10px] font-mono resize-none"
+            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
+          />
+
+          {/* Output Mapping — JSON object */}
+          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
+            Output Mapping (JSON)
+          </label>
+          <textarea
+            value={
+              typeof config.outputMapping === 'object'
+                ? JSON.stringify(config.outputMapping, null, 2)
+                : ((config.outputMapping as string) ?? '{}')
+            }
+            onChange={(e) => {
+              try {
+                updateField('outputMapping', JSON.parse(e.target.value));
+              } catch {
+                // allow partial editing
+              }
+            }}
+            placeholder='{ "result": "$.body.data" }'
+            rows={3}
+            className="w-full rounded border px-2 py-1 text-[10px] font-mono resize-none"
+            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
+          />
+
+          {/* Wait for result */}
+          <label className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+            <input
+              type="checkbox"
+              checked={(config.waitForResult as boolean) ?? false}
+              onChange={(e) => updateField('waitForResult', e.target.checked)}
+            />
+            Wait for workflow result (sync)
+          </label>
         </div>
       )}
     </div>

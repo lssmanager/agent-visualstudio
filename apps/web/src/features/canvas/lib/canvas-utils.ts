@@ -69,7 +69,15 @@ export const NODE_TEMPLATES: NodeTemplate[] = [
   },
   {
     type: 'n8n_workflow', label: 'n8n Workflow', icon: '⚙️', color: '#d97706', group: 'n8n',
-    defaultConfig: { workflowId: '', inputMapping: {}, outputMapping: {} },
+    defaultConfig: {
+      label:         '',
+      workflowId:    '',
+      workflowName:  '',
+      triggerMode:   'webhook',
+      inputMapping:  {},
+      outputMapping: {},
+      waitForResult: false,
+    },
   },
 ];
 
