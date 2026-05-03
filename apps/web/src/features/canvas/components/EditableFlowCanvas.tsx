@@ -15,14 +15,15 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 
 import type { FlowSpec, FlowNodeType, RunSpec, AgentSpec, SkillSpec } from '../../../lib/types';
-import { TriggerNode }     from './nodes/TriggerNode';
-import { AgentNode }       from './nodes/AgentNode';
-import { ToolNode }        from './nodes/ToolNode';
-import { ConditionNode }   from './nodes/ConditionNode';
-import { ApprovalNode }    from './nodes/ApprovalNode';
-import { EndNode }         from './nodes/EndNode';
-import { N8nWebhookNode }  from './nodes/N8nWebhookNode';
-import { SupervisorNode }  from './nodes/SupervisorNode';
+import { TriggerNode }      from './nodes/TriggerNode';
+import { AgentNode }        from './nodes/AgentNode';
+import { ToolNode }         from './nodes/ToolNode';
+import { ConditionNode }    from './nodes/ConditionNode';
+import { ApprovalNode }     from './nodes/ApprovalNode';
+import { EndNode }          from './nodes/EndNode';
+import { N8nWebhookNode }   from './nodes/N8nWebhookNode';
+import { N8nWorkflowNode }  from './nodes/N8nWorkflowNode';
+import { SupervisorNode }   from './nodes/SupervisorNode';
 import { generateNodeId, getNodeTemplate } from '../lib/canvas-utils';
 
 const NODE_TYPES = {
@@ -39,7 +40,7 @@ const NODE_TYPES = {
   // ── new ────────────────────────────────────
   supervisor:    SupervisorNode,
   n8n_webhook:   N8nWebhookNode,
-  n8n_workflow:  N8nWebhookNode, // reuses webhook visual until dedicated node
+  n8n_workflow:  N8nWorkflowNode,
 };
 
 const STATUS_COLORS: Record<string, string> = {
