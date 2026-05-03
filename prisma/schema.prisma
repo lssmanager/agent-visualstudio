@@ -12,6 +12,7 @@
 // Execution:    AgentProfile, Approval, CostEvent
 // Audit:        AuditEvent
 // Settings:     SystemConfig  (single-tenant admin keys — plaintext, same trust as .env)
+// Auth:         User + UserRole  (F3B-01a — auth híbrida Logto SSO + login local)
 //
 // ── D-15 ─────────────────────────────────────────────────────────────────────────────────────
 // GatewaySession.messageHistory ELIMINADO.
@@ -76,6 +77,12 @@
 // Campos agregados en Run: workspaceId, agentId, inputData, outputData
 // Campos agregados en RunStep: index, model
 // deletedAt DateTime? en Department, Workspace, Agent
+//
+// ── F3B-01a ──────────────────────────────────────────────────────────────────────────────
+// User model añadido para auth híbrida (Logto SSO + login local).
+// passwordHash es nullable — null si el usuario solo usa SSO.
+// workspaceId es opcional — permite usuarios sin workspace asignado (SUPER_ADMIN).
+// UserRole enum: SUPER_ADMIN | OPERATOR | VIEWER.
 // ───────────────────────────────────────────────────────────────────────────────────
 
 generator client {
@@ -139,7 +146,39 @@ enum BotStatus {
   webhook_error
 }
 
-// ─── Hierarchy ────────────────────────────────────────────────────────────────────────────────────
+/// F3B-01a: Roles de usuario para auth híbrida.
+/// SUPER_ADMIN: acceso total al sistema.
+/// OPERATOR: gestión de agentes y canales en su workspace.
+/// VIEWER: solo lectura.
+enum UserRole {
+  SUPER_ADMIN
+  OPERATOR
+  VIEWER
+}
+
+// ─── Auth (F3B-01a) ────────────────────────────────────────────────────────────────────────────────────
+
+/// Usuario del sistema — soporta auth híbrida: Logto SSO y/o login local.
+/// passwordHash es null si el usuario solo usa SSO (Google, empresa).
+/// workspaceId es opcional para SUPER_ADMIN que no pertenecen a un workspace.
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  /// null si el usuario solo usa Logto/SSO — nunca exponer en API
+  passwordHash String?
+  name         String?
+  role         UserRole   @default(OPERATOR)
+  workspaceId  String?
+  workspace    Workspace? @relation(fields: [workspaceId], references: [id])
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  deletedAt    DateTime?
+
+  @@index([email])
+  @@index([workspaceId])
+}
+
+// ─── Hierarchy ────────────────────────────────────────────────────────────────────────────────────────────
 
 model Agency {
   id           String       @id @default(uuid())
@@ -205,6 +244,8 @@ model Workspace {
   channelConfigs ChannelConfig[]
   budgetPolicy   BudgetPolicy? @relation("WorkspaceBudget")
   modelPolicy    ModelPolicy?  @relation("WorkspaceModel")
+  /// F3B-01a: usuarios asignados a este workspace
+  users          User[]
 
   @@unique([departmentId, slug])
 }
