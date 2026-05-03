@@ -11,6 +11,11 @@
  *   agentProfile.findFirst    → devuelve perfil fijo de test
  *
  * _reset(): limpia el estado entre tests (llamar en beforeEach).
+ *
+ * FIX [PR#144-C2]: Selectores alineados con el schema Prisma canónico:
+ *   - @@unique([channelConfigId, externalId]) → selector channelConfigId_externalId
+ *   - externalUserId → externalId en todos los where y data
+ *   - buildSessionKey() centraliza la lógica de clave del Map
  */
 
 import { vi } from 'vitest'
@@ -23,6 +28,11 @@ import {
 
 // Estado en memoria
 const sessions = new Map<string, Record<string, unknown>>()
+
+/** Construye la clave canónica del Map para una sesión. */
+function buildSessionKey(channelConfigId: string, externalId: string): string {
+  return `${channelConfigId}:${externalId}`
+}
 
 export const prismaMock = {
   channelConfig: {
@@ -58,7 +68,18 @@ export const prismaMock = {
       create: Record<string, unknown>
       update: Record<string, unknown>
     }) => {
-      const key = `${CHANNEL_CONFIG_ID}:${String(args.where.externalUserId ?? args.where.id ?? '')}`
+      // FIX [PR#144-C2]: selector canónico channelConfigId_externalId (@@unique)
+      // con fallback a externalUserId para retrocompatibilidad con callers legacy.
+      const canonical = args.where.channelConfigId_externalId as
+        | { channelConfigId: string; externalId: string }
+        | undefined
+
+      const channelId = canonical?.channelConfigId
+        ?? String(args.where.channelConfigId ?? CHANNEL_CONFIG_ID)
+      const extId     = canonical?.externalId
+        ?? String(args.where.externalId ?? args.where.externalUserId ?? args.where.id ?? '')
+
+      const key      = buildSessionKey(channelId, extId)
       const existing = sessions.get(key) ?? {}
       const updated  = { ...existing, ...args.create, ...args.update, id: key }
       sessions.set(key, updated)
@@ -66,16 +87,25 @@ export const prismaMock = {
     }),
 
     findFirst: vi.fn((args: {
-      where: { channelConfigId?: string; externalUserId?: string }
+      where: {
+        channelConfigId?: string
+        externalId?:      string
+        externalUserId?:  string   // legacy — aceptar pero preferir externalId
+      }
     }) => {
-      const key = `${args.where.channelConfigId ?? CHANNEL_CONFIG_ID}:${args.where.externalUserId ?? ''}`
+      // FIX [PR#144-C2]: preferir externalId, aceptar externalUserId como fallback
+      const channelId = args.where.channelConfigId ?? CHANNEL_CONFIG_ID
+      const extId     = args.where.externalId ?? args.where.externalUserId ?? ''
+      const key = buildSessionKey(channelId, extId)
       return Promise.resolve(sessions.get(key) ?? null)
     }),
 
     findUnique: vi.fn(() => Promise.resolve(null)),
 
     create: vi.fn((args: { data: Record<string, unknown> }) => {
-      const key = `${CHANNEL_CONFIG_ID}:${String(args.data.externalUserId ?? '')}`
+      // FIX [PR#144-C2]: preferir externalId en data
+      const extId = String(args.data.externalId ?? args.data.externalUserId ?? '')
+      const key   = buildSessionKey(CHANNEL_CONFIG_ID, extId)
       const record = { ...args.data, id: key }
       sessions.set(key, record)
       return Promise.resolve(record)
@@ -85,7 +115,17 @@ export const prismaMock = {
       where: Record<string, unknown>
       data:  Record<string, unknown>
     }) => {
-      const key = `${CHANNEL_CONFIG_ID}:${String(args.where.externalUserId ?? args.where.id ?? '')}`
+      // FIX [PR#144-C2]: selector canónico con fallback
+      const canonical = args.where.channelConfigId_externalId as
+        | { channelConfigId: string; externalId: string }
+        | undefined
+
+      const channelId = canonical?.channelConfigId
+        ?? String(args.where.channelConfigId ?? CHANNEL_CONFIG_ID)
+      const extId     = canonical?.externalId
+        ?? String(args.where.externalId ?? args.where.externalUserId ?? args.where.id ?? '')
+
+      const key      = buildSessionKey(channelId, extId)
       const existing = sessions.get(key) ?? {}
       const updated  = { ...existing, ...args.data }
       sessions.set(key, updated)
