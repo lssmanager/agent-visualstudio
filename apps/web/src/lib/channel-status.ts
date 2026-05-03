@@ -40,7 +40,8 @@ export interface BotStatusDisplay {
   /**
    * true si el canal está procesando mensajes activamente.
    * Equivalente a: botStatus IN (online, degraded).
-   * Usar SOLO cuando sea imprescindible un booleano.
+   * Usar SOLO cuando sea imprescindible un booleano (ej: toggle switch legacy).
+   * Para lógica nueva, usar botStatus directamente.
    */
   isActive: boolean
 }
@@ -110,6 +111,7 @@ export const BOT_STATUS_DISPLAY: Record<BotStatus, BotStatusDisplay> = {
 
 /**
  * Helper para los pocos lugares que sigan necesitando un booleano.
+ * Prefer usar BOT_STATUS_DISPLAY[status].isActive directamente.
  */
 export function isActiveFromBotStatus(status: BotStatus): boolean {
   return BOT_STATUS_DISPLAY[status].isActive
@@ -124,7 +126,7 @@ export function isActiveFromBotStatus(status: BotStatus): boolean {
 export function legacyStatusFromBotStatus(
   status: BotStatus,
 ): 'idle' | 'provisioning' | 'active' {
-  if (status === 'online' || status === 'degraded')                          return 'active'
-  if (['provisioning', 'needsauth', 'starting'].includes(status as string))  return 'provisioning'
+  if (status === 'online' || status === 'degraded') return 'active'
+  if (['provisioning', 'needsauth', 'starting'].includes(status as string)) return 'provisioning'
   return 'idle'
 }
