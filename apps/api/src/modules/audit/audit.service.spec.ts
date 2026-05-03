@@ -415,7 +415,7 @@ describe('logAgentCreated', () => {
   });
 });
 
-// ── sanitizeAuditMeta ─────────────────────────────────────────────────────────
+// ── sanitizeAuditMeta unit tests ──────────────────────────────────────────────
 describe('sanitizeAuditMeta', () => {
   it('sanitizeAuditMeta redacta secretos dentro de arrays', () => {
     const result = sanitizeAuditMeta({
@@ -432,6 +432,6 @@ describe('sanitizeAuditMeta', () => {
     expect((result['items'] as Array<Record<string, unknown>>)[1]?.['token'])
       .toBe('[REDACTED]');
     expect((result['items'] as unknown[])[2])
-      .toBe('string-item-no-object');
+      .toBe('string-item-no-object'); // primitivos en array pasan tal cual
   });
 });
