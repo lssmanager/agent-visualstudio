@@ -24,9 +24,9 @@
  *   afterAll  — borra workflow en n8n + limpia N8nWorkflow, Skill, N8nConnection en Prisma
  */
 
-import { encrypt }    from '@lss/crypto';
+import { encrypt }      from '@lss/crypto';
 import { PrismaClient } from '@prisma/client';
-import { N8nService }  from '../../n8n.service';
+import { N8nService }   from '../../n8n.service';
 
 // ── Skip guard ────────────────────────────────────────────────────────────────
 
@@ -144,10 +144,10 @@ describe('F4a-07 E2E: n8n_webhook flow executes real workflow', () => {
     expect(createdWorkflowId).toBeTruthy();
 
     const result = await service.triggerWorkflow({
-      workflowId:    createdWorkflowId,
-      inputData:     { test: true, source: 'e2e-F4a07' },
+      workflowId:     createdWorkflowId,
+      inputData:      { test: true, source: 'e2e-F4a07' },
       pollIntervalMs: 1_000,
-      maxWaitMs:     30_000,
+      maxWaitMs:      30_000,
     });
 
     // El workflow debe terminar correctamente
@@ -201,7 +201,7 @@ describe('F4a-07 E2E: n8n_webhook flow executes real workflow', () => {
       );
     }
 
-    // workflowId inválido — n8n retornará 404 o similar
+    // workflowId inválido — n8n retornará 404; N8nClient lanza error con texto 'failed (4'
     const result = await service.triggerWorkflow({
       workflowId: 'nonexistent-workflow-id-000',
       inputData:  { test: true },
@@ -246,7 +246,7 @@ describe('F4a-07 E2E: n8n_webhook flow executes real workflow', () => {
     expect(workflow!.connectionId).toBe(connectionId);
 
     // Verificar Skill con type=n8n_webhook en BD
-    //   name pattern: 'n8n:{connectionId}:{workflowId}' (ver n8n.service.ts syncWorkflows step 4d)
+    //   name pattern: 'n8n:{connectionId}:{workflowId}' (ver n8n.service.ts syncWorkflows)
     const skill = await prisma.skill.findFirst({
       where: {
         type: 'n8n_webhook',
