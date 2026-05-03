@@ -16,7 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getCanonicalStudioState } from '../../../lib/api';
 import type { CanonicalStudioStateResponse } from '../../../lib/types';
 
-export type HierarchyLevel = 'agency' | 'department' | 'workspace' | 'agent';
+export type HierarchyLevel = 'agency' | 'department' | 'workspace' | 'agent' | 'subagent';
 
 export interface HierarchyNode {
   id:       string;
@@ -46,7 +46,7 @@ function adaptToTree(state: CanonicalStudioStateResponse): HierarchyNode[] {
     agency?:      { id: string; name?: string };
     departments?: { id: string; name?: string; agencyId?: string }[];
     workspaces?:  { id: string; name?: string; departmentId?: string }[];
-    agents?:      { id: string; name?: string; workspaceId?: string; kind?: string; model?: string }[];
+    agents?:      { id: string; name?: string; workspaceId?: string; parentAgentId?: string; kind?: string; model?: string }[];
   };
 
   const agency      = raw.agency;
@@ -55,6 +55,22 @@ function adaptToTree(state: CanonicalStudioStateResponse): HierarchyNode[] {
   const agents      = raw.agents      ?? [];
 
   if (!agency) return [];
+
+  // Helper function to build agent hierarchy recursively
+  function buildAgentTree(parentId: string | null, workspaceId: string): HierarchyNode[] {
+    return agents
+      .filter(ag => ag.workspaceId === workspaceId && (ag.parentAgentId ?? null) === parentId)
+      .map(ag => {
+        const isSubagent = !!ag.parentAgentId;
+        return {
+          id:       ag.id,
+          name:     ag.name ?? ag.id,
+          level:    (isSubagent ? 'subagent' : 'agent') as HierarchyLevel,
+          children: buildAgentTree(ag.id, workspaceId),
+          meta:     { kind: ag.kind, model: ag.model },
+        };
+      });
+  }
 
   const agencyNode: HierarchyNode = {
     id:    agency.id,
@@ -72,15 +88,7 @@ function adaptToTree(state: CanonicalStudioStateResponse): HierarchyNode[] {
             id:    ws.id,
             name:  ws.name ?? ws.id,
             level: 'workspace' as HierarchyLevel,
-            children: agents
-              .filter(ag => ag.workspaceId === ws.id)
-              .map(ag => ({
-                id:       ag.id,
-                name:     ag.name ?? ag.id,
-                level:    'agent' as HierarchyLevel,
-                children: [],
-                meta:     { kind: ag.kind, model: ag.model },
-              })),
+            children: buildAgentTree(null, ws.id),
           })),
       })),
   };

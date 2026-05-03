@@ -19,6 +19,7 @@ const LEVEL_META: Record<
   department: { icon: LayoutGrid, color: '#7c3aed', indent: 12 },
   workspace:  { icon: Cpu,        color: '#059669', indent: 24 },
   agent:      { icon: Bot,        color: '#d97706', indent: 36 },
+  subagent:   { icon: Bot,        color: '#ea580c', indent: 48 },
 };
 
 interface TreeNodeRowProps {
@@ -35,6 +36,14 @@ function TreeNodeRow({ node, expanded, activeId, onToggle, onSelect }: TreeNodeR
   const hasChildren = node.children.length > 0;
   const { icon: Icon, color, indent } = LEVEL_META[node.level];
 
+  // Compute aria-level based on hierarchy level
+  const ariaLevel =
+    node.level === 'agency' ? 1 :
+    node.level === 'department' ? 2 :
+    node.level === 'workspace' ? 3 :
+    node.level === 'agent' ? 4 :
+    node.level === 'subagent' ? 5 : 1;
+
   function handleActivate() {
     if (hasChildren) onToggle(node.id);
     onSelect(node.id, node.level);
@@ -44,6 +53,7 @@ function TreeNodeRow({ node, expanded, activeId, onToggle, onSelect }: TreeNodeR
     <>
       <div
         role="treeitem"
+        aria-level={ariaLevel}
         aria-expanded={hasChildren ? isExpanded : undefined}
         aria-selected={isActive}
         tabIndex={0}
@@ -125,17 +135,20 @@ function TreeNodeRow({ node, expanded, activeId, onToggle, onSelect }: TreeNodeR
       </div>
 
       {/* Children — rendered only when expanded */}
-      {isExpanded &&
-        node.children.map(child => (
-          <TreeNodeRow
-            key={child.id}
-            node={child}
-            expanded={expanded}
-            activeId={activeId}
-            onToggle={onToggle}
-            onSelect={onSelect}
-          />
-        ))}
+      {hasChildren && isExpanded && (
+        <div role="group">
+          {node.children.map(child => (
+            <TreeNodeRow
+              key={child.id}
+              node={child}
+              expanded={expanded}
+              activeId={activeId}
+              onToggle={onToggle}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+      )}
     </>
   );
 }
