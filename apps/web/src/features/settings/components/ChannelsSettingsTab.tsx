@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Plus, Radio, Trash2, RefreshCw, CheckCircle, XCircle, Loader2, Link2 } from 'lucide-react';
+import { Plus, Radio, Trash2, RefreshCw, CheckCircle, XCircle, Loader2, Link2, WifiOff } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 
 import type { ChannelKind, ChannelRecord } from '../../../lib/types';
@@ -8,18 +8,31 @@ import {
   deleteChannel, subscribeChannelStatus,
 } from '../../../lib/channels-api';
 
+// AUDIT-23: añadidos slack y webhook alineados con enum ChannelKind del schema Prisma
 const CHANNEL_KINDS: { kind: ChannelKind; label: string; needsToken: boolean }[] = [
   { kind: 'telegram',  label: 'Telegram',  needsToken: true },
   { kind: 'whatsapp',  label: 'WhatsApp',  needsToken: true },
   { kind: 'discord',   label: 'Discord',   needsToken: true },
   { kind: 'webchat',   label: 'Web Chat',  needsToken: false },
+  { kind: 'slack',     label: 'Slack',     needsToken: true },
 ];
 
+// AUDIT-25: STATUS_ICON alineado con enum ChannelStatus del schema Prisma
+//   ANTES:  idle | provisioning | active | error   (valores obsoletos)
+//   AHORA:  provisioned | bound | offline | error   (valores reales de DB)
 const STATUS_ICON: Record<ChannelRecord['status'], JSX.Element> = {
-  idle:         <Radio size={14} className="text-[var(--text-muted)]" />,
-  provisioning: <Loader2 size={14} className="animate-spin text-yellow-500" />,
-  active:       <CheckCircle size={14} className="text-green-500" />,
-  error:        <XCircle size={14} className="text-red-500" />,
+  provisioned: <Radio size={14} className="text-[var(--text-muted)]" />,
+  bound:       <CheckCircle size={14} className="text-green-500" />,
+  offline:     <WifiOff size={14} className="text-yellow-500" />,
+  error:       <XCircle size={14} className="text-red-500" />,
+};
+
+// Labels legibles para la UI — evita mostrar valores internos del enum al usuario
+const STATUS_LABEL: Record<ChannelRecord['status'], string> = {
+  provisioned: 'Provisioned',
+  bound:       'Active',
+  offline:     'Offline',
+  error:       'Error',
 };
 
 interface Props {
@@ -130,7 +143,7 @@ export function ChannelsSettingsTab({ workspaceId, agents }: Props) {
         <div>
           <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Channels</h3>
           <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            Connect Telegram, WhatsApp, Discord, or Web Chat. Tokens are encrypted at rest.
+            Connect Telegram, WhatsApp, Discord, Slack, or Web Chat. Tokens are encrypted at rest.
           </p>
         </div>
         <button
@@ -237,7 +250,7 @@ export function ChannelsSettingsTab({ workspaceId, agents }: Props) {
                   {ch.name}
                 </div>
                 <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  {ch.kind} · {ch.status}
+                  {ch.kind} · {STATUS_LABEL[ch.status]}
                 </div>
               </div>
 
