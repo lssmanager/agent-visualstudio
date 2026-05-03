@@ -1,20 +1,17 @@
 /**
- * whatsapp-session.store.ts — F3a-30 (actualizado con JSDoc completo)
+ * whatsapp-session.store.ts — F3a-30 (F5-01: migrado a PrismaService)
  *
- * Store en memoria para sesiones WhatsApp Baileys.
- * Exporta la clase (para typing en DI) y el singleton whatsappSessionStore.
+ * Store de sesiones WhatsApp Baileys con persistencia en Prisma.
+ * Las credenciales Baileys se guardan en GatewaySession.metadata (JSON)
+ * en lugar de makeInMemoryStore o archivos en disco (regla D-22b).
  *
  * FIX #177: getOrCreate() usa Map<string, Promise<SessionEntry>> como lock
  * para prevenir la race condition TOCTOU donde dos requests simultáneos para
  * el mismo configId crean entradas duplicadas o inicializan el adapter dos veces.
- *
- * @example
- * // En WhatsAppBaileysAdapter:
- * const entry = await whatsappSessionStore.getOrCreate(channelConfigId);
- * entry.adapter = baileysAdapter;
  */
 
-import type { Response } from 'express';
+import type { Response }  from 'express';
+import type { PrismaService } from './prisma/prisma.service.js';
 
 export type WhatsAppSessionStatus =
   | 'connecting'
@@ -25,12 +22,12 @@ export type WhatsAppSessionStatus =
 
 export interface IWhatsAppAdapter {
   readonly channel: string;
-  state?:         string;
-  onQr?:          (handler: (qr: string) => void) => void;
-  onConnected?:   (handler: () => void) => void;
-  onDisconnected?:(handler: () => void) => void;
-  logout?:        () => Promise<void>;
-  dispose():      Promise<void>;
+  state?:          string;
+  onQr?:           (handler: (qr: string) => void) => void;
+  onConnected?:    (handler: () => void) => void;
+  onDisconnected?: (handler: () => void) => void;
+  logout?:         () => Promise<void>;
+  dispose():       Promise<void>;
 }
 
 export interface SessionEntry {
@@ -41,42 +38,85 @@ export interface SessionEntry {
 }
 
 /**
- * Store en memoria para sesiones WhatsApp Baileys.
- * Thread-safe para creaciones concurrentes vía Map de Promises (_creationLocks).
+ * Store de sesiones WhatsApp Baileys con persistencia en GatewaySession (Prisma).
  *
- * Ciclo de vida de una sesión:
- *   1. getOrCreate()     → crea entrada con status 'disconnected'
- *   2. setAdapter()      → asigna el adapter Baileys
- *   3. setStatus()       → transición: 'connecting' → 'qr_ready' → 'connected'
- *   4. destroy()/remove()→ limpieza y cierre de SSE clients
+ * Las credenciales Baileys se serializan como JSON y se guardan en
+ * GatewaySession.metadata para sobrevivir reinicios del proceso (D-22b).
+ *
+ * El estado en memoria (qrBuffer, sseClients) sigue siendo efímero por diseño —
+ * el QR se regenera en cada reconexión.
  */
 export class WhatsAppSessionStore {
   private readonly sessions       = new Map<string, SessionEntry>();
-  /** FIX #177: lock de creaciones en curso para prevenir race conditions */
   private readonly _creationLocks = new Map<string, Promise<SessionEntry>>();
 
+  constructor(private readonly prisma?: PrismaService) {}
+
+  // ── Persistencia Prisma (D-22b) ────────────────────────────────────────────
+
   /**
-   * Devuelve la sesión existente o crea una nueva de forma thread-safe.
-   *
-   * Si dos llamadas concurrentes llegan con el mismo configId mientras la
-   * entrada aún no existe, ambas reciben la misma Promise — la creación
-   * solo ocurre una vez (fix #177).
-   *
-   * @param configId  ID del ChannelConfig (clave de la sesión)
-   * @returns         La SessionEntry creada o existente
+   * Persiste las credenciales Baileys en GatewaySession.metadata.
+   * Llamado por saveCreds() de Baileys cada vez que las credenciales cambian.
    */
+  async saveCredentials(
+    channelConfigId: string,
+    creds: Record<string, unknown>,
+  ): Promise<void> {
+    if (!this.prisma) return;
+    await this.prisma.gatewaySession.upsert({
+      where:  { channelConfigId },
+      create: {
+        channelConfigId,
+        metadata: JSON.stringify(creds),
+        status:   'connecting',
+      },
+      update: {
+        metadata:  JSON.stringify(creds),
+        updatedAt: new Date(),
+      },
+    });
+  }
+
+  /**
+   * Carga las credenciales Baileys desde GatewaySession.metadata.
+   * Devuelve null si no existe sesión previa (primer login → generará QR).
+   */
+  async loadCredentials(
+    channelConfigId: string,
+  ): Promise<Record<string, unknown> | null> {
+    if (!this.prisma) return null;
+    const session = await this.prisma.gatewaySession.findUnique({
+      where: { channelConfigId },
+    });
+    if (!session?.metadata) return null;
+    try {
+      return JSON.parse(session.metadata as string) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Marca la sesión como closed en BD (disconnect limpio).
+   */
+  async markClosed(channelConfigId: string): Promise<void> {
+    if (!this.prisma) return;
+    await this.prisma.gatewaySession.update({
+      where:  { channelConfigId },
+      data:   { status: 'closed', updatedAt: new Date() },
+    }).catch(() => { /* no existe → ignorar */ });
+  }
+
+  // ── Store en memoria (estado efímero) ──────────────────────────────────────
+
   async getOrCreate(configId: string): Promise<SessionEntry> {
-    // Fast path: ya existe
     const existing = this.sessions.get(configId);
     if (existing) return existing;
 
-    // Lock path: si hay una creación en curso, devolver la misma Promise
     const inFlight = this._creationLocks.get(configId);
     if (inFlight) return inFlight;
 
-    // Crear la entrada y registrar el lock
     const creation = Promise.resolve().then(() => {
-      // Double-check tras await (otro contexto pudo haber completado)
       if (!this.sessions.has(configId)) {
         this.sessions.set(configId, {
           adapter:    null as unknown as IWhatsAppAdapter,
@@ -93,41 +133,19 @@ export class WhatsAppSessionStore {
     return creation;
   }
 
-  /**
-   * Devuelve la sesión si existe, sin crearla.
-   *
-   * @param configId  ID del ChannelConfig
-   */
   get(configId: string): SessionEntry | undefined {
     return this.sessions.get(configId);
   }
 
-  /**
-   * Devuelve true si la sesión existe en el store.
-   *
-   * @param configId  ID del ChannelConfig
-   */
   has(configId: string): boolean {
     return this.sessions.has(configId);
   }
 
-  /**
-   * Asigna el adapter Baileys a la sesión, creándola si no existe.
-   *
-   * @param configId  ID del ChannelConfig
-   * @param adapter   Instancia del adapter Baileys
-   */
   async setAdapter(configId: string, adapter: IWhatsAppAdapter): Promise<void> {
     const entry  = await this.getOrCreate(configId);
     entry.adapter = adapter;
   }
 
-  /**
-   * Actualiza el QR buffer y notifica a los clientes SSE.
-   *
-   * @param configId  ID del ChannelConfig
-   * @param qr        Código QR en formato base64 o string
-   */
   setQr(configId: string, qr: string): void {
     const entry = this.sessions.get(configId);
     if (!entry) return;
@@ -136,13 +154,6 @@ export class WhatsAppSessionStore {
     this.broadcastSse(entry, { event: 'qr', data: qr });
   }
 
-  /**
-   * Actualiza el status de la sesión y notifica a los clientes SSE.
-   * Si el status es 'connected', limpia el qrBuffer.
-   *
-   * @param configId  ID del ChannelConfig
-   * @param status    Nuevo estado de la sesión
-   */
   setStatus(configId: string, status: WhatsAppSessionStatus): void {
     const entry = this.sessions.get(configId);
     if (!entry) return;
@@ -151,11 +162,6 @@ export class WhatsAppSessionStore {
     this.broadcastSse(entry, { event: 'status', data: status });
   }
 
-  /**
-   * Elimina la sesión del store y cierra todos los clientes SSE.
-   *
-   * @param configId  ID del ChannelConfig
-   */
   remove(configId: string): void {
     const entry = this.sessions.get(configId);
     if (!entry) return;
@@ -167,24 +173,11 @@ export class WhatsAppSessionStore {
     this._creationLocks.delete(configId);
   }
 
-  /**
-   * Alias semántico de remove() para el flujo de deprovision.
-   * Emite un log explícito antes de eliminar.
-   *
-   * @param configId  ID del ChannelConfig
-   */
   destroy(configId: string): void {
     console.info(`[wa-session-store] Destroying session: ${configId}`);
     this.remove(configId);
   }
 
-  /**
-   * Registra un cliente SSE para recibir eventos de QR y status.
-   * Envía el estado actual inmediatamente al conectar.
-   *
-   * @param configId  ID del ChannelConfig
-   * @param res       Objeto Response de Express configurado para SSE
-   */
   async addSseClient(configId: string, res: Response): Promise<void> {
     const entry = await this.getOrCreate(configId);
     entry.sseClients.add(res);
@@ -195,23 +188,13 @@ export class WhatsAppSessionStore {
     res.on('close', () => { entry.sseClients.delete(res); });
   }
 
-  /**
-   * Devuelve los IDs de todas las sesiones activas en el store.
-   */
   activeSessions(): string[] {
     return [...this.sessions.keys()];
   }
 
-  /**
-   * Número de creaciones en curso (para diagnóstico y tests).
-   */
   get pendingCreations(): number {
     return this._creationLocks.size;
   }
-
-  // ---------------------------------------------------------------------------
-  // Privados
-  // ---------------------------------------------------------------------------
 
   private broadcastSse(
     entry:   SessionEntry,
@@ -232,8 +215,15 @@ export class WhatsAppSessionStore {
   }
 }
 
-/** Tipo exportado para inyección en WhatsAppDeprovisionService y tests */
 export type WhatsAppSessionStore_t = WhatsAppSessionStore;
 
-/** Singleton global del store de sesiones WhatsApp */
+/** Singleton global — prisma se inyecta en GatewayModule via setGlobalPrisma() */
 export const whatsappSessionStore = new WhatsAppSessionStore();
+
+/**
+ * Inyecta PrismaService en el singleton global.
+ * Llamado desde GatewayModule.onModuleInit().
+ */
+export function setGlobalWhatsAppSessionStorePrisma(prisma: PrismaService): void {
+  (whatsappSessionStore as unknown as { prisma: PrismaService }).prisma = prisma;
+}
