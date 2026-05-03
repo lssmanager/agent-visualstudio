@@ -21,6 +21,10 @@ import { ChannelEventEmitter } from './channel-event-emitter'
 const VALID_TRANSITIONS: Partial<Record<BotStatus, BotStatus[]>> = {
   draft:         ['configured', 'error'],
   configured:    ['provisioning', 'error'],
+  // NOTA: configured → draft ELIMINADO intencionalmente.
+  // "Reset de configuración" no tiene caso de uso en API/UI actual.
+  // Si se necesita en el futuro, añadir explícitamente con operación
+  // dedicada (resetConfig) para evitar degradación accidental de estado.
   provisioning:  ['needsauth', 'starting', 'error', 'offline'],
   needsauth:     ['starting', 'error', 'offline'],
   starting:      ['online', 'error', 'offline'],
@@ -29,11 +33,13 @@ const VALID_TRANSITIONS: Partial<Record<BotStatus, BotStatus[]>> = {
   offline:       ['starting', 'provisioning', 'deprovisioned', 'error'],
   error:         ['starting', 'provisioning', 'deprovisioned', 'offline'],
   deprovisioned: [], // TERMINAL
+  deprovisioned: [], // TERMINAL — ver error descriptivo en transitionStatus()
 }
 
 /**
  * Deriva el valor de isActive (deprecated) a partir de botStatus.
  * isActive = true solo si el canal está procesando mensajes normalmente.
+ * Este cálculo es el ÚNICO lugar que debe definir esta derivación.
  * Este cálculo es el ÚNICO lugar que debe definir esta derivación.
  */
 function deriveIsActive(status: BotStatus): boolean {
@@ -80,6 +86,7 @@ export class ChannelLifecycleService {
 
     const currentStatus = channel.botStatus
 
+    // Estado terminal: mensaje específico y claro
     if (currentStatus === BotStatus.deprovisioned) {
       throw new Error(
         `Channel ${channelConfigId} is deprovisioned (terminal state). ` +
@@ -119,6 +126,7 @@ export class ChannelLifecycleService {
     }
 
     // Emite evento canónico: channel.online, channel.offline, channel.error, etc.
+    // Consumido por: SSE endpoint, webhook notifiers, monitoring.
     this.events.emit(`channel.${newStatus}`, event)
   }
 }

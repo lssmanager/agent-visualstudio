@@ -33,6 +33,7 @@ describe('encrypt / decrypt', () => {
   it('decrypt lanza si el ciphertext está corrupto', () => {
     const stored = encrypt('hello')
     const [iv, tag, ct] = stored.split('.') as [string, string, string]
+    // Corromper último byte del ciphertext
     const badCt = ct.slice(0, -2) + 'AA'
     expect(() => decrypt(`${iv}.${tag}.${badCt}`)).toThrow('authentication tag mismatch')
   })

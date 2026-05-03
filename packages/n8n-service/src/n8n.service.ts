@@ -27,11 +27,11 @@
  *   No API key required           X-N8N-API-KEY required
  *   LLM tool-call path            Canvas orchestrator / sync path
  *
- * ── Encrypted secret format (shared with GatewayService) ──
+ * ── Encrypted secret format (F3b-05 / F3b-06) ──
  *
- *   AES-256-GCM stored as hex:
- *   [12 bytes IV][16 bytes auth tag][N bytes ciphertext]
- *   Key: process.env.N8N_SECRET ?? process.env.CHANNEL_SECRET (64 hex chars = 32 bytes)
+ *   AES-256-GCM stored via @lss/crypto:
+ *   <iv_base64url>.<authTag_base64url>.<ciphertext_base64url>
+ *   Key: process.env.SECRETS_ENCRYPTION_KEY (64 hex chars = 32 bytes)
  *
  * ── Tool name pattern (skill-bridge.ts line 38) ──
  *
@@ -39,7 +39,7 @@
  *   → skill__n8n_{n8nWorkflowId}__invoke
  */
 
-import { createDecipheriv }                    from 'crypto';
+import { decrypt }                             from '@lss/crypto';
 import { N8nClient, type N8nClientConfig, type N8nExecutionResult } from './n8n-client';
 import type {
   BridgedSkillSpec,
@@ -232,7 +232,7 @@ export class N8nService {
    *
    * Steps:
    *  1. Load N8nConnection from Prisma — throws if not found or inactive.
-   *  2. Decrypt the API key (AES-256-GCM) — throws if N8N_SECRET not set.
+   *  2. Decrypt the API key (AES-256-GCM) — throws if SECRETS_ENCRYPTION_KEY not set.
    *  3. Fetch GET /api/v1/workflows from n8n — non-2xx / network errors
    *     are captured in errors[] (not thrown), method returns early.
    *  4. For each workflow:
@@ -243,7 +243,7 @@ export class N8nService {
    *     e. Errors per workflow are captured in errors[] — loop continues.
    *  5. Return SyncResult.
    *
-   * @throws Error if N8nConnection is not found, inactive, or N8N_SECRET is missing.
+   * @throws Error if N8nConnection is not found, inactive, or SECRETS_ENCRYPTION_KEY is missing.
    */
   async syncWorkflows(connectionId: string): Promise<SyncResult> {
     const result: SyncResult = {
@@ -268,18 +268,15 @@ export class N8nService {
     }
 
     // ── Step 2: decrypt API key ───────────────────────────────────────
-    const secretKeyHex = process.env['N8N_SECRET'] ?? process.env['CHANNEL_SECRET'];
-    if (!secretKeyHex) {
-      throw new Error('N8N_SECRET not configured');
+    let apiKey: string;
+    try {
+      apiKey = decrypt(conn.apiKeyEncrypted);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `[N8nService] Failed to decrypt apiKeyEncrypted for connection ${connectionId}: ${msg}`,
+      );
     }
-    if (!/^[0-9a-fA-F]{64}$/.test(secretKeyHex)) {
-      throw new Error('N8N_SECRET must be a valid hex string of 32 bytes');
-    }
-    // AES-256-GCM payload: [12b IV][16b authTag][>=1b ciphertext] = min 29 bytes = 58 hex chars
-    if (!/^[0-9a-fA-F]{58,}$/.test(conn.apiKeyEncrypted)) {
-      throw new Error('apiKeyEncrypted malformed');
-    }
-    const apiKey = this.decryptApiKey(conn.apiKeyEncrypted, secretKeyHex);
 
     // ── Step 3: fetch workflow list from n8n ──────────────────────────
     let workflows: N8nWorkflowDto[];
@@ -483,39 +480,9 @@ export class N8nService {
 
     return perConnection.flat();
   }
-
-  // ── Private helpers ───────────────────────────────────────────────────
-
-  /**
-   * Decrypts an AES-256-GCM encrypted hex string.
-   *
-   * Encrypted format (matches GatewayService):
-   *   [12 bytes IV][16 bytes auth tag][N bytes ciphertext]  — all as a single hex string
-   *
-   * @param encryptedHex  Hex-encoded encrypted payload
-   * @param keyHex        64-char hex string (32 bytes) master key
-   */
-  private decryptApiKey(encryptedHex: string, keyHex: string): string {
-    if (!/^[0-9a-fA-F]{64}$/.test(keyHex)) {
-      throw new Error('N8N_SECRET must be a valid hex string of 32 bytes');
-    }
-    if (!/^[0-9a-fA-F]{58,}$/.test(encryptedHex)) {
-      throw new Error('apiKeyEncrypted malformed');
-    }
-    const key     = Buffer.from(keyHex, 'hex');
-    const buf     = Buffer.from(encryptedHex, 'hex');
-    const iv      = buf.subarray(0, 12);
-    const authTag = buf.subarray(12, 28);
-    const cipher  = buf.subarray(28);
-
-    const decipher = createDecipheriv('aes-256-gcm', key, iv);
-    decipher.setAuthTag(authTag);
-    const decrypted = Buffer.concat([decipher.update(cipher), decipher.final()]);
-    return decrypted.toString('utf8');
-  }
 }
 
-// ── Utility ───────────────────────────────────────────────────────────────
+  // ── Utility ───────────────────────────────────────────────────────────────
 
 function sleep(ms: number): Promise<void> {
   return new Promise<void>(resolve => setTimeout(resolve, ms));
