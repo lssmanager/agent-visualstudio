@@ -379,9 +379,8 @@ describe('logAgentCreated', () => {
       workspaceId: 'ws-1',
       scopeLevel:  'agent',
       createdBy:   'user-1',
-      // @ts-expect-error — probando sanitización
       apiKey:      'sk-secret-key',
-    } as AgentCreatedMeta;
+    } as unknown as AgentCreatedMeta;
     const entry = service.logAgentCreated({ agentId: 'agent-sec', meta });
     expect(entry.metadata?.apiKey).toBe('[REDACTED]');
   });
