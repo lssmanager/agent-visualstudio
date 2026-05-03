@@ -21,6 +21,10 @@
  *     → agentExecutorStub.run()
  *     → TelegramAdapter.send()
  *     → global.fetch (interceptado)
+ *
+ * FIX [PR#144-C1]: sessionHistory movido al interior de startTestApp() para
+ * evitar contaminación de estado entre suites que corren en paralelo.
+ * El Map es local a cada instancia de TestApp y se limpia en cleanup().
  */
 
 import express, { type Express }  from 'express'
@@ -51,9 +55,6 @@ interface IncomingMessage {
   receivedAt: string
 }
 
-// Estado en memoria de sesiones para multi-turn
-const sessionHistory = new Map<string, SessionTurn[]>()
-
 export interface TestApp {
   baseUrl:  string
   server:   Server
@@ -78,6 +79,10 @@ export async function startTestApp(
     maxAttempts  = 2,
     retryDelayMs = 50,
   } = options
+
+  // FIX [PR#144-C1]: sessionHistory es local a esta instancia de TestApp.
+  // Múltiples llamadas a startTestApp() (suites paralelas) no comparten estado.
+  const sessionHistory = new Map<string, SessionTurn[]>()
 
   const app: Express = express()
   app.use(express.json())
@@ -167,10 +172,15 @@ export async function startTestApp(
     // Guardar respuesta
     appendHistory(msg.externalId, { role: 'assistant', content: reply })
 
-    // Notificar sessionManager mock
+    // Notificar sessionManager mock — selector canónico
     await _prismaMock.gatewaySession.upsert({
-      where:  { externalUserId: msg.senderId },
-      create: { channelConfigId: CHANNEL_CONFIG_ID, externalUserId: msg.senderId, state: 'active', agentId: AGENT_ID },
+      where:  {
+        channelConfigId_externalId: {
+          channelConfigId: CHANNEL_CONFIG_ID,
+          externalId: msg.senderId,
+        },
+      },
+      create: { channelConfigId: CHANNEL_CONFIG_ID, externalId: msg.senderId, state: 'active', agentId: AGENT_ID },
       update: { state: 'active' },
     } as Parameters<PrismaMock['gatewaySession']['upsert']>[0])
 
@@ -264,14 +274,12 @@ export async function startTestApp(
   const addr    = server.address() as { port: number }
   const baseUrl = `http://127.0.0.1:${addr.port}`
 
-  // También resetear historial entre instancias
-  sessionHistory.clear()
-
   return {
     baseUrl,
     server,
     cleanup: async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()))
+      // sessionHistory es local: limpiar por buenas prácticas (GC)
       sessionHistory.clear()
     },
   }

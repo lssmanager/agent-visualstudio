@@ -15,6 +15,10 @@
  *   - Los datos raw de Baileys siempre se preservan en rawPayload
  *   - La URL de media NO se descarga aquí — el caller puede pedirla
  *     via sock.downloadMediaMessage() usando rawPayload
+ *
+ * FIX [PR#229]: baileysToIncoming() ahora requiere channelConfigId como
+ * segundo parámetro. Todos los retornos incluyen channelConfigId y
+ * channelType: 'whatsapp' para satisfacer el contrato de IncomingMessage.
  */
 
 import type { proto }          from '@whiskeysockets/baileys'
@@ -48,12 +52,14 @@ export interface BaileysMapperOptions {
 /**
  * Convierte un WAMessage de Baileys en IncomingMessage normalizado.
  *
- * @param waMsg  - Mensaje raw de Baileys (proto.IWebMessageInfo)
- * @param opts   - Opciones de procesamiento
+ * @param waMsg           - Mensaje raw de Baileys (proto.IWebMessageInfo)
+ * @param channelConfigId - ID del ChannelConfig en BD (requerido para el contrato)
+ * @param opts            - Opciones de procesamiento
  * @returns IncomingMessage normalizado, o null si debe ignorarse
  */
 export function baileysToIncoming(
   waMsg: proto.IWebMessageInfo,
+  channelConfigId: string,
   opts: BaileysMapperOptions = {},
 ): IncomingMessage | null {
 
@@ -105,8 +111,9 @@ export function baileysToIncoming(
     pushName: (waMsg as any).pushName ?? '',
   }
 
-  // 11. Mapear por tipo
+  // 11. Mapear por tipo — pasamos channelConfigId para incluirlo en base
   return mapByType(msgKey, msgContent, {
+    channelConfigId,
     externalId,
     senderId,
     threadId:    externalId,   // WA no tiene threads — threadId === externalId
@@ -147,12 +154,13 @@ function detectMessageKey(msg: proto.IMessage): string | null {
 // ── Contexto de mapeo ────────────────────────────────────────────────────────────
 
 interface MapCtx {
-  externalId:   string
-  senderId:     string
-  threadId:     string
-  rawPayload:   Record<string, unknown>
-  timestamp:    string
-  baseMetadata: Record<string, unknown>
+  channelConfigId: string    // FIX [PR#229]: requerido para contrato IncomingMessage
+  externalId:      string
+  senderId:        string
+  threadId:        string
+  rawPayload:      Record<string, unknown>
+  timestamp:       string
+  baseMetadata:    Record<string, unknown>
 }
 
 // ── Mapeo por tipo ────────────────────────────────────────────────────────────────
@@ -163,7 +171,10 @@ function mapByType(
   ctx:     MapCtx,
 ): IncomingMessage | null {
 
+  // FIX [PR#229]: base incluye channelConfigId y channelType en todos los retornos
   const base = {
+    channelConfigId: ctx.channelConfigId,
+    channelType:     'whatsapp' as const,
     externalId:  ctx.externalId,
     senderId:    ctx.senderId,
     threadId:    ctx.threadId,
@@ -309,8 +320,8 @@ function mapByType(
       return {
         ...base,
         text: phone
-          ? `\ud83d\udc64 ${displayName}: ${phone}`
-          : `\ud83d\udc64 ${displayName}`,
+          ? `👤 ${displayName}: ${phone}`
+          : `👤 ${displayName}`,
         type: 'text',
         metadata: {
           ...ctx.baseMetadata,

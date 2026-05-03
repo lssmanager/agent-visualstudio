@@ -13,6 +13,11 @@
  * Room strategy: one Socket.IO room per runId.
  * StatusChangeEvent (F2a-10) is emitted by HierarchyStatusService and caught
  * here via NestJS EventEmitter to push updates to the correct room.
+ *
+ * TODO(F3b): Add @UseGuards(WsAuthGuard) once jwtAuthMiddleware propagates
+ * to the WebSocket handshake (phase F3b-security-layer). Also verify
+ * run ownership in subscribeToRun: run.workspaceId !== socket.data.user.workspaceId
+ * → emit 'error' { message: 'Unauthorized' } and return.
  */
 
 import {
@@ -33,23 +38,34 @@ import { Server, Socket }  from 'socket.io'
 /**
  * Shape of the StatusChangeEvent emitted by HierarchyStatusService (F2a-10).
  * Mirrors packages/run-engine/src/events/status-change.event.ts
+ *
+ * FIX [PR#144-C4]: Contract aligned with run-engine emission:
+ *   - 'run.status.changed'  → 'step.status.changed'
+ *   - status + startedAt + completedAt → currentStatus + timestamp
  */
 export interface StatusChangeEvent {
-  runId:      string
-  stepId:     string
-  agentId?:   string
-  nodeId:     string
-  status:     'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'waitingapproval'
-  startedAt?: string   // ISO-8601
-  completedAt?: string // ISO-8601
-  error?:     string
+  runId:         string
+  stepId:        string
+  agentId?:      string
+  nodeId:        string
+  currentStatus: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'waitingapproval'
+  timestamp:     Date
+  error?:        string
 }
 
 /**
  * Payload pushed to WebSocket clients on every status change.
  */
-export interface RunStatusPayload extends StatusChangeEvent {
-  ts: string  // server timestamp ISO-8601
+export interface RunStatusPayload {
+  runId:         string
+  stepId:        string
+  agentId?:      string
+  nodeId:        string
+  currentStatus: StatusChangeEvent['currentStatus']
+  startedAt:     string  // ISO-8601 derived from timestamp
+  completedAt:   string  // ISO-8601 derived from timestamp
+  error?:        string
+  ts:            string  // server timestamp ISO-8601
 }
 
 interface SubscribeDto {
@@ -88,6 +104,12 @@ export class StatusStreamGateway
    * Client subscribes to a specific run's status stream.
    * Joins the room named after the runId so it only receives
    * events for that run.
+   *
+   * TODO(F3b): verify ownership before joining room:
+   *   const run = await this.prisma.run.findUnique({ where: { id: dto.runId } })
+   *   if (!run || run.workspaceId !== client.data.user.workspaceId) {
+   *     client.emit('error', { message: 'Unauthorized' }); return;
+   *   }
    */
   @SubscribeMessage('subscribeToRun')
   async handleSubscribe(
@@ -131,21 +153,34 @@ export class StatusStreamGateway
    * Triggered by HierarchyStatusService.emitStatusChange() (F2a-10)
    * on every RunStep transition.
    *
+   * FIX [PR#144-C4]: Listens to 'step.status.changed' (was 'run.status.changed').
+   * Reads event.currentStatus (was event.status) and event.timestamp (was
+   * event.startedAt / event.completedAt).
+   *
    * Broadcasts to the room identified by the runId so only subscribed
    * clients receive the update.
    */
-  @OnEvent('run.status.changed')
+  @OnEvent('step.status.changed')
   handleStatusChanged(event: StatusChangeEvent): void {
+    const isoTimestamp = event.timestamp?.toISOString() ?? new Date().toISOString()
+
     const payload: RunStatusPayload = {
-      ...event,
-      ts: new Date().toISOString(),
+      runId:         event.runId,
+      stepId:        event.stepId,
+      agentId:       event.agentId,
+      nodeId:        event.nodeId,
+      currentStatus: event.currentStatus,
+      startedAt:     isoTimestamp,
+      completedAt:   isoTimestamp,
+      error:         event.error,
+      ts:            new Date().toISOString(),
     }
 
     const room = runRoom(event.runId)
     this.server.to(room).emit('run_status_update', payload)
 
     this.logger.debug(
-      `[broadcast] runId=${event.runId} stepId=${event.stepId} status=${event.status} room=${room}`,
+      `[broadcast] runId=${event.runId} stepId=${event.stepId} status=${event.currentStatus} room=${room}`,
     )
   }
 }

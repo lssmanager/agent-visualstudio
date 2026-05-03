@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Radio, Trash2, RefreshCw, CheckCircle, XCircle, Loader2, Link2, WifiOff } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 
@@ -98,29 +98,39 @@ export function ChannelsSettingsTab({ workspaceId, agents }: Props) {
 
   useEffect(() => { void load(); }, [load]);
 
+  // FIX [PR#234]: Memoize channelIds to avoid re-subscribing SSE on every
+  // render that updates non-id fields (status, agentId, name, etc.).
+  // SSE subscriptions only need to change when the set of channel IDs changes.
+  const channelIds = useMemo(
+    () => channels.map((c) => c.id),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [channels.map((c) => c.id).join(',')],
+  );
+
   // SSE subscriptions — keyed by channel id
+  // Dep: channelIds (stable reference) + workspaceId — prevents re-subscribe
+  // on status/agentId updates that don't change the set of IDs.
   useEffect(() => {
     const map = sseCleanups.current;
-    channels.forEach((ch) => {
-      if (!map.has(ch.id)) {
-        const unsub = subscribeChannelStatus(workspaceId, ch.id, (data) => {
+    channelIds.forEach((id) => {
+      if (!map.has(id)) {
+        const unsub = subscribeChannelStatus(workspaceId, id, (data) => {
           // FIX-2: guard SSE events
           if (!isValidStatus(data.status)) return;
-          // CR #230 nitpick: isValidStatus() is a type predicate — no cast needed
           setChannels((prev) =>
             prev.map((c) =>
-              c.id === ch.id ? { ...c, status: data.status } : c,
+              c.id === id ? { ...c, status: data.status } : c,
             ),
           );
         });
-        map.set(ch.id, unsub);
+        map.set(id, unsub);
       }
     });
     map.forEach((unsub, id) => {
-      if (!channels.find((c) => c.id === id)) { unsub(); map.delete(id); }
+      if (!channelIds.includes(id)) { unsub(); map.delete(id); }
     });
     return () => { map.forEach((u) => u()); map.clear(); };
-  }, [channels, workspaceId]);
+  }, [channelIds, workspaceId]);
 
   async function handleAdd(values: AddForm) {
     setBusy('new'); setErr(null);
