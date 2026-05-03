@@ -4,18 +4,9 @@
  * Verifica que helmetMiddleware() añade todos los headers de seguridad
  * requeridos por el checklist de F3b-02.
  *
- * No levanta un servidor real — crea una mini Express app en memoria
- * y verifica que los headers estén presentes en la respuesta a GET /health.
- *
- * Headers verificados:
- *   ✓ strict-transport-security  (HSTS)
- *   ✓ content-security-policy    (CSP)
- *   ✓ x-frame-options             (clickjacking)
- *   ✓ x-content-type-options      (MIME sniffing)
- *   ✓ referrer-policy
- *   ✓ x-permitted-cross-domain-policies
- *   ✓ x-dns-prefetch-control
- *   ✓ x-powered-by ausente        (no revelar stack)
+ * FIX CodeRabbit: las aserciones de CSP ahora usan parseCsp() para verificar
+ * pares directiva/valor exactos en lugar de loose regex. Un token que aparece
+ * en otra directiva ya no genera un falso positivo.
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -25,7 +16,33 @@ import request from 'supertest';
 import { helmetMiddleware } from '../../middleware/security.middleware.js';
 
 // ---------------------------------------------------------------------------
-// Setup: mini Express app con solo Helmet + un endpoint /health
+// Helper: parsea el header CSP en un mapa directiva -> valor
+// ---------------------------------------------------------------------------
+
+/**
+ * parseCsp(header) → Map<directiva, string>
+ *
+ * Convierte "default-src 'self'; frame-src 'none'; connect-src 'self' wss:"
+ * en { 'default-src': "'self'", 'frame-src': "'none'", 'connect-src': "'self' wss:" }
+ *
+ * Permite aserciones exactas de directive/value en lugar de loose regex,
+ * evitando false-positives donde el token existe en otra directiva.
+ */
+function parseCsp(header: string): Record<string, string> {
+  return Object.fromEntries(
+    header
+      .split(';')
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => {
+        const [name, ...values] = part.split(/\s+/);
+        return [name.toLowerCase(), values.join(' ')] as [string, string];
+      }),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Setup
 // ---------------------------------------------------------------------------
 
 let app: Application;
@@ -44,7 +61,7 @@ beforeAll(() => {
 
 describe('helmetMiddleware — security headers (F3b-02)', () => {
 
-  it('incluye strict-transport-security con max-age=31536000', async () => {
+  it('incluye strict-transport-security con max-age=31536000 + includeSubDomains', async () => {
     const res = await request(app).get('/health');
     expect(res.headers['strict-transport-security']).toMatch(/max-age=31536000/);
     expect(res.headers['strict-transport-security']).toMatch(/includeSubDomains/i);
@@ -54,29 +71,46 @@ describe('helmetMiddleware — security headers (F3b-02)', () => {
     const res = await request(app).get('/health');
     const csp = res.headers['content-security-policy'];
     expect(csp).toBeDefined();
-    expect(csp).toMatch(/default-src/);
-    expect(csp).toMatch(/'self'/);
+    const directives = parseCsp(csp);
+    expect(directives['default-src']).toContain("'self'");
   });
 
-  it('CSP incluye connect-src con wss: para SSE/WebSocket', async () => {
+  it('CSP: connect-src contiene wss: (SSE/WebSocket)', async () => {
     const res = await request(app).get('/health');
-    const csp = res.headers['content-security-policy'];
-    expect(csp).toMatch(/connect-src/);
-    expect(csp).toMatch(/wss:/);
+    const directives = parseCsp(res.headers['content-security-policy']);
+    expect(directives['connect-src']).toContain('wss:');
+    expect(directives['connect-src']).toContain("'self'");
   });
 
-  it('CSP incluye font-src con fonts.gstatic.com', async () => {
+  it('CSP: font-src contiene fonts.gstatic.com (Google Fonts)', async () => {
     const res = await request(app).get('/health');
-    const csp = res.headers['content-security-policy'];
-    expect(csp).toMatch(/font-src/);
-    expect(csp).toMatch(/fonts\.gstatic\.com/);
+    const directives = parseCsp(res.headers['content-security-policy']);
+    expect(directives['font-src']).toContain('fonts.gstatic.com');
   });
 
-  it('CSP bloquea frame-src (none)', async () => {
+  it('CSP: frame-src es exactamente \'none\'', async () => {
     const res = await request(app).get('/health');
-    const csp = res.headers['content-security-policy'];
-    expect(csp).toMatch(/frame-src/);
-    expect(csp).toMatch(/'none'/);
+    const directives = parseCsp(res.headers['content-security-policy']);
+    expect(directives['frame-src']).toBe("'none'");
+  });
+
+  it('CSP: object-src es exactamente \'none\'', async () => {
+    const res = await request(app).get('/health');
+    const directives = parseCsp(res.headers['content-security-policy']);
+    expect(directives['object-src']).toBe("'none'");
+  });
+
+  it('CSP: script-src solo permite \'self\' (no CDN externos)', async () => {
+    const res = await request(app).get('/health');
+    const directives = parseCsp(res.headers['content-security-policy']);
+    expect(directives['script-src']).toBe("'self'");
+  });
+
+  it('CSP: style-src permite \'unsafe-inline\' y fonts.googleapis.com', async () => {
+    const res = await request(app).get('/health');
+    const directives = parseCsp(res.headers['content-security-policy']);
+    expect(directives['style-src']).toContain("'unsafe-inline'");
+    expect(directives['style-src']).toContain('fonts.googleapis.com');
   });
 
   it('incluye x-frame-options DENY (clickjacking)', async () => {
@@ -109,9 +143,8 @@ describe('helmetMiddleware — security headers (F3b-02)', () => {
     expect(res.headers['x-permitted-cross-domain-policies']).toBe('none');
   });
 
-  it('crossOriginEmbedderPolicy está desactivado (SSE compatible)', async () => {
+  it('cross-origin-embedder-policy está desactivado (SSE compatible)', async () => {
     const res = await request(app).get('/health');
-    // Con crossOriginEmbedderPolicy: false, el header no debe estar presente
     expect(res.headers['cross-origin-embedder-policy']).toBeUndefined();
   });
 });

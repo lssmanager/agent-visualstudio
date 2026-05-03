@@ -62,39 +62,10 @@ export interface AuthenticatedUser {
 // Helmet (headers de seguridad HTTP) — F3b-02
 // ---------------------------------------------------------------------------
 
-/**
- * helmetMiddleware() — aplica todos los security headers HTTP.
- *
- * CSP directives:
- *   default-src 'self'              — fallback: solo el propio dominio
- *   script-src  'self'              — scripts solo del propio dominio
- *   style-src   'self' 'unsafe-inline' fonts.googleapis.com
- *                                   — estilos inline (React) + Google Fonts CSS
- *   font-src    'self' fonts.gstatic.com data:
- *                                   — fuentes de Google Fonts + data URIs
- *   img-src     'self' data: https: blob:
- *                                   — imágenes desde cualquier HTTPS + blobs
- *   connect-src 'self' wss: https:  — fetch/XHR/WebSocket/SSE
- *   media-src   'self' blob:        — audio/video (webchat)
- *   worker-src  blob:               — service workers
- *   frame-src   'none'              — bloquea iframes
- *   object-src  'none'              — bloquea Flash/plugins
- *   base-uri    'self'              — previene inyección de <base>
- *   form-action 'self'              — formularios solo al propio dominio
- *
- * HSTS: max-age=31536000 (1 año) + includeSubDomains
- * crossOriginEmbedderPolicy: false — necesario para SSE (streaming agentes)
- *
- * Para añadir orígenes al CSP (e.g. CDN propio):
- *   1. Añadir a scriptSrc/styleSrc según corresponda
- *   2. Activar report-uri con HELMET_CSP_REPORT_URI en .env para monitorizar
- *      violaciones antes de endurecer la política
- */
 export function helmetMiddleware(): RequestHandler {
   const reportUri = process.env.HELMET_CSP_REPORT_URI;
 
   return helmet({
-    // ── Content-Security-Policy ───────────────────────────────────────────────────────
     contentSecurityPolicy: {
       directives: {
         defaultSrc:  ["'self'"],
@@ -109,43 +80,20 @@ export function helmetMiddleware(): RequestHandler {
         objectSrc:   ["'none'"],
         baseUri:     ["'self'"],
         formAction:  ["'self'"],
-        // report-uri (opcional) — activar con HELMET_CSP_REPORT_URI en .env
-        // para recibir reportes de violaciones antes de endurecer la política
         ...(reportUri ? { reportUri: [reportUri] } : {}),
       },
     },
-
-    // ── HSTS ─────────────────────────────────────────────────────────────────────
     hsts: {
-      maxAge: 31_536_000,       // 1 año en segundos
+      maxAge: 31_536_000,
       includeSubDomains: true,
-      // preload: true,         // descomentar solo si el dominio está en el HSTS preload list
     },
-
-    // ── Otros headers de seguridad ───────────────────────────────────────────────────
-
-    // false: necesario para SSE (Server-Sent Events) del streaming de agentes
     crossOriginEmbedderPolicy: false,
-
-    // X-Frame-Options: DENY — previene clickjacking incluso en mismo dominio
     frameguard: { action: 'deny' },
-
-    // X-Content-Type-Options: nosniff — previene MIME sniffing
     noSniff: true,
-
-    // X-DNS-Prefetch-Control: off
     dnsPrefetchControl: { allow: false },
-
-    // Referrer-Policy: strict-origin-when-cross-origin
     referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
-
-    // X-Download-Options: noopen (IE)
     ieNoOpen: true,
-
-    // X-Permitted-Cross-Domain-Policies: none
     permittedCrossDomainPolicies: { permittedPolicies: 'none' },
-
-    // X-Powered-By: eliminado (no revelar stack)
     hidePoweredBy: true,
   });
 }
@@ -218,17 +166,38 @@ export function apiRateLimiter(
 
 // ---------------------------------------------------------------------------
 // JWT validation — híbrido: Logto SSO + token local (F3B-01a)
+//
+// FIX CodeRabbit: createRemoteJWKSet y el import de jose se elevan fuera del
+// request handler — se inicializan UNA sola vez al registrar el middleware,
+// no en cada request. Mejora de rendimiento significativa bajo carga.
 // ---------------------------------------------------------------------------
 
 export function jwtAuthMiddleware(): RequestHandler {
-  const logtoIssuer  = process.env.LOGTO_ISSUER;
+  const logtoIssuer   = process.env.LOGTO_ISSUER;
   const logtoAudience = process.env.LOGTO_AUDIENCE;
-  const jwtSecret    = process.env.JWT_SECRET;
+  const jwtSecret     = process.env.JWT_SECRET;
 
   const devMode = !logtoIssuer && !jwtSecret;
   if (devMode) {
     console.warn('[security] No JWT config found — auth disabled (dev mode)');
     return (_req, _res, next) => next();
+  }
+
+  // ── Inicialización en tiempo de registro del middleware (una sola vez) ──
+  // jose se importa de forma síncrona en el módulo (import estático en la parte
+  // superior del archivo) pero como este proyecto usa dynamic import por
+  // compatibilidad con CJS, lo resolvemos con una Promise que se crea una vez.
+  let jwksPromise: Promise<ReturnType<typeof import('jose').createRemoteJWKSet>> | null = null;
+  let jwtImportPromise: Promise<typeof import('jose')> | null = null;
+  let jsonwebtokenPromise: Promise<typeof import('jsonwebtoken')> | null = null;
+
+  // Pre-warm imports y JWKS en background al registrar el middleware
+  jsonwebtokenPromise = import('jsonwebtoken');
+  if (logtoIssuer) {
+    jwtImportPromise = import('jose');
+    jwksPromise = jwtImportPromise.then(({ createRemoteJWKSet }) =>
+      createRemoteJWKSet(new URL(`${logtoIssuer}/jwks`)),
+    );
   }
 
   return async (req: Request, res: Response, next: NextFunction) => {
@@ -241,7 +210,8 @@ export function jwtAuthMiddleware(): RequestHandler {
     const token = authHeader.slice(7);
 
     try {
-      const jsonwebtoken = await import('jsonwebtoken');
+      // Reutiliza el import ya resuelto (Promise cached)
+      const jsonwebtoken = await jsonwebtokenPromise!;
       const decoded = jsonwebtoken.default.decode(token, { complete: true });
       const iss = (decoded?.payload as Record<string, unknown> | null)?.iss as string | undefined;
 
@@ -261,7 +231,7 @@ export function jwtAuthMiddleware(): RequestHandler {
         return;
       }
 
-      if (!logtoIssuer) {
+      if (!logtoIssuer || !jwksPromise || !jwtImportPromise) {
         res.status(401).json({
           ok: false,
           error: 'Logto SSO not configured. Use local login or configure LOGTO_ISSUER in settings.',
@@ -269,8 +239,8 @@ export function jwtAuthMiddleware(): RequestHandler {
         return;
       }
 
-      const { createRemoteJWKSet, jwtVerify } = await import('jose');
-      const JWKS = createRemoteJWKSet(new URL(`${logtoIssuer}/jwks`));
+      // Reutiliza JWKS y jwtVerify ya inicializados (no se recrean por request)
+      const [JWKS, { jwtVerify }] = await Promise.all([jwksPromise, jwtImportPromise]);
       const { payload } = await jwtVerify(token, JWKS, {
         issuer:   logtoIssuer,
         audience: logtoAudience ?? logtoIssuer,
@@ -306,9 +276,11 @@ export function applySecurityMiddleware(
   app.use('/api/', apiRateLimiter(opts));
 
   if (opts?.requireAuth ?? process.env.REQUIRE_AUTH === 'true') {
+    // jwtAuthMiddleware() se llama UNA sola vez aquí — no dentro del handler
+    const jwtMiddleware = jwtAuthMiddleware();
     app.use('/api/', (req: Request, res: Response, next: NextFunction) => {
       if (req.path.startsWith('/auth/')) return next();
-      return jwtAuthMiddleware()(req, res, next);
+      return jwtMiddleware(req, res, next);
     });
   }
 }

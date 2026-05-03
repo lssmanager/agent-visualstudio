@@ -7,9 +7,10 @@
     "dev":            "ts-node -r tsconfig-paths/register -P tsconfig.json src/main.ts",
     "build":          "tsc -p tsconfig.json",
     "start":          "node dist/main.js",
-    "test":           "vitest run",
-    "test:watch":     "vitest",
-    "verify:headers": "curl -sI ${GATEWAY_URL:-http://localhost:3001}/api/health | grep -E '(strict-transport-security|content-security-policy|x-frame-options|x-content-type-options|referrer-policy)'"
+    "test":           "vitest run --config vitest.config.ts",
+    "test:watch":     "vitest --config vitest.config.ts",
+    "test:e2e":       "vitest run --config vitest.config.e2e.ts",
+    "verify:headers": "curl -fsSI ${GATEWAY_URL:-http://localhost:3001}/health | tee /dev/stderr | { grep -c 'strict-transport-security' && grep -c 'content-security-policy' && grep -c 'x-frame-options' && grep -c 'x-content-type-options' && grep -c 'referrer-policy'; } && echo 'All required headers present'"
   },
   "dependencies": {
     "@nestjs/common":            "^10.3.0",
@@ -32,6 +33,7 @@
     "@types/node":       "^20.0.0",
     "@types/supertest":  "^6.0.0",
     "@types/ws":         "^8.5.13",
+    "@vitest/coverage-v8": "^1.0.0",
     "supertest":         "^7.0.0",
     "ts-node":           "^10.9.2",
     "tsconfig-paths":    "^4.2.0",
