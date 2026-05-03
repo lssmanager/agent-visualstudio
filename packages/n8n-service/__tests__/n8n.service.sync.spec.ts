@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createCipheriv, randomBytes }                      from 'crypto';
+import { encrypt }                                          from '@lss/crypto';
 import { N8nService }                                       from '../src/n8n.service';
 import type { N8nPrismaClient }                             from '../src/n8n.types';
 
@@ -26,20 +26,7 @@ import type { N8nPrismaClient }                             from '../src/n8n.typ
 /** Master key used in all tests: 32-byte key as 64 hex chars */
 const TEST_KEY_HEX = '0'.repeat(64);
 
-/**
- * Creates a valid AES-256-GCM encrypted hex string.
- * Format: [12b IV][16b authTag][Nb ciphertext]
- */
-function encryptApiKey(plaintext: string): string {
-  const key      = Buffer.from(TEST_KEY_HEX, 'hex');
-  const iv       = randomBytes(12);
-  const cipher   = createCipheriv('aes-256-gcm', key, iv);
-  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  const authTag  = cipher.getAuthTag();
-  return Buffer.concat([iv, authTag, encrypted]).toString('hex');
-}
-
-const ENCRYPTED_API_KEY = encryptApiKey('real-n8n-api-key');
+const ENCRYPTED_API_KEY = encrypt('real-n8n-api-key');
 
 // ── Fixtures ──────────────────────────────────────────────────────────────
 
@@ -105,13 +92,12 @@ function makePrisma(
 
 beforeEach(() => {
   // Set the master key env var before each test
-  process.env['N8N_SECRET'] = TEST_KEY_HEX;
+  process.env['SECRETS_ENCRYPTION_KEY'] = TEST_KEY_HEX;
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
-  delete process.env['N8N_SECRET'];
-  delete process.env['CHANNEL_SECRET'];
+  delete process.env['SECRETS_ENCRYPTION_KEY'];
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -223,9 +209,8 @@ describe('N8nService.syncWorkflows()', () => {
 
   // ── 5. N8N_SECRET not set → throw ──────────────────────────────────────
 
-  it('N8N_SECRET no configurado → throw "N8N_SECRET not configured"', async () => {
-    delete process.env['N8N_SECRET'];
-    delete process.env['CHANNEL_SECRET'];
+  it('SECRETS_ENCRYPTION_KEY no configurado → throw de crypto', async () => {
+    delete process.env['SECRETS_ENCRYPTION_KEY'];
 
     const prisma = makePrisma();
     const svc    = new N8nService({
@@ -234,7 +219,7 @@ describe('N8nService.syncWorkflows()', () => {
 
     await expect(svc.syncWorkflows(CONNECTION_ID))
       .rejects
-      .toThrow('N8N_SECRET not configured');
+      .toThrow('SECRETS_ENCRYPTION_KEY');
   });
 
   // ── Bonus: per-workflow upsert error does not abort the loop ────────────
@@ -266,11 +251,10 @@ describe('N8nService.syncWorkflows()', () => {
     expect(res.errors[0]?.reason).toMatch(/DB constraint/);
   });
 
-  // ── 6. CHANNEL_SECRET fallback ─────────────────────────────────────────
+  // ── 6. SECRETS_ENCRYPTION_KEY canonical env ─────────────────────────────
 
-  it('usa CHANNEL_SECRET como fallback cuando N8N_SECRET no está configurado', async () => {
-    delete process.env['N8N_SECRET'];
-    process.env['CHANNEL_SECRET'] = TEST_KEY_HEX;
+  it('usa SECRETS_ENCRYPTION_KEY como clave canónica', async () => {
+    process.env['SECRETS_ENCRYPTION_KEY'] = TEST_KEY_HEX;
 
     const prisma = makePrisma();
     const svc    = new N8nService({
