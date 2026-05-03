@@ -32,8 +32,16 @@ import { setGlobalWhatsAppSessionStorePrisma } from './whatsapp-session.store.js
   providers:   [
     GatewayService,
     AgentResolverService,
-    WhatsAppBaileysAdapter,
-    SlackAdapter,
+    {
+      provide:    WhatsAppBaileysAdapter,
+      useFactory: (prisma: PrismaService) => new WhatsAppBaileysAdapter(prisma),
+      inject:     [PrismaService],
+    },
+    {
+      provide:    SlackAdapter,
+      useFactory: (prisma: PrismaService) => new SlackAdapter(prisma),
+      inject:     [PrismaService],
+    },
   ],
   controllers: [HealthController],
   exports:     [

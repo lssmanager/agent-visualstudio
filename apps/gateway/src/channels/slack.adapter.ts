@@ -89,6 +89,18 @@ export class SlackAdapter extends BaseChannelAdapter {
 
     this.botToken     = (secrets['botToken']     as string) ?? ''
     this.signingSecret = (secrets['signingSecret'] as string) ?? ''
+
+    // Validate that both secrets are non-empty (fail closed)
+    if (!this.botToken) {
+      throw new Error(
+        `[slack:${channelConfigId}] Missing required secret 'botToken' — adapter cannot start without valid credentials`,
+      )
+    }
+    if (!this.signingSecret) {
+      throw new Error(
+        `[slack:${channelConfigId}] Missing required secret 'signingSecret' — adapter cannot start without valid credentials`,
+      )
+    }
   }
 
   async dispose(): Promise<void> {
@@ -250,12 +262,22 @@ export class SlackAdapter extends BaseChannelAdapter {
     if (event.type !== 'message') return null
 
     if (!event.channel) {
-      console.warn('[slack] event without channel — dropped', { event })
+      console.warn('[slack] dropped event — missing channel', {
+        type: event.type,
+        channel: event.channel,
+        user: event.user,
+        ts: event.ts,
+      })
       return null
     }
 
     if (!event.user) {
-      console.warn('[slack] event without user (posible bot message) — dropped', { event })
+      console.warn('[slack] dropped event — missing user (possible bot message)', {
+        type: event.type,
+        channel: event.channel,
+        user: event.user,
+        ts: event.ts,
+      })
       return null
     }
 
