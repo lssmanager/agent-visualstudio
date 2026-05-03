@@ -37,6 +37,7 @@ const STATUS_LABEL: Record<ChannelRecord['status'], string> = {
 // FIX-2: valid statuses set — guard against unexpected values from both SSE and REST
 const VALID_STATUSES = new Set<ChannelRecord['status']>(['provisioned', 'bound', 'error', 'offline']);
 
+/** Type predicate — narrows string to ChannelRecord['status']. */
 function isValidStatus(s: string): s is ChannelRecord['status'] {
   return VALID_STATUSES.has(s as ChannelRecord['status']);
 }
@@ -64,9 +65,14 @@ export function ChannelsSettingsTab({ workspaceId, agents }: Props) {
   const [busy, setBusy]         = useState<string | null>(null);
   const sseCleanups             = useRef<Map<string, () => void>>(new Map());
 
+  // CR #230 fix: shouldUnregister:true ensures hidden credential fields
+  // (appId/appSecret/appPassword/token) are unregistered when their section
+  // unmounts, so switching channel kinds never blocks form submission with
+  // stale required-validation errors on invisible fields.
   const { register, handleSubmit, watch, reset, formState: { errors } } =
     useForm<AddForm>({
       defaultValues: { kind: 'telegram', name: '', token: '', appId: '', appSecret: '', appPassword: '' },
+      shouldUnregister: true,
     });
   const selectedKind        = watch('kind');
   const needsToken          = CHANNEL_KINDS.find((c) => c.kind === selectedKind)?.needsToken ?? false;
@@ -77,9 +83,6 @@ export function ChannelsSettingsTab({ workspaceId, agents }: Props) {
     setLoading(true); setErr(null);
     try {
       const data = await listChannels(workspaceId);
-      // FIX-2 (CodeRabbit): apply the same VALID_STATUSES guard to the initial
-      // REST response — normalize unknown statuses to 'offline' instead of
-      // letting STATUS_ICON[ch.status] resolve to undefined.
       setChannels(
         data.map((ch) => ({
           ...ch,
@@ -103,9 +106,10 @@ export function ChannelsSettingsTab({ workspaceId, agents }: Props) {
         const unsub = subscribeChannelStatus(workspaceId, ch.id, (data) => {
           // FIX-2: guard SSE events
           if (!isValidStatus(data.status)) return;
+          // CR #230 nitpick: isValidStatus() is a type predicate — no cast needed
           setChannels((prev) =>
             prev.map((c) =>
-              c.id === ch.id ? { ...c, status: data.status as ChannelRecord['status'] } : c,
+              c.id === ch.id ? { ...c, status: data.status } : c,
             ),
           );
         });
@@ -121,18 +125,14 @@ export function ChannelsSettingsTab({ workspaceId, agents }: Props) {
   async function handleAdd(values: AddForm) {
     setBusy('new'); setErr(null);
     try {
-      // FIX-3 (CodeRabbit): derive credential routing from values.kind inside
-      // handleAdd — avoids stale watch('kind') reactive var racing with submit.
       const kind = values.kind;
       if (kind === 'slack') {
         await provisionChannel(workspaceId, { kind, name: values.name, appId: values.appId, appSecret: values.appSecret });
       } else if (kind === 'teams') {
-        // Codex: Teams uses appPassword, not appSecret, per credentials-schema.ts
         await provisionChannel(workspaceId, { kind, name: values.name, appId: values.appId, appPassword: values.appPassword });
       } else if (kind === 'telegram' || kind === 'whatsapp' || kind === 'discord') {
         await provisionChannel(workspaceId, { kind, name: values.name, token: values.token });
       } else {
-        // webchat | webhook — no credentials
         await provisionChannel(workspaceId, { kind, name: values.name });
       }
       reset();

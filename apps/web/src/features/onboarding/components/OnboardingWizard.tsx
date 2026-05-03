@@ -16,6 +16,8 @@ const STEPS = [
   { id: 4, label: 'Agent',    icon: Zap },
 ] as const;
 
+// Onboarding exposes only the 4 token-based channels + webchat.
+// Slack/Teams/Webhook are available in Settings → Channels (full form).
 const CHANNEL_KINDS: { kind: ChannelKind; label: string; placeholder: string }[] = [
   { kind: 'telegram',  label: 'Telegram',  placeholder: 'Bot token (from @BotFather)' },
   { kind: 'whatsapp',  label: 'WhatsApp',  placeholder: 'Meta access token' },
@@ -85,19 +87,32 @@ export function OnboardingWizard({ open, workspaceId, agents, onComplete, onClos
           });
         }
       }
-      // 2. Provision channel if selected
+
+      // 2. Provision channel if selected — branch by kind to satisfy
+      //    ProvisionPayload discriminated union (CR comment on PR #230).
+      //    OnboardingWizard only exposes telegram/whatsapp/discord/webchat,
+      //    so the slack/teams branches are unreachable here but the type
+      //    system is satisfied without a cast.
       if (values.channelKind) {
-        const ch = await provisionChannel(workspaceId, {
-          kind: values.channelKind as ChannelKind,
-          name: values.channelName || values.channelKind,
-          token: values.channelToken || undefined,
-        });
+        const kind     = values.channelKind;
+        const name     = values.channelName || kind;
+        const token    = values.channelToken.trim();
+
+        const ch = await (() => {
+          if (kind === 'telegram' || kind === 'whatsapp' || kind === 'discord') {
+            return provisionChannel(workspaceId, { kind, name, token });
+          }
+          // webchat / webhook — no credentials
+          return provisionChannel(workspaceId, { kind: kind as 'webchat' | 'webhook', name });
+        })();
+
         // 3. Bind to selected agent
         if (values.agentId && ch.id) {
           const { bindChannel } = await import('../../../lib/channels-api');
           await bindChannel(workspaceId, ch.id, values.agentId);
         }
       }
+
       setDone(true);
       await onComplete();
     } catch (e) {
