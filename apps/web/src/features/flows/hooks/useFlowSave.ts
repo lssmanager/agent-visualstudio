@@ -39,9 +39,15 @@ export function useFlowSave(flow: FlowSpec | null): UseFlowSaveResult {
   const saving = useRef(false);
   // Ref para skip del primer render (no guardar al montar).
   const isFirstRender = useRef(true);
+  // Ref para almacenar el FlowSpec pendiente más reciente durante un save en curso.
+  const pendingFlow = useRef<FlowSpec | null>(null);
 
   const doSave = useCallback(async (f: FlowSpec) => {
-    if (saving.current) return;
+    // Si ya hay un save en curso, encolar el FlowSpec más reciente.
+    if (saving.current) {
+      pendingFlow.current = f;
+      return;
+    }
     saving.current = true;
     setSaveState('saving');
     setLastError(null);
@@ -54,6 +60,12 @@ export function useFlowSave(flow: FlowSpec | null): UseFlowSaveResult {
       setLastError((err as Error).message);
     } finally {
       saving.current = false;
+      // Si hay un FlowSpec pendiente, guardarlo inmediatamente.
+      const pending = pendingFlow.current;
+      if (pending) {
+        pendingFlow.current = null;
+        void doSave(pending);
+      }
     }
   }, []);
 
