@@ -36,6 +36,7 @@ import type {
 } from '../../../lib/types';
 import type { CanonicalWorkspaceSpec } from '../../../../../packages/core-types/src/canonical-studio-state';
 import type { AgentSpec } from '../../../../../packages/core-types/src/agent-spec';
+import { NodeDetail } from './NodeDetail';
 
 // ── Tipos internos ────────────────────────────────────────────────────
 
@@ -96,11 +97,6 @@ interface AgentAncestry {
   agentName:     string;
 }
 
-/**
- * Construye Map<agentId, AgentAncestry> desde la estructura flat real:
- *   departments[] + workspaces[] + agents[]
- * Usa workspaces[].agentIds[] para el link workspace→agent.
- */
 function buildAgentIndex(
   state: CanonicalStudioStateResponse,
 ): Map<string, AgentAncestry> {
@@ -155,15 +151,10 @@ function mergeStatuses(statuses: NodeRunStatus[]): NodeRunStatus {
   return 'pending';
 }
 
-/**
- * Construye el árbol StatusNode[] (4 niveles) desde el estado canónico flat
- * enriquecido con el runStatus derivado de los steps SSE del run.
- */
 function buildStatusTree(
   state:    CanonicalStudioStateResponse,
   stepsMap: Map<string, StepUpdate>,
 ): StatusNode[] {
-  // Agrupar steps por agentId
   const stepsByAgent = new Map<string, StepUpdate[]>();
   for (const step of stepsMap.values()) {
     if (!step.agentId) continue;
@@ -240,12 +231,13 @@ function buildStatusTree(
 // ── StatusNodeRow ─────────────────────────────────────────────────────
 
 interface StatusNodeRowProps {
-  node:     StatusNode;
-  expanded: Set<string>;
-  onToggle: (id: string) => void;
+  node:          StatusNode;
+  expanded:      Set<string>;
+  onToggle:      (id: string) => void;
+  onStepSelect?: (step: StepUpdate) => void;
 }
 
-function StatusNodeRow({ node, expanded, onToggle }: StatusNodeRowProps) {
+function StatusNodeRow({ node, expanded, onToggle, onStepSelect }: StatusNodeRowProps) {
   const isExpanded  = expanded.has(node.id);
   const hasChildren = node.children.length > 0 || (node.level === 'agent' && node.steps.length > 0);
   const LevelIcon   = LEVEL_ICON[node.level];
@@ -294,7 +286,6 @@ function StatusNodeRow({ node, expanded, onToggle }: StatusNodeRowProps) {
           transition:      'background-color 150ms',
         }}
       >
-        {/* Chevron */}
         <span style={{
           width: 14, flexShrink: 0,
           opacity:   hasChildren ? 1 : 0,
@@ -305,10 +296,8 @@ function StatusNodeRow({ node, expanded, onToggle }: StatusNodeRowProps) {
           <ChevronRight size={11} color="#94a3b8" />
         </span>
 
-        {/* Icono nivel */}
         <LevelIcon size={13} color={levelColor} style={{ flexShrink: 0 }} />
 
-        {/* Nombre */}
         <span style={{
           fontSize:   '11px',
           flex:       1,
@@ -322,10 +311,8 @@ function StatusNodeRow({ node, expanded, onToggle }: StatusNodeRowProps) {
           {node.name}
         </span>
 
-        {/* Status icon */}
         <StatusIconEl />
 
-        {/* Conteo de steps (solo agents) */}
         {node.level === 'agent' && node.steps.length > 0 && (
           <span style={{ fontSize: '10px', color: '#94a3b8', fontVariantNumeric: 'tabular-nums' }}>
             {node.steps.length}
@@ -342,7 +329,21 @@ function StatusNodeRow({ node, expanded, onToggle }: StatusNodeRowProps) {
             return (
               <div
                 key={step.stepId}
-                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '2px 0' }}
+                role="button"
+                tabIndex={0}
+                onClick={() => onStepSelect?.(step)}
+                onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && onStepSelect?.(step)}
+                style={{
+                  display:    'flex',
+                  alignItems: 'center',
+                  gap:        '6px',
+                  padding:    '3px 4px',
+                  borderRadius: '4px',
+                  cursor:     onStepSelect ? 'pointer' : 'default',
+                  transition: 'background-color 120ms',
+                }}
+                onMouseEnter={e => { if (onStepSelect) (e.currentTarget as HTMLElement).style.background = '#f0f9ff'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
               >
                 {sStatus === 'active'
                   ? <Loader2     size={10} color={sColor} className="animate-spin" />
@@ -372,13 +373,13 @@ function StatusNodeRow({ node, expanded, onToggle }: StatusNodeRowProps) {
         </div>
       )}
 
-      {/* Hijos (cuando está expandido) */}
       {node.children.length > 0 && isExpanded && node.children.map(child => (
         <StatusNodeRow
           key={child.id}
           node={child}
           expanded={expanded}
           onToggle={onToggle}
+          onStepSelect={onStepSelect}
         />
       ))}
     </>
@@ -389,18 +390,25 @@ function StatusNodeRow({ node, expanded, onToggle }: StatusNodeRowProps) {
 
 export interface StatusTreeProps {
   runId: string;
+  /** Callback cuando el usuario hace click en un step del árbol → abre NodeDetail */
+  onStepSelect?: (step: StepUpdate) => void;
 }
 
-export function StatusTree({ runId }: StatusTreeProps) {
+export function StatusTree({ runId, onStepSelect }: StatusTreeProps) {
   const { status, steps, error: sseError } = useRealtimeRun(runId);
 
   const [canonicalState, setCanonicalState] = useState<CanonicalStudioStateResponse | null>(null);
   const [loadingTree,    setLoadingTree]     = useState(false);
   const [treeError,      setTreeError]       = useState<string | null>(null);
   const [expanded,       setExpanded]        = useState<Set<string>>(new Set());
+  const [selectedStep,   setSelectedStep]    = useState<StepUpdate | null>(null);
   const mounted = useRef(true);
 
-  // Carga el árbol canónico una sola vez
+  const handleStepSelect = (step: StepUpdate) => {
+    setSelectedStep(step);
+    onStepSelect?.(step);
+  };
+
   useEffect(() => {
     mounted.current = true;
     setLoadingTree(true);
@@ -408,7 +416,6 @@ export function StatusTree({ runId }: StatusTreeProps) {
       .then((state) => {
         if (!mounted.current) return;
         setCanonicalState(state as CanonicalStudioStateResponse);
-        // Auto-expandir agency y todos los departamentos
         const ids = new Set<string>();
         if ((state as CanonicalStudioStateResponse).agency?.id) {
           ids.add((state as CanonicalStudioStateResponse).agency.id);
@@ -440,14 +447,12 @@ export function StatusTree({ runId }: StatusTreeProps) {
     });
   };
 
-  // Color del indicador SSE
   const sseColor =
     status === 'connected' || status === 'processing' ? '#16a34a' :
     status === 'completed'                            ? '#2563eb' :
     status === 'failed'    || status === 'error'      ? '#dc2626' :
     '#d97706';
 
-  // Totales de tokens
   const tokenTotals = useMemo(() => {
     let totalIn = 0, totalOut = 0;
     for (const step of steps.values()) {
@@ -456,6 +461,9 @@ export function StatusTree({ runId }: StatusTreeProps) {
     }
     return totalIn + totalOut > 0 ? { in: totalIn, out: totalOut } : null;
   }, [steps]);
+
+  const isLiveStep = (step: StepUpdate) =>
+    step.status === 'running' || step.status === 'processing' || step.status === 'active';
 
   return (
     <div style={{
@@ -542,6 +550,7 @@ export function StatusTree({ runId }: StatusTreeProps) {
             node={node}
             expanded={expanded}
             onToggle={handleToggle}
+            onStepSelect={handleStepSelect}
           />
         ))}
       </div>
@@ -560,6 +569,27 @@ export function StatusTree({ runId }: StatusTreeProps) {
         }}>
           <span>Tokens in: <b style={{ color: '#374151' }}>{tokenTotals.in.toLocaleString()}</b></span>
           <span>out: <b style={{ color: '#374151' }}>{tokenTotals.out.toLocaleString()}</b></span>
+        </div>
+      )}
+
+      {/* NodeDetail panel flotante al seleccionar un step */}
+      {selectedStep && (
+        <div
+          style={{
+            position:  'fixed',
+            top:       0,
+            right:     0,
+            bottom:    0,
+            width:     '320px',
+            zIndex:    50,
+            boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
+          }}
+        >
+          <NodeDetail
+            step={selectedStep}
+            isLive={isLiveStep(selectedStep)}
+            onClose={() => setSelectedStep(null)}
+          />
         </div>
       )}
     </div>
