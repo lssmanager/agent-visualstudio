@@ -14,17 +14,17 @@
  */
 
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../lib/prisma.service';
 
-import { N8nService }          from '../n8n/n8n.service';
-import { resolveModelPolicy }  from '../../../../../packages/run-engine/src/policy-resolver';
-import { buildLLMClient }      from '../../../../../packages/run-engine/src/llm-client';
+import { N8nService }         from '../n8n/n8n.service';
+import { PrismaService }      from '../../lib/prisma.service';
+import { resolveModelPolicy } from '../../../../../packages/run-engine/src/policy-resolver';
+import { buildLLMClient }     from '../../../../../packages/run-engine/src/llm-client';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const DEFAULT_MODEL     = 'openai/gpt-4o';
-const LLM_TEMPERATURE   = 0.2;
-const LLM_MAX_TOKENS    = 2048;
+const DEFAULT_MODEL   = 'openai/gpt-4o';
+const LLM_TEMPERATURE = 0.2;
+const LLM_MAX_TOKENS  = 2048;
 
 const N8N_SYSTEM_PROMPT = `
 You are an expert n8n workflow architect.
@@ -91,7 +91,7 @@ export interface CreateWorkflowFromDescriptionOptions {
    * Requerido para seleccionar el LLM correcto según política D-09.
    */
   agentId: string;
-  /** workspaceId del agente — requerido por PolicyResolverContext. */
+  /** workspaceId del agente — requerido por PolicyResolverContext y por Skill.create. */
   workspaceId: string;
   /** departmentId del agente — requerido por PolicyResolverContext. */
   departmentId: string;
@@ -137,8 +137,8 @@ export class N8nStudioHelper {
    *   2. Construir prompt de sistema + usuario para el LLM
    *   3. Llamar al LLM con el modelo resuelto (temperatura 0.2)
    *   4. Parsear y validar el JSON devuelto
-   *   5. Crear el workflow en n8n via N8nService
-   *   6. Hacer upsert del Skill en Prisma con type='n8n_webhook'
+   *   5. Crear el workflow en n8n via N8nService.createWorkflowRaw()
+   *   6. Hacer findFirst+update/create del Skill en Prisma con type='n8n_webhook'
    *   7. Retornar CreateWorkflowFromDescriptionResult
    */
   async createWorkflowFromDescription(
@@ -172,6 +172,8 @@ export class N8nStudioHelper {
     }
 
     // ── Paso 2-3: Llamar al LLM ───────────────────────────────────────────────
+    // buildLLMClient devuelve un ProviderAdapter cuyo chat() acepta
+    // (messages[], tools[], opts) y devuelve { content, toolCalls }.
     const llmClient = buildLLMClient(primaryModel);
 
     let rawContent: string;
@@ -181,14 +183,18 @@ export class N8nStudioHelper {
           { role: 'system', content: N8N_SYSTEM_PROMPT },
           { role: 'user',   content: `Create an n8n workflow for: ${description}` },
         ],
-        [],
+        [],   // tools: vacío — solo generamos JSON, no usamos tool calls
         {
           model:       primaryModel,
           temperature: LLM_TEMPERATURE,
           maxTokens:   LLM_MAX_TOKENS,
         },
       );
+      // ProviderAdapter devuelve { content: string, toolCalls: ToolCall[] }
       rawContent = response.content ?? '';
+      if (!rawContent) {
+        throw new Error('[N8nStudioHelper] LLM returned empty content');
+      }
     } catch (err: unknown) {
       throw new Error(
         `[N8nStudioHelper] LLM call failed: ${
@@ -218,14 +224,10 @@ export class N8nStudioHelper {
       spec.connections = {};
     }
 
-    // ── Paso 5: Crear el workflow en n8n via N8nService ───────────────────────
-    //
-    // N8nService has a client with createWorkflow() that receives { name, nodes, connections, settings }.
-    // We construct the partial compatible with the N8nWorkflow interface.
+    // ── Paso 5: Crear el workflow en n8n via N8nService.createWorkflowRaw() ───
     let createdWorkflow: { id: string; name: string; active: boolean };
     try {
-      // Access the private client method through the service
-      createdWorkflow = await (this.n8nService as any).client.createWorkflow({
+      createdWorkflow = await this.n8nService.createWorkflowRaw({
         name:        spec.name,
         nodes:       spec.nodes,
         connections: spec.connections,
@@ -234,7 +236,7 @@ export class N8nStudioHelper {
       });
     } catch (err: unknown) {
       throw new Error(
-        `[N8nStudioHelper] N8nService.createWorkflow() failed: ${
+        `[N8nStudioHelper] N8nService.createWorkflowRaw() failed: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
@@ -250,46 +252,47 @@ export class N8nStudioHelper {
     const baseUrl     = process.env.N8N_BASE_URL?.replace(/\/$/, '') ?? '';
     const webhookUrl  = webhookPath ? `${baseUrl}/webhook/${webhookPath}` : undefined;
 
-    // ── Paso 7: Upsert Skill en Prisma ────────────────────────────────────────
+    // ── Paso 7: findFirst + update/create del Skill en Prisma ─────────────────
     //
-    // Nombre canónico del skill: 'n8n:{connectionId}:{n8nWorkflowId}'
-    // Este patrón es consistente con syncWorkflows() en packages/n8n-service.
+    // Skill.name NO tiene @unique en el schema — no se puede usar upsert con
+    // where: { name }. Estrategia: findFirst por name+workspaceId, luego
+    // update (si existe) o create (si no existe).
+    // workspaceId es NOT NULL en el schema — requerido en create.
     const skillName = `n8n:${connectionId}:${n8nWorkflowId}`;
+    const skillConfig = {
+      n8nWorkflowId,
+      connectionId,
+      webhookUrl: webhookUrl ?? null,
+      generatedFromDescription: description,
+    };
 
     let skill: { id: string };
     try {
-      skill = await (this.prisma as unknown as {
-        skill: {
-          upsert: (args: {
-            where: { name: string };
-            create: Record<string, unknown>;
-            update: Record<string, unknown>;
-          }) => Promise<{ id: string }>;
-        };
-      }).skill.upsert({
-        where:  { name: skillName },
-        create: {
-          name:   skillName,
-          type:   'n8n_webhook',
-          config: {
-            n8nWorkflowId,
-            connectionId,
-            webhookUrl: webhookUrl ?? null,
-            generatedFromDescription: description,
-          },
-        },
-        update: {
-          config: {
-            n8nWorkflowId,
-            connectionId,
-            webhookUrl: webhookUrl ?? null,
-            generatedFromDescription: description,
-          },
-        },
+      const existing = await this.prisma.skill.findFirst({
+        where:  { name: skillName, workspaceId },
+        select: { id: true },
       });
+
+      if (existing) {
+        skill = await this.prisma.skill.update({
+          where:  { id: existing.id },
+          data:   { config: skillConfig },
+          select: { id: true },
+        });
+      } else {
+        skill = await this.prisma.skill.create({
+          data: {
+            name:        skillName,
+            type:        'n8n_webhook',
+            workspaceId,
+            config:      skillConfig,
+          },
+          select: { id: true },
+        });
+      }
     } catch (err: unknown) {
       throw new Error(
-        `[N8nStudioHelper] Prisma skill upsert failed — syncToSkills may have failed: ${
+        `[N8nStudioHelper] Prisma skill persist failed: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
