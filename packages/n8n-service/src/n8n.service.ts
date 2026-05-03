@@ -27,7 +27,7 @@
  *   No API key required           X-N8N-API-KEY required
  *   LLM tool-call path            Canvas orchestrator / sync path
  *
- * ── Encrypted secret format (shared with GatewayService) ──
+ * ── Encrypted secret format (F3b-05 / F3b-06) ──
  *
  *   AES-256-GCM stored via @lss/crypto:
  *   <iv_base64url>.<authTag_base64url>.<ciphertext_base64url>
@@ -480,7 +480,6 @@ export class N8nService {
 
     return perConnection.flat();
   }
-
 }
 
   // ── Utility ───────────────────────────────────────────────────────────────
