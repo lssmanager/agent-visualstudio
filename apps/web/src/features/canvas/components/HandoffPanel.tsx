@@ -21,7 +21,7 @@ export function HandoffPanel({ config, agents, onChange }: HandoffPanelProps) {
         onChange={(e) => {
           const agent = agents.find((a) => a.id === e.target.value);
           if (agent) onChange({ ...config, targetAgentId: agent.id, targetAgentName: agent.name });
-          else set('targetAgentId', e.target.value);
+          else onChange({ ...config, targetAgentId: e.target.value, targetAgentName: '' });
         }}
         className="w-full rounded border px-2 py-1 text-xs"
         style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}

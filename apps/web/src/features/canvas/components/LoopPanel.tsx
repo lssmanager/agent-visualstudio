@@ -18,7 +18,11 @@ export function LoopPanel({ config, onChange }: LoopPanelProps) {
         min={1}
         max={100}
         value={(config.maxIterations as number) ?? 3}
-        onChange={(e) => set('maxIterations', Number(e.target.value))}
+        onChange={(e) => {
+          const parsed = Number(e.target.value);
+          const validated = isNaN(parsed) ? 1 : Math.max(1, Math.min(100, parsed));
+          set('maxIterations', validated);
+        }}
         className="w-full rounded border px-2 py-1 text-xs"
         style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
       />

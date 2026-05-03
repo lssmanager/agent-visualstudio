@@ -8,8 +8,8 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "build": "npm run build:packages && tsc && npx vite build --config apps/web/vite.config.ts",
-    "build:packages": "npm run build --workspace=packages/db --if-present && npm run build --workspace=packages/canonical-types --if-present && npm run build --workspace=packages/core-types --if-present && npm run build --workspace=packages/gateway-sdk --if-present && npm run build --workspace=packages/run-engine --if-present && npm run build --workspace=packages/flow-engine --if-present && npm run build --workspace=packages/profile-engine --if-present",
+    "build": "tsc && npx vite build --config apps/web/vite.config.ts",
+    "build:packages": "echo 'Skipping package builds - packages are part of main TypeScript compilation'",
     "build:web": "npx vite build --config apps/web/vite.config.ts",
     "build:gateway": "tsc -p apps/gateway/tsconfig.json",
     "start": "node dist/apps/api/src/main.js",
@@ -34,6 +34,10 @@
   ],
   "author": "",
   "license": "MIT",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "dependencies": {
     "@anthropic-ai/sdk": "^0.26.0",
     "@hono/node-server": "^1.19.14",
