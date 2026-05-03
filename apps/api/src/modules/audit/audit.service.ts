@@ -156,19 +156,13 @@ export function sanitizeAuditMeta(
 /**
  * Truncate and strip common secret patterns from a free-text error message
  * before persisting it in the audit detail string.
- *
- * Patterns covered:
- *   - OpenAI keys:  sk-<20+ alphanum>
- *   - Bearer tokens: Bearer <10+ non-whitespace chars>
- *   - GitHub PATs:  ghp_<30+ alphanum>
- * Result is capped at 200 characters.
  */
 function sanitizeErrorMessage(msg: string): string {
   return msg
-    .replace(/sk-[a-zA-Z0-9]{20,}/g, '[REDACTED]')
-    .replace(/Bearer\s+\S{10,}/gi,   '[REDACTED]')
-    .replace(/ghp_[a-zA-Z0-9]{30,}/g, '[REDACTED]')
-    .substring(0, 200);
+    .replace(/sk-[a-zA-Z0-9]{20,}/g,   '[REDACTED]')   // OpenAI keys
+    .replace(/Bearer\s+\S{10,}/gi,      '[REDACTED]')   // Bearer tokens
+    .replace(/ghp_[a-zA-Z0-9]{30,}/g,  '[REDACTED]')   // GitHub tokens
+    .substring(0, 200);                                  // cap a 200 chars
 }
 
 // ── AuditService ──────────────────────────────────────────────────────────────
