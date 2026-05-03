@@ -162,7 +162,7 @@ function sanitizeErrorMessage(msg: string): string {
     .replace(/sk-[a-zA-Z0-9]{20,}/g,   '[REDACTED]')   // OpenAI keys
     .replace(/Bearer\s+\S{10,}/gi,      '[REDACTED]')   // Bearer tokens
     .replace(/ghp_[a-zA-Z0-9]{30,}/g,  '[REDACTED]')   // GitHub tokens
-    .substring(0, 200);                                  // cap a 200 chars
+    .substring(0, 200);
 }
 
 // ── AuditService ──────────────────────────────────────────────────────────────

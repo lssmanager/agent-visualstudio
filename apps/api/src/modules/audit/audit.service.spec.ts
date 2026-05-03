@@ -327,15 +327,13 @@ describe('logRunCompleted', () => {
   });
 
   it('logRunCompleted redacta tokens de API en errorMessage', async () => {
-    service.logRunCompleted({
-      runId: 'run-secret',
-      meta: {
-        runId: 'run-secret', agentId: 'a', workspaceId: 'w',
-        status: 'error', durationMs: 500,
-        errorCode: 'LLM_ERROR',
-        errorMessage: 'OpenAI error: sk-abcdefghijklmnopqrstuvwx12345678 invalid',
-      },
-    });
+    const meta: RunCompletedMeta = {
+      runId: 'run-secret', agentId: 'a', workspaceId: 'w',
+      status: 'error', durationMs: 500,
+      errorCode: 'LLM_ERROR',
+      errorMessage: 'OpenAI error: sk-abcdefghijklmnopqrstuvwx12345678 invalid',
+    };
+    service.logRunCompleted({ runId: 'run-secret', meta });
     await flushImmediate();
     const entries = service.query({ action: 'run.completed' });
     const entry = entries.find(e => e.resourceId === 'run-secret');
@@ -397,7 +395,7 @@ describe('logAgentCreated', () => {
       workspaceId: 'ws-1',
       scopeLevel:  'agent',
       createdBy:   'user-1',
-      apiKey:      'sk-secret-key',
+      apiKey:      'sk-secret-key',   // campo extra para probar sanitización
     } as unknown as AgentCreatedMeta; // cast a través de unknown — seguro en tests
     const entry = service.logAgentCreated({ agentId: 'agent-sec', meta });
     expect(entry.metadata?.apiKey).toBe('[REDACTED]');
@@ -416,7 +414,7 @@ describe('logAgentCreated', () => {
   });
 });
 
-// ── sanitizeAuditMeta ─────────────────────────────────────────────────────────
+// ── sanitizeAuditMeta (unit) ──────────────────────────────────────────────────
 describe('sanitizeAuditMeta', () => {
   it('sanitizeAuditMeta redacta secretos dentro de arrays', () => {
     const result = sanitizeAuditMeta({
