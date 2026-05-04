@@ -669,3 +669,75 @@ export async function listN8nExecutions(workflowId?: string): Promise<N8nExecuti
   const response = await fetch(`${API_BASE}/n8n/executions${qs}`);
   return parseJson<N8nExecutionSummary[]>(response);
 }
+
+// ── Model Policies ────────────────────────────────────────────────────
+//
+// Gestiona la política de modelo LLM por scope jerárquico:
+//   Agency → Department → Workspace → Agent
+//
+// TODO(F-backend): implementar ModelPoliciesController en apps/api/src/modules/settings/
+// Hasta entonces, los endpoints devuelven 404 y el componente ModelSettings
+// muestra un banner informativo sin bloquear la UI.
+
+/** Nivel jerárquico al que aplica la política de modelo. */
+export type PolicyScope = 'agency' | 'department' | 'workspace' | 'agent';
+
+/** Política de modelo LLM para un scope concreto. */
+export interface ModelPolicy {
+  id:           string;
+  scope:        PolicyScope;
+  scopeId:      string;
+  /** Si true, hereda del scope padre; los campos model/provider se ignoran. */
+  inherit:      boolean;
+  provider?:    string;   // 'openai' | 'anthropic' | 'openrouter' | 'deepseek' | 'qwen'
+  model?:       string;   // e.g. 'gpt-4o', 'claude-3-5-sonnet-20241022'
+  temperature?: number;   // 0.0 – 2.0
+  maxTokens?:   number;
+  updatedAt?:   string;
+}
+
+/**
+ * Lista todas las ModelPolicy del contexto actual.
+ * GET /api/studio/v1/model-policies
+ */
+export async function getModelPolicies(): Promise<ModelPolicy[]> {
+  const response = await fetch(`${API_BASE}/model-policies`);
+  return parseJson<ModelPolicy[]>(response);
+}
+
+/**
+ * Obtiene la política efectiva para un scope+scopeId (herencia resuelta por el backend).
+ * GET /api/studio/v1/model-policies/:scope/:scopeId/effective
+ */
+export async function getEffectivePolicy(
+  scope: PolicyScope,
+  scopeId: string,
+): Promise<ModelPolicy> {
+  const response = await fetch(
+    `${API_BASE}/model-policies/${encodeURIComponent(scope)}/${encodeURIComponent(scopeId)}/effective`,
+  );
+  return parseJson<ModelPolicy>(response);
+}
+
+/**
+ * Crea o actualiza la política de un scope.
+ * PUT /api/studio/v1/model-policies/:scope/:scopeId
+ *
+ * TODO(F-backend): implementar ModelPoliciesController.
+ * Mientras tanto retorna 404; el componente lo maneja con mensaje claro.
+ */
+export async function upsertModelPolicy(
+  scope: PolicyScope,
+  scopeId: string,
+  data: Omit<ModelPolicy, 'id' | 'scope' | 'scopeId' | 'updatedAt'>,
+): Promise<ModelPolicy> {
+  const response = await fetch(
+    `${API_BASE}/model-policies/${encodeURIComponent(scope)}/${encodeURIComponent(scopeId)}`,
+    {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(data),
+    },
+  );
+  return parseJson<ModelPolicy>(response);
+}
