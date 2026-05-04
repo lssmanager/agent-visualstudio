@@ -8,7 +8,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "build": "tsc && npx vite build --config apps/web/vite.config.ts",
+    "build": "tsc -p tsconfig.json && npx vite build --config apps/web/vite.config.ts",
     "build:packages": "echo 'Skipping package builds - packages are part of main TypeScript compilation'",
     "build:web": "npx vite build --config apps/web/vite.config.ts",
     "build:gateway": "tsc -p apps/gateway/tsconfig.json",
