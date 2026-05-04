@@ -26,6 +26,9 @@
     "test:run-engine": "jest --selectProjects=run-engine",
     "test:e2e:run-engine": "jest --config packages/run-engine/src/__tests__/e2e/jest.e2e.config.ts --runInBand"
   },
+  "prisma": {
+    "schema": "packages/db/prisma/schema.prisma"
+  },
   "keywords": [
     "openclaw",
     "dashboard",
@@ -34,10 +37,6 @@
   ],
   "author": "",
   "license": "MIT",
-  "workspaces": [
-    "packages/*",
-    "apps/*"
-  ],
   "dependencies": {
     "@anthropic-ai/sdk": "^0.26.0",
     "@hono/node-server": "^1.19.14",
