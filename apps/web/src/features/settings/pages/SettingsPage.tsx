@@ -9,10 +9,12 @@ import { McpRegistryPanel } from '../components/McpRegistryPanel';
 import { ChannelsSettingsTab } from '../components/ChannelsSettingsTab';
 import { LlmProvidersTab } from '../components/LlmProvidersTab';
 import { ModelSettings } from '../components/ModelSettings';
+import { N8nConnections } from '../components/N8nConnections';
 
 // F6-11: añadir 'Model Policy' junto a 'LLM Keys' (misma sección LLM, tab hermano)
 // F6-12: BudgetPanel → BudgetSettings
-const TABS = ['General', 'Budgets', 'Audit', 'MCP', 'Channels', 'LLM Keys', 'Model Policy'] as const;
+// F6-14: Añade tab 'n8n' para gestión de conexiones n8n
+const TABS = ['General', 'Budgets', 'Audit', 'MCP', 'Channels', 'LLM Keys', 'Model Policy', 'n8n'] as const;
 type Tab = typeof TABS[number];
 
 export default function SettingsPage() {
@@ -101,6 +103,12 @@ export default function SettingsPage() {
             workspaceId={workspace?.id}
             agencyId={workspace?.id ? undefined : '__global__'}
           />
+        )}
+        {/* F6-14: N8nConnections — gestión de instancias n8n (alta, edición, test, default) */}
+        {activeTab === 'n8n' && (
+          workspace
+            ? <N8nConnections workspaceId={workspace.id} />
+            : <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Select a workspace first.</p>
         )}
         {(activeTab === 'Channels' || activeTab === 'LLM Keys') && !workspace && (
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Select a workspace first.</p>
