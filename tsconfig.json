@@ -29,7 +29,27 @@
     "noFallthroughCasesInSwitch": true,
     "paths": {
       "../../lib/prisma": ["./packages/db/src/index.ts"],
-      "../../lib/prisma.js": ["./packages/db/src/index.ts"]
+      "../../lib/prisma.js": ["./packages/db/src/index.ts"],
+      "@lss/crypto": ["./packages/crypto/src/index.ts"],
+      "@lss/crypto/*": ["./packages/crypto/src/*"],
+      "@lss/core-types": ["./packages/core-types/src/index.ts"],
+      "@lss/core-types/*": ["./packages/core-types/src/*"],
+      "@lss/profile-engine": ["./packages/profile-engine/src/index.ts"],
+      "@lss/profile-engine/*": ["./packages/profile-engine/src/*"],
+      "@lss/db": ["./packages/db/src/index.ts"],
+      "@lss/db/*": ["./packages/db/src/*"],
+      "@lss/schemas": ["./packages/schemas/src/index.ts"],
+      "@lss/schemas/*": ["./packages/schemas/src/*"],
+      "@lss/flow-engine": ["./packages/flow-engine/src/index.ts"],
+      "@lss/flow-engine/*": ["./packages/flow-engine/src/*"],
+      "@lss/run-engine": ["./packages/run-engine/src/index.ts"],
+      "@lss/run-engine/*": ["./packages/run-engine/src/*"],
+      "@lss/hierarchy": ["./packages/hierarchy/src/index.ts"],
+      "@lss/hierarchy/*": ["./packages/hierarchy/src/*"],
+      "@lss/gateway-sdk": ["./packages/gateway-sdk/src/index.ts"],
+      "@lss/gateway-sdk/*": ["./packages/gateway-sdk/src/*"],
+      "@lss/canonical-types": ["./packages/canonical-types/src/index.ts"],
+      "@lss/canonical-types/*": ["./packages/canonical-types/src/*"]
     }
   },
   "include": [
