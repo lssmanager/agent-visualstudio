@@ -72,8 +72,8 @@
     "node_modules",
     "dist",
     "apps/web",
+    "apps/gateway",
     "**/__tests__/**",
-    "**/*.test.ts",
-    "apps/gateway/src/channels/whatsapp-baileys.adapter.ts"
+    "**/*.test.ts"
   ]
 }
