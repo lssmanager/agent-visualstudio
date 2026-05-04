@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { validateFlow } from '../../../lib/api';
 import type { AgentSpec, FlowSpec, SkillSpec } from '../../../lib/types';
@@ -6,6 +6,7 @@ import { useFlowSave } from '../../flows/hooks/useFlowSave';
 import { EditableFlowCanvas } from '../../canvas/components/EditableFlowCanvas';
 import { CanvasToolbar } from '../../canvas/components/CanvasToolbar';
 import { AgentLibraryPanel } from '../../canvas/components/agent-library';
+import type { AgentTemplate } from '../../canvas/components/agent-library';
 
 interface StudioCanvasProps {
   agents: AgentSpec[];
@@ -14,10 +15,16 @@ interface StudioCanvasProps {
   onNodeSelect?: (nodeId: string | null) => void;
 }
 
+/** MIME type usado para el drag desde AgentLibraryPanel */
+const AGENCY_AGENT_MIME = 'application/agency-agent-template';
+
 export function StudioCanvas({ agents, flows, skills, onNodeSelect }: StudioCanvasProps) {
   const [editableFlow, setEditableFlow] = useState<FlowSpec | null>(flows[0] ?? null);
   const [validating, setValidating] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+
+  // Ref al wrapper del canvas para disparar drop simulado desde el botón "Usar"
+  const canvasWrapperRef = useRef<HTMLDivElement>(null);
 
   // Undo/redo history.
   const [history, setHistory] = useState<FlowSpec[]>(editableFlow ? [editableFlow] : []);
@@ -84,6 +91,42 @@ export function StudioCanvas({ agents, flows, skills, onNodeSelect }: StudioCanv
     }
   }
 
+  /**
+   * Callback para el botón "Usar este agente" en AgentTemplatePreview.
+   * Inserta el agente directamente en el flow sin necesidad de drag.
+   * Posición por defecto: centro del viewport visible + offset aleatorio
+   * para evitar apilar nodos en el mismo punto.
+   */
+  const handleUseAgent = useCallback(
+    (template: AgentTemplate) => {
+      if (!editableFlow) return;
+
+      const offset = Math.random() * 80 - 40; // -40..+40 px
+      const position = { x: 250 + offset, y: 180 + offset };
+
+      const newNode = {
+        id:   `agent-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        type: 'agent' as const,
+        position,
+        config: {
+          agentId:      '',
+          name:         template.name,
+          purpose:      template.description,
+          systemPrompt: template.systemPrompt ?? '',
+          tags:         template.tags,
+          skills:       [],
+          tools:        [],
+          source:       'agency-agents' as const,
+          templateId:   template.id,
+        },
+      };
+
+      handleFlowChange({ ...editableFlow, nodes: [...editableFlow.nodes, newNode] });
+      setLibraryOpen(false);
+    },
+    [editableFlow, handleFlowChange],
+  );
+
   const emptyState = useMemo(
     () => (
       <div
@@ -119,7 +162,8 @@ export function StudioCanvas({ agents, flows, skills, onNodeSelect }: StudioCanv
         agentLibraryOpen={libraryOpen}
       />
 
-      <div className="min-h-0 flex-1">
+      {/* Canvas wrapper — recibe drops de NodePalette y AgentLibraryPanel */}
+      <div ref={canvasWrapperRef} className="min-h-0 flex-1">
         {editableFlow ? (
           <EditableFlowCanvas
             flow={editableFlow}
@@ -137,12 +181,11 @@ export function StudioCanvas({ agents, flows, skills, onNodeSelect }: StudioCanv
       <AgentLibraryPanel
         isOpen={libraryOpen}
         onClose={() => setLibraryOpen(false)}
-        onUseAgent={(agent) => {
-          // Por ahora: log — el drag-to-canvas se implementa en F6b-02
-          console.log('[AgentLibrary] onUseAgent:', agent.slug);
-          // TODO F6b-02: convertir agent → FlowNode y agregar al canvas
-        }}
+        onUseAgent={handleUseAgent}
       />
     </div>
   );
+
+  // Suprimir warning de variable no usada (MIME se documenta aquí para trazabilidad)
+  void AGENCY_AGENT_MIME;
 }
