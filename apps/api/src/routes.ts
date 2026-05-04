@@ -33,6 +33,7 @@ import { registerLlmProvidersRoutes } from './modules/llm-providers/llm-provider
 import { registerCatalogRoutes } from './modules/catalog/catalog.controller';
 import { registerSettingsRoutes } from './modules/settings/settings.controller';
 import { registerN8nConnectionRoutes } from './modules/n8n/n8n-connections.controller';
+import { registerAgencyTemplatesRoutes } from './modules/agency-templates/agency-templates.controller';
 
 export function registerRoutes(app: Express) {
   const router = Router();
@@ -77,6 +78,8 @@ export function registerRoutes(app: Express) {
   registerSettingsRoutes(router);
   // N8n Connections CRUD (F4a-02)
   registerN8nConnectionRoutes(router);
+  // Agency Templates — templates del submodule vendor/agency-agents (F6b-04)
+  registerAgencyTemplatesRoutes(router);
 
   app.use(studioConfig.apiPrefix, router);
 }

@@ -1,4 +1,4 @@
-import { Save, CheckCircle, Undo2, Redo2 } from 'lucide-react';
+import { Save, CheckCircle, Undo2, Redo2, BookOpen } from 'lucide-react';
 import type { SaveState } from '../../flows/hooks/useFlowSave';
 
 interface CanvasToolbarProps {
@@ -14,6 +14,9 @@ interface CanvasToolbarProps {
   /** Estado enriquecido del guardado automático */
   saveState?: SaveState;
   savedAt?: Date | null;
+  /** Abre/cierra el panel Agent Library */
+  onToggleAgentLibrary?: () => void;
+  agentLibraryOpen?: boolean;
 }
 
 export function CanvasToolbar({
@@ -27,6 +30,8 @@ export function CanvasToolbar({
   validating,
   saveState,
   savedAt,
+  onToggleAgentLibrary,
+  agentLibraryOpen,
 }: CanvasToolbarProps) {
   // Compatibilidad: si se pasa saveState, usarlo; si no, caer en el bool legacy.
   const isSaving = saveState === 'saving' || saving;
@@ -77,6 +82,25 @@ export function CanvasToolbar({
       >
         <Redo2 size={14} />
       </button>
+
+      {/* ── Agent Library toggle ─────────────────────────────────────── */}
+      {onToggleAgentLibrary && (
+        <button
+          onClick={onToggleAgentLibrary}
+          className="flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium transition-colors"
+          style={
+            agentLibraryOpen
+              ? { background: 'var(--color-primary)', color: '#fff' }
+              : { color: 'var(--text-muted)', background: 'var(--shell-chip-bg)' }
+          }
+          title="Agent Library"
+          aria-pressed={agentLibraryOpen}
+          aria-label="Abrir/cerrar Agent Library"
+        >
+          <BookOpen size={13} />
+          Library
+        </button>
+      )}
 
       {/* ── Save state indicator (auto-save) ────────────────────────── */}
       {saveState && saveState !== 'idle' && (
