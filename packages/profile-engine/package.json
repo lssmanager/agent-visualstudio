@@ -1,5 +1,5 @@
 {
-  "name": "@lss/crypto",
+  "name": "@lss/profile-engine",
   "version": "0.1.0",
   "private": true,
   "main": "./dist/index.js",
@@ -15,8 +15,9 @@
     "test":  "vitest run"
   },
   "dependencies": {
-    "zod": "^3.23.8",
-    "@prisma/client": "*"
+    "@lss/core-types": "*",
+    "@lss/db": "*",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "typescript": "^5.4.5",
