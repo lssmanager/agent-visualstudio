@@ -1,0 +1,88 @@
+/agency-templates:
+  get:
+    summary: Get complete Agency (all departments + agents)
+    tags: [Agency Templates]
+    responses:
+      '200':
+        description: Agency object with departments and meta
+        content:
+          application/json:
+            example:
+              departments:
+                - id: engineering
+                  name: Engineering
+                  color: blue
+                  agents:
+                    - id: engineering-backend-architect
+                      slug: engineering-backend-architect
+                      department: engineering
+                      name: Backend Architect
+                      description: Senior backend architect specializing in scalable systems
+                      emoji: "🏗️"
+                      color: blue
+                      vibe: Designs the systems that hold everything up
+                      tags: []
+              meta:
+                totalDepartments: 16
+                totalAgents: 130
+                source: vendor/agency-agents
+                generatedAt: "2026-05-03T00:00:00.000Z"
+
+/agency-templates/departments:
+  get:
+    summary: List all available departments
+    tags: [Agency Templates]
+    responses:
+      '200':
+        description: Array of DepartmentWorkspace
+        content:
+          application/json:
+            example:
+              - id: engineering
+                name: Engineering
+                color: blue
+                agents: []
+
+/agency-templates/departments/{departmentId}/agents:
+  get:
+    summary: Get agents of a specific department
+    tags: [Agency Templates]
+    parameters:
+      - in: path
+        name: departmentId
+        required: true
+        schema:
+          type: string
+        example: engineering
+    responses:
+      '200':
+        description: Array of AgentTemplate for the given department
+      '404':
+        description: Department not found
+        content:
+          application/json:
+            example:
+              ok: false
+              error: "Department not found: xyz"
+
+/agency-templates/agents/{agentId}:
+  get:
+    summary: Get a single agent by slug
+    tags: [Agency Templates]
+    parameters:
+      - in: path
+        name: agentId
+        required: true
+        schema:
+          type: string
+        example: engineering-backend-architect
+    responses:
+      '200':
+        description: AgentTemplate object
+      '404':
+        description: Agent not found
+        content:
+          application/json:
+            example:
+              ok: false
+              error: "Agent not found: does-not-exist"
