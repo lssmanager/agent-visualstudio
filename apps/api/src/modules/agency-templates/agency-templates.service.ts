@@ -14,8 +14,8 @@ export class AgencyTemplatesService {
   constructor() {
     this.agency = buildAgency();
     console.log(
-      `[agency-templates] Loaded ${this.agency.meta.totalAgents} agents` +
-      ` across ${this.agency.meta.totalDepartments} departments`,
+      `[agency-templates] Loaded ${this.agency.totalAgents} agents` +
+      ` across ${this.agency.departments.length} departments`,
     );
   }
 
