@@ -94,7 +94,6 @@ export function buildAgency(): Agency {
     });
   }
 
-  // Sort departments alphabetically
   departments.sort((a, b) => a.name.localeCompare(b.name));
 
   const totalAgents = departments.reduce((sum, d) => sum + d.agents.length, 0);

@@ -35,11 +35,9 @@ function parseSimpleYaml(yaml: string): Record<string, unknown> {
     const key = line.slice(0, colonIdx).trim();
     const rawVal = line.slice(colonIdx + 1).trim();
 
-    // Strip surrounding quotes
     const unquoted = rawVal.replace(/^["']|["']$/g, '');
 
     if (rawVal.startsWith('[')) {
-      // Inline array: [tag1, tag2, "tag 3"]
       const inner = rawVal.slice(1, rawVal.lastIndexOf(']'));
       result[key] = inner
         .split(',')
@@ -60,10 +58,8 @@ function parseSimpleYaml(yaml: string): Record<string, unknown> {
 function deriveTags(department: string, vibe: string | undefined, slug: string): string[] {
   const tags = new Set<string>();
 
-  // Always include department
   tags.add(department.toLowerCase());
 
-  // Add first 4 meaningful words from vibe
   if (vibe) {
     const vibeWords = vibe
       .toLowerCase()
@@ -73,7 +69,6 @@ function deriveTags(department: string, vibe: string | undefined, slug: string):
     vibeWords.slice(0, 4).forEach((w) => tags.add(w));
   }
 
-  // Add slug tokens (slug = "engineering-backend-architect" → backend, architect)
   const slugTokens = slug
     .replace(`${department}-`, '')
     .split('-')
@@ -105,7 +100,6 @@ export function parseAgentFile(filePath: string, department: string): AgentTempl
   const vibe = typeof meta['vibe'] === 'string' ? meta['vibe'] : undefined;
   const color = typeof meta['color'] === 'string' ? meta['color'] : '#6b7280';
 
-  // Some color values are Tailwind color names (e.g. "blue") — map common ones to hex
   const COLOR_MAP: Record<string, string> = {
     blue: '#2563eb',
     red: '#dc2626',

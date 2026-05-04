@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // departments.ts — static metadata for each department directory
 //
-// 14 departments derived from msitarzewski/agency-agents repo structure.
+// 16 departments derived from msitarzewski/agency-agents repo structure.
 // Colors chosen to match the studio's design system palette.
 // ─────────────────────────────────────────────────────────────────────────────
 
