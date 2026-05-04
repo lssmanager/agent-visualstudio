@@ -10,7 +10,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "moduleResolution": "bundler",
+    "moduleResolution": "node10",
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
@@ -29,7 +29,39 @@
     "noFallthroughCasesInSwitch": true,
     "paths": {
       "../../lib/prisma": ["./packages/db/src/index.ts"],
-      "../../lib/prisma.js": ["./packages/db/src/index.ts"]
+      "../../lib/prisma.js": ["./packages/db/src/index.ts"],
+      "../../../../lib/prisma.js": ["./packages/db/src/index.ts"],
+      "@lss/crypto": ["./packages/crypto/src/index.ts"],
+      "@lss/crypto/*": ["./packages/crypto/src/*"],
+      "lss-crypto": ["./packages/crypto/src/index.ts"],
+      "lss/crypto": ["./packages/crypto/src/index.ts"],
+      "@lss/core-types": ["./packages/core-types/src/index.ts"],
+      "@lss/core-types/*": ["./packages/core-types/src/*"],
+      "@agent-vs/core-types": ["./packages/core-types/src/index.ts"],
+      "@agent-vs/core-types/*": ["./packages/core-types/src/*"],
+      "@lss/profile-engine": ["./packages/profile-engine/src/index.ts"],
+      "@lss/profile-engine/*": ["./packages/profile-engine/src/*"],
+      "@agent-vs/profile-engine": ["./packages/profile-engine/src/index.ts"],
+      "@agent-vs/profile-engine/*": ["./packages/profile-engine/src/*"],
+      "lss/profile-engine": ["./packages/profile-engine/src/index.ts"],
+      "@lss/db": ["./packages/db/src/index.ts"],
+      "@lss/db/*": ["./packages/db/src/*"],
+      "@lss/schemas": ["./packages/schemas/src/index.ts"],
+      "@lss/schemas/*": ["./packages/schemas/src/*"],
+      "@lss/flow-engine": ["./packages/flow-engine/src/index.ts"],
+      "@lss/flow-engine/*": ["./packages/flow-engine/src/*"],
+      "@lss/run-engine": ["./packages/run-engine/src/index.ts"],
+      "@lss/run-engine/*": ["./packages/run-engine/src/*"],
+      "@agent-visualstudio/run-engine": ["./packages/run-engine/src/index.ts"],
+      "@agent-visualstudio/run-engine/*": ["./packages/run-engine/src/*"],
+      "@agent-visualstudio/agency-agents-loader": ["./packages/agency-agents-loader/src/index.ts"],
+      "@agent-visualstudio/agency-agents-loader/*": ["./packages/agency-agents-loader/src/*"],
+      "@lss/hierarchy": ["./packages/hierarchy/src/index.ts"],
+      "@lss/hierarchy/*": ["./packages/hierarchy/src/*"],
+      "@lss/gateway-sdk": ["./packages/gateway-sdk/src/index.ts"],
+      "@lss/gateway-sdk/*": ["./packages/gateway-sdk/src/*"],
+      "@lss/canonical-types": ["./packages/canonical-types/src/index.ts"],
+      "@lss/canonical-types/*": ["./packages/canonical-types/src/*"]
     }
   },
   "include": [
@@ -40,8 +72,8 @@
     "node_modules",
     "dist",
     "apps/web",
+    "apps/gateway",
     "**/__tests__/**",
-    "**/*.test.ts",
-    "apps/gateway/src/channels/whatsapp-baileys.adapter.ts"
+    "**/*.test.ts"
   ]
 }

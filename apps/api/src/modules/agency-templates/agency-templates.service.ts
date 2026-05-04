@@ -1,22 +1,62 @@
-import { buildAgency } from '../../../../../packages/agency-agents-loader/src';
-import type { Agency, DepartmentWorkspace, AgentTemplate } from '../../../../../packages/agency-agents-loader/src';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { buildAgency, getAllAgents, findAgentBySlug } from '@agent-visualstudio/agency-agents-loader';
+import type { Agency, DepartmentWorkspace, AgentTemplate } from '@agent-visualstudio/agency-agents-loader';
 
 /**
  * AgencyTemplatesService
  *
- * Carga el objeto Agency UNA SOLA VEZ al instanciar el servicio.
- * buildAgency() lee el filesystem una única vez; todas las queries
- * posteriores se sirven desde this.agency en memoria.
+ * Carga el objeto Agency UNA SOLA VEZ al iniciar el módulo (onModuleInit).
+ * buildAgency() lee el filesystem de vendor/agency-agents/ una única vez;
+ * todas las queries posteriores se sirven desde this.agency en memoria.
+ *
+ * Implementa OnModuleInit para compatibilidad con NestJS lifecycle.
+ * También funciona como servicio plain (Express) al instanciar con new.
+ *
+ * Issue: F6b-FX01
  */
-export class AgencyTemplatesService {
-  private readonly agency: Agency;
+@Injectable()
+export class AgencyTemplatesService implements OnModuleInit {
+  private readonly logger = new Logger(AgencyTemplatesService.name);
+  private agency!: Agency;
 
+  /**
+   * NestJS lifecycle hook — se llama automáticamente al arrancar el módulo.
+   * Carga buildAgency() en memoria para que los requests sean instantáneos.
+   */
+  onModuleInit(): void {
+    this.loadAgency();
+  }
+
+  /**
+   * Constructor también llama loadAgency() para compatibilidad con
+   * instanciación directa (sin DI de NestJS) en el controller Express.
+   */
   constructor() {
-    this.agency = buildAgency();
-    console.log(
-      `[agency-templates] Loaded ${this.agency.meta.totalAgents} agents` +
-      ` across ${this.agency.meta.totalDepartments} departments`,
-    );
+    this.loadAgency();
+  }
+
+  private loadAgency(): void {
+    try {
+      this.agency = buildAgency();
+      this.logger.log(
+        `Loaded ${this.agency.totalAgents} agents` +
+          ` across ${this.agency.departments.length} departments`,
+      );
+    } catch (err) {
+      this.logger.error(
+        '[agency-templates] Failed to load agency-agents vendor. ' +
+          'Run: git submodule update --init --recursive',
+        (err as Error).message,
+      );
+      // Graceful degradation: API arranca pero retorna catálogo vacío
+      this.agency = {
+        id: 'agency-agents',
+        name: 'Agency Agents Library',
+        source: 'vendor/agency-agents',
+        departments: [],
+        totalAgents: 0,
+      };
+    }
   }
 
   /** GET /api/agency-templates — objeto Agency completo */
@@ -40,14 +80,26 @@ export class AgencyTemplatesService {
 
   /**
    * GET /api/agency-templates/agents/:agentId
-   * Busca sobre la caché en memoria — NO relanza buildAgency().
+   * Busca sobre la caché en memoria con findAgentBySlug del loader.
    * Retorna null si el agente no existe (→ 404 en el controller).
    */
   getAgentById(agentId: string): AgentTemplate | null {
-    for (const dept of this.agency.departments) {
-      const agent = dept.agents.find((a) => a.slug === agentId);
-      if (agent) return agent;
-    }
-    return null;
+    const agent = findAgentBySlug(agentId);
+    return agent ?? null;
+  }
+
+  /**
+   * Búsqueda de texto libre sobre nombre, descripción y systemPrompt.
+   * Útil para el panel de búsqueda de la Agent Library UI.
+   */
+  searchAgents(query: string): AgentTemplate[] {
+    if (!query.trim()) return getAllAgents();
+    const q = query.toLowerCase();
+    return getAllAgents().filter(
+      (a) =>
+        a.name.toLowerCase().includes(q) ||
+        a.description.toLowerCase().includes(q) ||
+        a.department.toLowerCase().includes(q),
+    );
   }
 }

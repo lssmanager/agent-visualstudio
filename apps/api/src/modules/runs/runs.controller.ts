@@ -5,13 +5,23 @@ import { RunsService } from './runs.service';
 export function registerRunsRoutes(router: Router) {
   const service = new RunsService();
 
+  /** Extrae workspaceId del header x-workspace-id o del query param. */
+  const getWorkspaceId = (req: any): string =>
+    (req.headers['x-workspace-id'] as string) ??
+    (req.query.workspaceId as string) ??
+    'default';
+
   // GET /runs — list all runs
-  router.get('/runs', (_req, res) => {
-    res.json(service.findAll());
+  router.get('/runs', async (req, res) => {
+    try {
+      return res.json(await service.findAll(getWorkspaceId(req)));
+    } catch (error) {
+      return res.status(500).json({ ok: false, error: (error as Error).message });
+    }
   });
 
   // GET /runs/compare?ids=a,b — compare two or more runs (must be before :id)
-  router.get('/runs/compare', (req, res) => {
+  router.get('/runs/compare', async (req, res) => {
     const idsParam = req.query.ids as string | undefined;
     if (!idsParam) {
       return res.status(400).json({ ok: false, error: 'ids query param required (comma-separated)' });
@@ -21,15 +31,15 @@ export function registerRunsRoutes(router: Router) {
       if (ids.length < 2) {
         return res.status(400).json({ ok: false, error: 'At least 2 run ids required' });
       }
-      return res.json(service.compareRuns(ids));
+      return res.json(await service.compareRuns(ids));
     } catch (error) {
       return res.status(422).json({ ok: false, error: (error as Error).message });
     }
   });
 
   // GET /runs/:id — single run with steps
-  router.get('/runs/:id', (req, res) => {
-    const run = service.findById(req.params.id);
+  router.get('/runs/:id', async (req, res) => {
+    const run = await service.findById(req.params.id);
     if (!run) {
       return res.status(404).json({ ok: false, error: 'Run not found' });
     }
@@ -37,13 +47,19 @@ export function registerRunsRoutes(router: Router) {
   });
 
   // POST /runs — start a new run
-  router.post('/runs', (req, res) => {
+  router.post('/runs', async (req, res) => {
     try {
-      const { flowId, trigger } = req.body;
+      const { flowId, agentId, inputData, metadata } = req.body;
       if (!flowId) {
         return res.status(400).json({ ok: false, error: 'flowId is required' });
       }
-      const run = service.startRun(flowId, trigger);
+      const run = await service.startRun({
+        workspaceId: getWorkspaceId(req),
+        flowId,
+        agentId,
+        inputData,
+        metadata,
+      });
       return res.status(201).json(run);
     } catch (error) {
       return res.status(422).json({ ok: false, error: (error as Error).message });
@@ -51,12 +67,16 @@ export function registerRunsRoutes(router: Router) {
   });
 
   // POST /runs/:id/cancel — cancel a run
-  router.post('/runs/:id/cancel', (req, res) => {
-    const run = service.cancelRun(req.params.id);
-    if (!run) {
-      return res.status(404).json({ ok: false, error: 'Run not found' });
+  router.post('/runs/:id/cancel', async (req, res) => {
+    try {
+      const run = await service.cancelRun(req.params.id);
+      if (!run) {
+        return res.status(404).json({ ok: false, error: 'Run not found' });
+      }
+      return res.json(run);
+    } catch (error) {
+      return res.status(404).json({ ok: false, error: (error as Error).message });
     }
-    return res.json(run);
   });
 
   // POST /runs/:id/steps/:stepId/approve — approve a step
@@ -87,39 +107,38 @@ export function registerRunsRoutes(router: Router) {
   });
 
   // GET /runs/:id/trace — full trace of steps
-  router.get('/runs/:id/trace', (req, res) => {
-    const run = service.getTrace(req.params.id);
+  router.get('/runs/:id/trace', async (req, res) => {
+    const run = await service.getTrace(req.params.id);
     if (!run) {
       return res.status(404).json({ ok: false, error: 'Run not found' });
     }
-    const replayMetadata = service.getReplayMetadata(req.params.id);
+    const replayMetadata = await service.getReplayMetadata(req.params.id);
     return res.json({
-      runId: run.id,
-      flowId: run.flowId,
-      status: run.status,
-      steps: run.steps,
-      topologyEvents: replayMetadata?.topologyEvents ?? [],
-      handoffs: replayMetadata?.handoffs ?? [],
-      redirects: replayMetadata?.redirects ?? [],
+      runId:            run.id,
+      flowId:           run.flowId,
+      status:           run.status,
+      steps:            run.steps,
+      topologyEvents:   replayMetadata?.topologyEvents   ?? [],
+      handoffs:         replayMetadata?.handoffs         ?? [],
+      redirects:        replayMetadata?.redirects        ?? [],
       stateTransitions: replayMetadata?.stateTransitions ?? [],
-      replay: replayMetadata?.replay ?? {},
+      replay:           replayMetadata?.replay           ?? {},
     });
   });
 
-  router.get('/runs/:id/replay-metadata', (req, res) => {
-    const replayMetadata = service.getReplayMetadata(req.params.id);
+  // GET /runs/:id/replay-metadata
+  router.get('/runs/:id/replay-metadata', async (req, res) => {
+    const replayMetadata = await service.getReplayMetadata(req.params.id);
     if (!replayMetadata) {
       return res.status(404).json({ ok: false, error: 'Run not found' });
     }
     return res.json(replayMetadata);
   });
 
-  // ── Sprint 7: Operations Advanced ──────────────────────────────────
-
   // POST /runs/:id/replay — replay a completed run
-  router.post('/runs/:id/replay', (req, res) => {
+  router.post('/runs/:id/replay', async (req, res) => {
     try {
-      const run = service.replayRun(req.params.id);
+      const run = await service.replayRun(req.params.id);
       return res.status(201).json(run);
     } catch (error) {
       return res.status(422).json({ ok: false, error: (error as Error).message });
@@ -127,8 +146,8 @@ export function registerRunsRoutes(router: Router) {
   });
 
   // GET /runs/:id/cost — cost breakdown by step
-  router.get('/runs/:id/cost', (req, res) => {
-    const result = service.getRunCost(req.params.id);
+  router.get('/runs/:id/cost', async (req, res) => {
+    const result = await service.getRunCost(req.params.id);
     if (!result) {
       return res.status(404).json({ ok: false, error: 'Run not found' });
     }
@@ -136,13 +155,13 @@ export function registerRunsRoutes(router: Router) {
   });
 
   // GET /usage — aggregated usage/cost
-  router.get('/usage', (req, res) => {
+  router.get('/usage', async (req, res) => {
     const { from, to, groupBy } = req.query as { from?: string; to?: string; groupBy?: string };
-    return res.json(service.getUsage({ from, to, groupBy }));
+    return res.json(await service.getUsage(getWorkspaceId(req), { from, to, groupBy }));
   });
 
   // GET /usage/by-agent — usage grouped by agent
-  router.get('/usage/by-agent', (_req, res) => {
-    return res.json(service.getUsageByAgent());
+  router.get('/usage/by-agent', async (req, res) => {
+    return res.json(await service.getUsageByAgent(getWorkspaceId(req)));
   });
 }

@@ -8,6 +8,41 @@ Plataforma de gestión de agentes IA, flujos, canales de mensajería y workspace
 
 ---
 
+## Clonado con Submódulos
+
+Este repositorio usa **git submodules**. Si clonas sin inicializarlos, `vendor/agency-agents/` quedará vacía.
+
+### Clonar desde cero (recomendado)
+
+```bash
+git clone --recurse-submodules https://github.com/lssmanager/agent-visualstudio
+```
+
+### Si ya clonaste sin submódulos
+
+```bash
+git submodule update --init --recursive
+```
+
+### Qué contiene `vendor/agency-agents/`
+
+Repositorio externo [`msitarzewski/agency-agents`](https://github.com/msitarzewski/agency-agents) con templates de agentes por departamento:
+
+```
+vendor/agency-agents/
+  engineering/           ← departamento de ingeniería
+    engineering-code-reviewer.md
+    ...
+  marketing/
+  ...
+```
+
+- Cada **carpeta** = un departamento
+- Cada **archivo `.md`** = un template de agente
+- Estos templates se usarán como presets del canvas en fases posteriores (F6b)
+
+---
+
 ## Arquitectura
 
 ```
@@ -280,7 +315,10 @@ La selección del backend se hace en el módulo de bootstrap del API. Para produ
 ├── templates/
 │   ├── profiles/                          ← .md + .json sidecar files
 │   └── workspaces/                        ← Plantillas de rutinas
+├── vendor/
+│   └── agency-agents/                     ← git submodule (msitarzewski/agency-agents)
 ├── .env.example
+├── .gitmodules
 ├── package.json
 ├── tsconfig.json
 └── nixpacks.toml

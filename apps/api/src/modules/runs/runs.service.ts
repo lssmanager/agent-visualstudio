@@ -26,9 +26,8 @@ import {
   RunRepository,
   FlowExecutor,
   LLMStepExecutor,
-} from '../../../../../packages/run-engine/src/index.js';
-import type { AgentExecutorFn } from '../../../../../packages/run-engine/src/index.js';
-import type { RunStatus } from '@prisma/client';
+} from '@lss/run-engine';
+import type { AgentExecutorFn } from '@lss/run-engine';
 
 // ── Singletons (lazy, construidos en la primera llamada) ─────────────────────
 
@@ -43,7 +42,7 @@ function getRepo(): RunRepository {
  * AgentExecutorFn mínima que usa LLMStepExecutor para ejecutar un RunStep.
  */
 const executeAgent: AgentExecutorFn = async (stepId: string) => {
-  const executor = new LLMStepExecutor();
+  const executor = new LLMStepExecutor({ prisma: getPrisma() });
   return executor.execute(stepId);
 };
 
@@ -101,8 +100,6 @@ export class RunsService {
 
   /**
    * approveStep — actualización atómica para evitar doble-decisión bajo concurrencia.
-   * updateMany({ where: { runId, stepId, status: 'pending' } }) garantiza
-   * que sólo una llamada simultánea gana la escritura; si count===0, ya fue decidido.
    */
   async approveStep(runId: string, stepId: string) {
     const prisma = getPrisma();
@@ -175,12 +172,12 @@ export class RunsService {
     const original = await getRepo().findRunById(id);
     if (!original) throw new Error(`Run not found: ${id}`);
 
-    const status = original.status as RunStatus;
+    // status comparison as plain string (RunStatus enum removed from @prisma/client)
+    const status = original.status as string;
     if (status !== 'completed' && status !== 'failed') {
       throw new Error('Can only replay completed or failed runs');
     }
 
-    // Guard: flowId es requerido para crear un run válido
     if (!original.flowId) {
       throw new Error(
         `Cannot replay run ${id}: original run has no flowId. ` +
@@ -203,10 +200,6 @@ export class RunsService {
 
   // ── Analytics ──────────────────────────────────────────────────────────────
 
-  /**
-   * compareRuns — usa tokenUsage.input/output (contrato de stepPrismaToSpec).
-   * promptTokens/completionTokens no existen en el objeto mapeado.
-   */
   async compareRuns(ids: string[]) {
     const repo = getRepo();
     const runs = await Promise.all(ids.map((id) => repo.findRunById(id)));
@@ -270,11 +263,6 @@ export class RunsService {
     return { runId: run.id, totalCost, totalTokens, steps };
   }
 
-  /**
-   * getUsage — acumula cost+tokens por run individualmente.
-   * findRunsByWorkspace no incluye steps; usamos findRunById por run
-   * para obtener step-level cost/tokens.
-   */
   async getUsage(workspaceId: string, filters?: { from?: string; to?: string; groupBy?: string }) {
     let runs = await getRepo().findRunsByWorkspace(workspaceId, { limit: 1000 });
 
@@ -290,7 +278,6 @@ export class RunsService {
     const groupBy = filters?.groupBy ?? 'flow';
     const groupMap = new Map<string, { cost: number; tokens: { input: number; output: number }; runs: number }>();
 
-    // Cargamos steps por run para acumular cost/tokens reales
     const fullRuns = await Promise.all(
       runs.map((r) => getRepo().findRunById(r.id)),
     );
@@ -327,14 +314,10 @@ export class RunsService {
     return { totalCost, totalTokens, totalRuns: runs.length, groups };
   }
 
-  /**
-   * getUsageByAgent — cuenta runs (no steps) por agente y acumula cost/tokens.
-   */
   async getUsageByAgent(workspaceId: string) {
     const runs = await getRepo().findRunsByWorkspace(workspaceId, { limit: 1000 });
     const agentMap = new Map<string, { cost: number; tokens: { input: number; output: number }; runs: number }>();
 
-    // Cargamos steps para cost/tokens reales por agente
     const fullRuns = await Promise.all(
       runs.map((r) => getRepo().findRunById(r.id)),
     );

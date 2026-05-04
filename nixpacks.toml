@@ -1,8 +1,11 @@
-[variables]
-NODE_ENV = "production"
+[phases.install]
+cmds = ['npm install --legacy-peer-deps']
 
 [phases.build]
-cmds = ["npm install", "npm run build"]
+cmds = [
+  'npx prisma generate',
+  'npm run build:web'
+]
 
 [start]
-cmd = "npm start"
+cmd = 'caddy run --config /assets/Caddyfile --adapter caddyfile'
