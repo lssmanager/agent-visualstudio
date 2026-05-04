@@ -26,7 +26,6 @@ import { N8nWorkflowNode }  from './nodes/N8nWorkflowNode';
 import { SupervisorNode }   from './nodes/SupervisorNode';
 import { SubFlowNode }      from './nodes/SubFlowNode';
 import { generateNodeId, getNodeTemplate } from '../lib/canvas-utils';
-import type { AgentTemplate } from './agent-library/useAgencyTemplates';
 
 const NODE_TYPES = {
   trigger:       TriggerNode,
@@ -66,6 +65,7 @@ interface EditableFlowCanvasProps {
 export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, onNodeSelect }: EditableFlowCanvasProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
+  const [isDragOverFromLibrary, setIsDragOverFromLibrary] = useState(false);
 
   // Build step status map from active run.
   const stepStatusMap = useMemo(() => {
@@ -77,7 +77,7 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
     return map;
   }, [activeRun]);
 
-  // Convert FlowSpec nodes → ReactFlow nodes.
+  // Convert FlowSpec nodes \u2192 ReactFlow nodes.
   const rfNodes = useMemo<Node[]>(
     () =>
       flow.nodes.map((node) => {
@@ -95,7 +95,7 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
     [flow.nodes, stepStatusMap],
   );
 
-  // Convert FlowSpec edges → ReactFlow edges.
+  // Convert FlowSpec edges \u2192 ReactFlow edges.
   const rfEdges = useMemo<Edge[]>(
     () =>
       flow.edges.map((edge, i) => ({
@@ -165,11 +165,22 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
   const onDragOver = useCallback((event: DragEvent) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
+    // Feedback visual: resaltar borde si el drag viene del AgentLibraryPanel
+    const hasTemplate = Array.from(event.dataTransfer.types).includes(
+      'application/agency-agent-template',
+    );
+    setIsDragOverFromLibrary(hasTemplate);
   }, []);
 
   const onDrop = useCallback(
     (event: DragEvent) => {
       event.preventDefault();
+      setIsDragOverFromLibrary(false); // limpiar highlight
+
+      const type = event.dataTransfer.getData('application/reactflow-type') as FlowNodeType;
+      if (!type) return;
+      const template = getNodeTemplate(type);
+      if (!template) return;
 
       const bounds = reactFlowWrapper.current?.getBoundingClientRect();
       if (!bounds || !rfInstance) return;
@@ -178,42 +189,16 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
         y: event.clientY - bounds.top,
       });
 
-      // ── Path 1: drag desde AgentLibraryPanel ──────────────────────────────
-      const agentTemplateRaw = event.dataTransfer.getData('application/agency-agent-template');
-      if (agentTemplateRaw) {
-        let template: AgentTemplate;
-        try {
-          template = JSON.parse(agentTemplateRaw) as AgentTemplate;
-        } catch {
-          return;
-        }
-        const newNode = {
-          id:       generateNodeId('agent'),
-          type:     'agent' as FlowNodeType,
-          position,
-          config: {
-            agentId:      '',
-            name:         template.name,
-            purpose:      template.description,
-            systemPrompt: template.systemPrompt ?? '',
-            tags:         template.tags,
-            skills:       [],
-            tools:        [],
-            // Trazabilidad: origen del template
-            source:       'agency-agents' as const,
-            templateId:   template.id,
-          },
-        };
-        onChange({ ...flow, nodes: [...flow.nodes, newNode] });
-        return;
-      }
+      // +5 l\u00edneas: leer template de agency-agents y fusionar con defaultConfig
+      const rawTemplate = event.dataTransfer.getData('application/agency-agent-template');
+      const templateConfig = rawTemplate
+        ? (JSON.parse(rawTemplate) as Record<string, unknown>)
+        : null;
+      const config = templateConfig
+        ? { ...template.defaultConfig, ...templateConfig }
+        : { ...template.defaultConfig };
 
-      // ── Path 2: drag desde NodePalette (comportamiento original) ──────────
-      const type = event.dataTransfer.getData('application/reactflow-type') as FlowNodeType;
-      if (!type) return;
-      const nodeTemplate = getNodeTemplate(type);
-      if (!nodeTemplate) return;
-      const newNode = { id: generateNodeId(type), type, config: { ...nodeTemplate.defaultConfig }, position };
+      const newNode = { id: generateNodeId(type), type, config, position };
       onChange({ ...flow, nodes: [...flow.nodes, newNode] });
     },
     [rfInstance, flow, onChange],
@@ -226,8 +211,11 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
       style={{
         height: '100%',
         flex: 1,
-        borderColor: 'var(--shell-panel-border)',
+        borderColor: isDragOverFromLibrary
+          ? 'var(--color-primary)'
+          : 'var(--shell-panel-border)',
         background: 'var(--canvas-surface-bg)',
+        transition: 'border-color 120ms ease',
       }}
     >
       <ReactFlow

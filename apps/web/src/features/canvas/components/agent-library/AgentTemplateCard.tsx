@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { AgentTemplate } from './useAgencyTemplates';
 
 interface AgentTemplateCardProps {
@@ -26,44 +27,67 @@ const DEFAULT_COLOR = { bg: '#f8fafc', text: '#475569', dot: '#94a3b8' };
 
 export function AgentTemplateCard({ agent, onClick }: AgentTemplateCardProps) {
   const colors = DEPT_COLORS[agent.department] ?? DEFAULT_COLOR;
+  const [isDragging, setIsDragging] = useState(false);
+
   const shortDesc =
     agent.description.length > 150
-      ? agent.description.slice(0, 147) + '…'
+      ? agent.description.slice(0, 147) + '\u2026'
       : agent.description;
 
   const handleDragStart = (e: React.DragEvent<HTMLButtonElement>) => {
-    // Serializar el AgentTemplate completo para que EditableFlowCanvas lo consuma
+    // Path 1 — compatibilidad con sistema existente de NodePalette:
+    // EditableFlowCanvas.onDrop lee este key primero para saber qué tipo crear.
+    e.dataTransfer.setData('application/reactflow-type', 'agent');
+
+    // Path 2 — payload completo para pre-poblar el config del nodo:
     e.dataTransfer.setData(
       'application/agency-agent-template',
-      JSON.stringify(agent),
+      JSON.stringify({
+        agentId:      agent.slug,        // slug como agentId canónico
+        agentName:    agent.name,        // ← lo que AgentNode renderiza
+        name:         agent.name,
+        purpose:      agent.description,
+        skills:       agent.tags,        // tags como visual hint de skills
+        tools:        [],
+        systemPrompt: agent.systemPrompt ?? '',
+        tags:         agent.tags,
+        source:       'agency-agents',   // trazabilidad
+        templateId:   agent.id,
+      }),
     );
-    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.effectAllowed = 'copy';
   };
 
   return (
     <button
       draggable
-      onDragStart={handleDragStart}
+      onDragStart={(e) => {
+        setIsDragging(true);
+        handleDragStart(e);
+      }}
+      onDragEnd={() => setIsDragging(false)}
       onClick={() => onClick(agent)}
       className="w-full text-left rounded-lg border p-3 transition-all hover:shadow-sm focus-visible:outline-none focus-visible:ring-2"
       style={{
-        background: 'var(--bg-secondary)',
-        borderColor: 'var(--border-primary)',
-        cursor: 'grab',
+        background:   isDragging ? 'var(--shell-chip-bg)' : 'var(--bg-secondary)',
+        borderColor:  isDragging ? colors.dot : 'var(--border-primary)',
+        opacity:      isDragging ? 0.7 : 1,
+        cursor:       isDragging ? 'grabbing' : 'grab',
+        transition:   'opacity 120ms ease, border-color 120ms ease, background 120ms ease',
       }}
       onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = colors.dot;
+        if (!isDragging) e.currentTarget.style.borderColor = colors.dot;
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = 'var(--border-primary)';
+        if (!isDragging) e.currentTarget.style.borderColor = 'var(--border-primary)';
       }}
-      aria-label={`Ver o arrastrar agente ${agent.name}`}
+      aria-label={`Arrastrar o ver agente ${agent.name}`}
     >
       {/* Header */}
       <div className="flex items-start justify-between gap-2 mb-1.5">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-base leading-none flex-shrink-0" role="img" aria-label={agent.department}>
-            {agent.emoji ?? '🤖'}
+            {agent.emoji ?? '\uD83E\uDD16'}
           </span>
           <span
             className="text-xs font-medium truncate"
@@ -76,11 +100,11 @@ export function AgentTemplateCard({ agent, onClick }: AgentTemplateCardProps) {
         {/* Badge fuente + hint drag */}
         <div className="flex items-center gap-1 flex-shrink-0">
           <span
-            className="text-[9px] opacity-40"
+            className="text-[9px] opacity-40 select-none"
             style={{ color: 'var(--text-muted)' }}
             title="Arrastra al canvas"
           >
-            ☰
+            &#9776;
           </span>
           <span
             className="rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none"
@@ -91,7 +115,7 @@ export function AgentTemplateCard({ agent, onClick }: AgentTemplateCardProps) {
         </div>
       </div>
 
-      {/* Descripción corta */}
+      {/* Descripci\u00f3n corta */}
       <p
         className="text-[11px] leading-relaxed line-clamp-3"
         style={{ color: 'var(--text-muted)' }}
