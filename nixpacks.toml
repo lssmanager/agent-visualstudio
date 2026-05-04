@@ -2,11 +2,11 @@
 nixPkgs = ["nodejs_22", "openssl"]
 
 [phases.install]
-cmds = ['npm install --legacy-peer-deps --ignore-scripts']
+cmds = ['npm install --legacy-peer-deps --include=dev']
 
 [phases.build]
 cmds = [
-  'npx prisma generate --schema=packages/db/prisma/schema.prisma || true',
+  './node_modules/.bin/prisma generate --schema=packages/db/prisma/schema.prisma || true',
   'npm run build --if-present'
 ]
 
