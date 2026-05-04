@@ -2,7 +2,10 @@
 cmds = ['npm install --legacy-peer-deps']
 
 [phases.build]
-cmds = ['npm run build --if-present']
+cmds = [
+  'npx prisma generate',
+  'npm run build:web'
+]
 
 [start]
-cmd = 'npm start'
+cmd = 'caddy run --config /assets/Caddyfile --adapter caddyfile'
