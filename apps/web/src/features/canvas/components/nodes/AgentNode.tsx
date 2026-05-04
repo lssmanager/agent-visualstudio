@@ -21,17 +21,16 @@ export function AgentNode({ data, selected }: AgentNodeProps) {
 
   return (
     <div
-      className="rounded-lg border-2 px-3 py-2 min-w-[140px] shadow-sm"
+      className="rounded-lg border px-3 py-2 min-w-[130px]"
       style={{
-        background: '#f0fdf4',
+        background: selected ? '#dcfce7' : '#f0fdf4',
         borderColor: selected ? '#16a34a' : '#86efac',
+        boxShadow: selected ? '0 0 0 2px #16a34a33' : 'none',
       }}
     >
-      <Handle type="target" position={Position.Top} className="!bg-green-500 !w-2.5 !h-2.5" />
-      <div className="flex items-center gap-2">
-        <div className="w-6 h-6 rounded flex items-center justify-center" style={{ background: '#16a34a' }}>
-          <Bot size={13} className="text-white" />
-        </div>
+      <Handle type="target" position={Position.Top} />
+      <div className="flex items-center gap-1.5">
+        <Bot size={14} style={{ color: '#16a34a' }} />
         <div>
           <div className="text-[11px] font-semibold" style={{ color: '#166534' }}>Agent</div>
           <div className="text-[10px] truncate max-w-[100px]" style={{ color: '#22c55e' }}>{name}</div>
@@ -44,9 +43,11 @@ export function AgentNode({ data, selected }: AgentNodeProps) {
         </div>
       </div>
       {data.config?.model && (
-        <div className="text-[9px] mt-1 font-mono truncate" style={{ color: '#6b7280' }}>{data.config.model}</div>
+        <div className="text-[9px] mt-1 font-mono" style={{ color: '#4ade80' }}>
+          {data.config.model}
+        </div>
       )}
-      <Handle type="source" position={Position.Bottom} className="!bg-green-500 !w-2.5 !h-2.5" />
+      <Handle type="source" position={Position.Bottom} />
     </div>
   );
 }
