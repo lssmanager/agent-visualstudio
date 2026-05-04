@@ -2,7 +2,7 @@
 nixPkgs = ["nodejs_22", "openssl"]
 
 [phases.install]
-cmds = ['npm install --legacy-peer-deps']
+cmds = ['npm install --legacy-peer-deps --no-workspaces']
 
 [phases.build]
 cmds = [
