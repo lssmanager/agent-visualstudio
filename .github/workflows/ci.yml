@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Initialize submodules (fallback)
+        run: git submodule update --init --recursive
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+        working-directory: apps/api
+
+      - name: TypeScript check (api)
+        run: npx tsc --noEmit
+        working-directory: apps/api
+
+      - name: Verify agency-agents submodule
+        run: |
+          test -d vendor/agency-agents/engineering && echo "OK: vendor/agency-agents/engineering exists"
+          find vendor/agency-agents/engineering -name "*.md" | head -5
