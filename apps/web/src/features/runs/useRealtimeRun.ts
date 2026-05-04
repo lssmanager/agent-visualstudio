@@ -2,6 +2,7 @@
  * useRealtimeRun.ts
  *
  * React hook for consuming SSE run updates in real time.
+ * Falls back to polling if SSE is unavailable (no /runs/stream endpoint).
  *
  * Patterns adapted from:
  *   - Flowise: useStreamChat hook (EventSource consumer)
@@ -10,12 +11,12 @@
  *   - Semantic Kernel: StreamingKernelContent client
  *
  * Usage:
- *   const { events, status, steps } = useRealtimeRun(runId);
+ *   const { events, status, runStatus, steps } = useRealtimeRun(runId);
  *
  * Automatically:
- *   - Opens EventSource on mount
+ *   - Attempts SSE first; falls back to polling (2 500 ms) if SSE fails
  *   - Closes on terminal event (completed/failed/cancelled)
- *   - Reconnects on transient disconnect (exponential backoff)
+ *   - Reconnects on transient disconnect (exponential backoff, max 5 attempts)
  *   - Cleans up on unmount
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -38,6 +39,7 @@ export type RealtimeRunStatus =
   | 'cancelled'
   | 'error';
 
+/** Campos reales de StepUpdate — alineados con RunStep de core-types/run-spec */
 export interface StepUpdate {
   stepId: string;
   nodeId: string;
@@ -48,11 +50,20 @@ export interface StepUpdate {
   tokenUsage?: { input: number; output: number };
   startedAt?: string;
   completedAt?: string;
+  error?: string;
+  retryCount?: number;
 }
 
 export interface UseRealtimeRunResult {
+  /** Estado actual de la conexión SSE / polling */
   status: RealtimeRunStatus;
+  /**
+   * Alias de `status` — mantenido para compatibilidad con RunStepTimeline
+   * y otros consumidores que usen el nombre `runStatus`.
+   */
+  runStatus: RealtimeRunStatus;
   events: RunStreamEvent[];
+  /** Mapa stepId → StepUpdate con los campos reales de RunStep */
   steps: Map<string, StepUpdate>;
   lastEvent: RunStreamEvent | null;
   error: string | null;
@@ -64,6 +75,7 @@ export interface UseRealtimeRunResult {
 const TERMINAL_EVENTS = new Set(['completed', 'failed', 'cancelled']);
 const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_RECONNECT_MS = 1_000;
+const POLL_INTERVAL_MS = 2_500;
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
@@ -89,11 +101,23 @@ export function useRealtimeRun(
   const [steps, setSteps] = useState<Map<string, StepUpdate>>(new Map());
   const [lastEvent, setLastEvent] = useState<RunStreamEvent | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // true cuando SSE falló y estamos en modo polling
+  const [pollingMode, setPollingMode] = useState(false);
 
   const esRef = useRef<EventSource | null>(null);
   const reconnectAttempt = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const isMounted = useRef(true);
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  const stopPolling = useCallback(() => {
+    if (pollTimer.current) {
+      clearInterval(pollTimer.current);
+      pollTimer.current = null;
+    }
+  }, []);
 
   const cleanup = useCallback(() => {
     esRef.current?.close();
@@ -102,7 +126,71 @@ export function useRealtimeRun(
       clearTimeout(reconnectTimer.current);
       reconnectTimer.current = null;
     }
-  }, []);
+    stopPolling();
+  }, [stopPolling]);
+
+  // ── Polling fallback ───────────────────────────────────────────────────────
+  // Llama a GET /runs/:runId y sintetiza StepUpdate desde RunSpec.steps
+
+  const startPolling = useCallback(() => {
+    if (!runId || !isMounted.current) return;
+    setPollingMode(true);
+    setStatus('connected'); // polling activo = conexión funcional
+
+    const fetchRun = async () => {
+      try {
+        const res = await fetch(`${apiBase}/api/studio/v1/runs/${runId}`);
+        if (!res.ok) return;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const run = await res.json() as any;
+        if (!isMounted.current) return;
+
+        // Mapear RunSpec.steps[] → Map<stepId, StepUpdate>
+        if (Array.isArray(run.steps)) {
+          setSteps(() => {
+            const next = new Map<string, StepUpdate>();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            for (const s of run.steps as any[]) {
+              next.set(s.id as string, {
+                stepId: s.id as string,
+                nodeId: (s.nodeId as string) ?? '',
+                nodeType: s.nodeType as string | undefined,
+                agentId: s.agentId as string | undefined,
+                status: s.status as string,
+                costUsd: s.costUsd as number | undefined,
+                tokenUsage: s.tokenUsage as { input: number; output: number } | undefined,
+                startedAt: s.startedAt as string | undefined,
+                completedAt: s.completedAt as string | undefined,
+                error: s.error as string | undefined,
+                retryCount: s.retryCount as number | undefined,
+              });
+            }
+            return next;
+          });
+        }
+
+        // Actualizar status general desde RunSpec.status
+        const runStatus = run.status as string;
+        if (runStatus === 'queued') setStatus('queued');
+        else if (runStatus === 'running') setStatus('processing');
+        else if (runStatus === 'completed') setStatus('completed');
+        else if (runStatus === 'failed') setStatus('failed');
+        else if (runStatus === 'cancelled') setStatus('cancelled');
+
+        // Detener polling si el run terminó
+        if (TERMINAL_EVENTS.has(runStatus)) {
+          stopPolling();
+        }
+      } catch {
+        // silencioso — el polling reintentará en el siguiente tick
+      }
+    };
+
+    void fetchRun();
+    pollTimer.current = setInterval(() => void fetchRun(), POLL_INTERVAL_MS);
+  }, [runId, apiBase, stopPolling]);
+
+  // ── SSE connection ─────────────────────────────────────────────────────────
 
   const connect = useCallback(() => {
     if (!runId || !isMounted.current) return;
@@ -110,6 +198,7 @@ export function useRealtimeRun(
     cleanup();
     setStatus('connecting');
     setError(null);
+    setPollingMode(false);
 
     const url = `${apiBase}/api/studio/v1/runs/${runId}/stream`;
     const es = new EventSource(url);
@@ -139,14 +228,14 @@ export function useRealtimeRun(
 
       options?.onEvent?.(payload);
 
-      // Update status
+      // Actualizar status
       if (payload.event === 'queued') setStatus('queued');
       else if (payload.event === 'started') setStatus('processing');
       else if (payload.event === 'completed') setStatus('completed');
       else if (payload.event === 'failed') setStatus('failed');
       else if (payload.event === 'cancelled') setStatus('cancelled');
 
-      // Update step map (LangGraph stream node output pattern)
+      // Actualizar step map — campos reales de StepUpdate / RunStep
       if (payload.event?.startsWith('step:') && typeof payload.stepId === 'string') {
         setSteps((prev) => {
           const next = new Map(prev);
@@ -162,12 +251,14 @@ export function useRealtimeRun(
             tokenUsage: (payload.tokenUsage as StepUpdate['tokenUsage']) ?? existing.tokenUsage,
             startedAt: (payload.startedAt as string | undefined) ?? existing.startedAt,
             completedAt: (payload.completedAt as string | undefined) ?? existing.completedAt,
+            error: (payload.error as string | undefined) ?? existing.error,
+            retryCount: (payload.retryCount as number | undefined) ?? existing.retryCount,
           });
           return next;
         });
       }
 
-      // Auto-close on terminal events
+      // Cerrar SSE en eventos terminales
       if (TERMINAL_EVENTS.has(payload.event)) {
         cleanup();
       }
@@ -177,17 +268,20 @@ export function useRealtimeRun(
       if (!isMounted.current) return;
 
       cleanup();
-      setStatus('error');
       setError('SSE connection lost');
 
-      // Exponential backoff reconnect
       if (reconnectAttempt.current < MAX_RECONNECT_ATTEMPTS) {
+        // Reintento con backoff exponencial
         const delay = BASE_RECONNECT_MS * 2 ** reconnectAttempt.current;
         reconnectAttempt.current += 1;
         reconnectTimer.current = setTimeout(connect, delay);
+      } else {
+        // SSE agotó reintentos → cambiar a modo polling
+        setStatus('error');
+        startPolling();
       }
     };
-  }, [runId, apiBase, maxEvents, options, cleanup]);
+  }, [runId, apiBase, maxEvents, options, cleanup, startPolling]);
 
   useEffect(() => {
     isMounted.current = true;
@@ -198,5 +292,13 @@ export function useRealtimeRun(
     };
   }, [runId, connect, cleanup]);
 
-  return { status, events, steps, lastEvent, error, reconnect: connect };
+  return {
+    status,
+    runStatus: status, // alias para compatibilidad con RunStepTimeline
+    events,
+    steps,
+    lastEvent,
+    error,
+    reconnect: connect,
+  };
 }
