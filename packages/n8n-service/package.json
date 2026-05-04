@@ -9,7 +9,7 @@
     "test":  "vitest run"
   },
   "dependencies": {
-    "@lss/crypto": "workspace:*",
+    "@lss/crypto": "*",
     "typescript": "^5.4.0"
   },
   "devDependencies": {
