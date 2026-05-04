@@ -1,8 +1,8 @@
 [phases.install]
-cmds = ['npm install --legacy-peer-deps --workspaces --include-workspace-root']
+cmds = ['npm install --legacy-peer-deps']
 
 [phases.build]
-cmds = ['npm run build']
+cmds = ['npm run build --workspace=.']
 
 [start]
 cmd = 'npm start'
