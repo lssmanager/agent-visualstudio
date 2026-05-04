@@ -14,9 +14,6 @@ if [ -z "${CHANNEL_ENC_KEY:-}" ]; then
   exit 1
 fi
 
-echo "[startup] Generating Prisma client"
-./node_modules/.bin/prisma generate --schema apps/api/prisma/schema.prisma
-
 echo "[startup] Running Prisma migrations"
 ./node_modules/.bin/prisma migrate deploy --schema apps/api/prisma/schema.prisma
 
