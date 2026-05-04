@@ -24,6 +24,7 @@ import { EndNode }          from './nodes/EndNode';
 import { N8nWebhookNode }   from './nodes/N8nWebhookNode';
 import { N8nWorkflowNode }  from './nodes/N8nWorkflowNode';
 import { SupervisorNode }   from './nodes/SupervisorNode';
+import { SubFlowNode }      from './nodes/SubFlowNode';
 import { generateNodeId, getNodeTemplate } from '../lib/canvas-utils';
 
 const NODE_TYPES = {
@@ -37,10 +38,10 @@ const NODE_TYPES = {
   loop:          ConditionNode,
   approval:      ApprovalNode,
   end:           EndNode,
-  // ── new ────────────────────────────────────
   supervisor:    SupervisorNode,
   n8n_webhook:   N8nWebhookNode,
   n8n_workflow:  N8nWorkflowNode,
+  subflow:       SubFlowNode,
 };
 
 const STATUS_COLORS: Record<string, string> = {

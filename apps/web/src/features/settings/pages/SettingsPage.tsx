@@ -3,13 +3,18 @@ import { Settings as SettingsIcon } from 'lucide-react';
 
 import { PageHeader } from '../../../components';
 import { useStudioState } from '../../../lib/StudioStateContext';
-import { BudgetPanel } from '../components/BudgetPanel';
+import { BudgetSettings } from '../components/BudgetSettings';
 import { AuditLogPanel } from '../components/AuditLogPanel';
 import { McpRegistryPanel } from '../components/McpRegistryPanel';
 import { ChannelsSettingsTab } from '../components/ChannelsSettingsTab';
 import { LlmProvidersTab } from '../components/LlmProvidersTab';
+import { ModelSettings } from '../components/ModelSettings';
+import { N8nConnections } from '../components/N8nConnections';
 
-const TABS = ['General', 'Budgets', 'Audit', 'MCP', 'Channels', 'LLM Keys'] as const;
+// F6-11: añadir 'Model Policy' junto a 'LLM Keys' (misma sección LLM, tab hermano)
+// F6-12: BudgetPanel → BudgetSettings
+// F6-14: Añade tab 'n8n' para gestión de conexiones n8n
+const TABS = ['General', 'Budgets', 'Audit', 'MCP', 'Channels', 'LLM Keys', 'Model Policy', 'n8n'] as const;
 type Tab = typeof TABS[number];
 
 export default function SettingsPage() {
@@ -73,9 +78,14 @@ export default function SettingsPage() {
             )}
           </div>
         )}
-        {activeTab === 'Budgets' && <BudgetPanel />}
-        {activeTab === 'Audit'   && <AuditLogPanel />}
-        {activeTab === 'MCP'     && <McpRegistryPanel />}
+        {/* F6-12: BudgetPanel → BudgetSettings con props scope-aware */}
+        {activeTab === 'Budgets' && (
+          workspace
+            ? <BudgetSettings workspaceId={workspace.id} agents={state.agents} />
+            : <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Select a workspace first.</p>
+        )}
+        {activeTab === 'Audit'    && <AuditLogPanel />}
+        {activeTab === 'MCP'      && <McpRegistryPanel />}
         {activeTab === 'Channels' && workspace && (
           <ChannelsSettingsTab
             workspaceId={workspace.id}
@@ -84,6 +94,21 @@ export default function SettingsPage() {
         )}
         {activeTab === 'LLM Keys' && workspace && (
           <LlmProvidersTab workspaceId={workspace.id} />
+        )}
+        {/* F6-11: ModelSettings — política de modelo por scope jerárquico.
+            Pasa workspace/agency IDs del contexto si están disponibles.
+            Funciona sin workspace seleccionado (usa __global__ como scopeId). */}
+        {activeTab === 'Model Policy' && (
+          <ModelSettings
+            workspaceId={workspace?.id}
+            agencyId={workspace?.id ? undefined : '__global__'}
+          />
+        )}
+        {/* F6-14: N8nConnections — gestión de instancias n8n (alta, edición, test, default) */}
+        {activeTab === 'n8n' && (
+          workspace
+            ? <N8nConnections workspaceId={workspace.id} />
+            : <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Select a workspace first.</p>
         )}
         {(activeTab === 'Channels' || activeTab === 'LLM Keys') && !workspace && (
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Select a workspace first.</p>

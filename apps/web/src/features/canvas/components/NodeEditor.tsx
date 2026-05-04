@@ -1,5 +1,8 @@
 import type { AgentSpec, SkillSpec, FlowNodeType } from '../../../lib/types';
 import { ConditionBuilder } from './ConditionBuilder';
+import { HandoffPanel }    from './HandoffPanel';
+import { LoopPanel }       from './LoopPanel';
+import { SubflowPanel }    from './SubflowPanel';
 
 interface NodeEditorProps {
   nodeId: string;
@@ -37,7 +40,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         <div>Type: <span className="font-semibold">{nodeType}</span></div>
       </div>
 
-      {/* ── Trigger ─────────────────────────────────────────────────────── */}
+      {/* ── Trigger ──────────────────────────────────────────────────────── */}
       {nodeType === 'trigger' && (
         <div className="space-y-2">
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Trigger Type</label>
@@ -83,7 +86,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         </div>
       )}
 
-      {/* ── Agent ────────────────────────────────────────────────────────── */}
+      {/* ── Agent / Subagent ──────────────────────────────────────────── */}
       {(nodeType === 'agent' || nodeType === 'subagent') && (
         <div className="space-y-2">
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Agent</label>
@@ -108,7 +111,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         </div>
       )}
 
-      {/* ── Supervisor ───────────────────────────────────────────────────── */}
+      {/* ── Supervisor ─────────────────────────────────────────────────── */}
       {nodeType === 'supervisor' && (
         <div className="space-y-2">
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Supervisor Agent</label>
@@ -147,7 +150,23 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         </div>
       )}
 
-      {/* ── Tool / Skill ─────────────────────────────────────────────────── */}
+      {/* ── Skill ───────────────────────────────────────────────────────────── */}
+      {nodeType === 'skill' && (
+        <div className="space-y-2">
+          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Skill</label>
+          <select
+            value={(config.skillId as string) ?? ''}
+            onChange={(e) => updateField('skillId', e.target.value)}
+            className="w-full rounded border px-2 py-1 text-xs"
+            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
+          >
+            <option value="">-- Select skill --</option>
+            {skills.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+      )}
+
+      {/* ── Tool ────────────────────────────────────────────────────────────── */}
       {nodeType === 'tool' && (
         <div className="space-y-2">
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Skill</label>
@@ -171,7 +190,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         </div>
       )}
 
-      {/* ── Condition ────────────────────────────────────────────────────── */}
+      {/* ── Condition ────────────────────────────────────────────────────────── */}
       {nodeType === 'condition' && (
         <ConditionBuilder
           value={(config.expression as string) ?? ''}
@@ -179,7 +198,22 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         />
       )}
 
-      {/* ── Approval ─────────────────────────────────────────────────────── */}
+      {/* ── Handoff ──────────────────────────────────────────────────────────── */}
+      {nodeType === 'handoff' && (
+        <HandoffPanel config={config} agents={agents} onChange={onChange} />
+      )}
+
+      {/* ── Loop ────────────────────────────────────────────────────────────── */}
+      {nodeType === 'loop' && (
+        <LoopPanel config={config} onChange={onChange} />
+      )}
+
+      {/* ── Subflow ──────────────────────────────────────────────────────────── */}
+      {nodeType === 'subflow' && (
+        <SubflowPanel config={config} onChange={onChange} />
+      )}
+
+      {/* ── Approval ──────────────────────────────────────────────────────────── */}
       {nodeType === 'approval' && (
         <div className="space-y-2">
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Approval Role</label>
@@ -205,7 +239,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         </div>
       )}
 
-      {/* ── End ──────────────────────────────────────────────────────────── */}
+      {/* ── End ──────────────────────────────────────────────────────────────── */}
       {nodeType === 'end' && (
         <div className="space-y-2">
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Outcome</label>
@@ -264,10 +298,9 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         </div>
       )}
 
-      {/* ── n8n Workflow ─────────────────────────────────────────────────── */}
+      {/* ── n8n Workflow ───────────────────────────────────────────────────── */}
       {nodeType === 'n8n_workflow' && (
         <div className="space-y-2">
-          {/* Label visible en el canvas */}
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
             Label (display name)
           </label>
@@ -278,8 +311,6 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
             className="w-full rounded border px-2 py-1 text-xs"
             style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
           />
-
-          {/* Workflow ID */}
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
             Workflow ID
           </label>
@@ -290,8 +321,6 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
             className="w-full rounded border px-2 py-1 text-xs font-mono"
             style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
           />
-
-          {/* Trigger Mode */}
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
             Trigger Mode
           </label>
@@ -305,8 +334,6 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
             <option value="schedule">Schedule</option>
             <option value="manual">Manual</option>
           </select>
-
-          {/* Input Mapping — JSON object */}
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
             Input Mapping (JSON)
           </label>
@@ -317,19 +344,13 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
                 : ((config.inputMapping as string) ?? '{}')
             }
             onChange={(e) => {
-              try {
-                updateField('inputMapping', JSON.parse(e.target.value));
-              } catch {
-                // allow partial editing — don't update on parse error
-              }
+              try { updateField('inputMapping', JSON.parse(e.target.value)); } catch { /* allow partial editing */ }
             }}
             placeholder='{ "agentOutput": "$.body.result" }'
             rows={3}
             className="w-full rounded border px-2 py-1 text-[10px] font-mono resize-none"
             style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
           />
-
-          {/* Output Mapping — JSON object */}
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
             Output Mapping (JSON)
           </label>
@@ -340,19 +361,13 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
                 : ((config.outputMapping as string) ?? '{}')
             }
             onChange={(e) => {
-              try {
-                updateField('outputMapping', JSON.parse(e.target.value));
-              } catch {
-                // allow partial editing
-              }
+              try { updateField('outputMapping', JSON.parse(e.target.value)); } catch { /* allow partial editing */ }
             }}
             placeholder='{ "result": "$.body.data" }'
             rows={3}
             className="w-full rounded border px-2 py-1 text-[10px] font-mono resize-none"
             style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
           />
-
-          {/* Wait for result */}
           <label className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--text-muted)' }}>
             <input
               type="checkbox"

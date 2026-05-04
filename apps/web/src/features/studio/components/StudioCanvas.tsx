@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { saveFlow, validateFlow } from '../../../lib/api';
+import { validateFlow } from '../../../lib/api';
 import type { AgentSpec, FlowSpec, SkillSpec } from '../../../lib/types';
+import { useFlowSave } from '../../flows/hooks/useFlowSave';
 import { EditableFlowCanvas } from '../../canvas/components/EditableFlowCanvas';
 import { CanvasToolbar } from '../../canvas/components/CanvasToolbar';
 
@@ -14,7 +15,6 @@ interface StudioCanvasProps {
 
 export function StudioCanvas({ agents, flows, skills, onNodeSelect }: StudioCanvasProps) {
   const [editableFlow, setEditableFlow] = useState<FlowSpec | null>(flows[0] ?? null);
-  const [saving, setSaving] = useState(false);
   const [validating, setValidating] = useState(false);
 
   // Undo/redo history.
@@ -30,6 +30,21 @@ export function StudioCanvas({ agents, flows, skills, onNodeSelect }: StudioCanv
     setHistory(nextFlow ? [nextFlow] : []);
     setHistoryIndex(0);
   }, [flows]);
+
+  // ── Auto-save con debounce 1200ms + save manual (Ctrl+S) ──────────
+  const { saveState, savedAt, saveNow } = useFlowSave(editableFlow);
+
+  // Capturar Ctrl+S / Cmd+S para save manual inmediato.
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        void saveNow();
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [saveNow]);
 
   const handleFlowChange = useCallback(
     (flow: FlowSpec) => {
@@ -56,16 +71,6 @@ export function StudioCanvas({ agents, flows, skills, onNodeSelect }: StudioCanv
     setHistoryIndex(nextIndex);
     setEditableFlow(history[nextIndex] ?? null);
   }, [canRedo, history, historyIndex]);
-
-  async function handleSave() {
-    if (!editableFlow) return;
-    setSaving(true);
-    try {
-      await saveFlow(editableFlow);
-    } finally {
-      setSaving(false);
-    }
-  }
 
   async function handleValidate() {
     if (!editableFlow) return;
@@ -99,14 +104,15 @@ export function StudioCanvas({ agents, flows, skills, onNodeSelect }: StudioCanv
   return (
     <div className="flex h-full min-h-0 flex-col gap-2 p-2">
       <CanvasToolbar
-        onSave={handleSave}
+        onSave={saveNow}
         onValidate={handleValidate}
         onUndo={handleUndo}
         onRedo={handleRedo}
         canUndo={canUndo}
         canRedo={canRedo}
-        saving={saving}
         validating={validating}
+        saveState={saveState}
+        savedAt={savedAt}
       />
 
       <div className="min-h-0 flex-1">

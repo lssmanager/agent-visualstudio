@@ -50,6 +50,19 @@ export const NODE_TEMPLATES: NodeTemplate[] = [
     defaultConfig: { approvalRole: 'operator', timeoutMs: 300000 },
   },
   {
+    type: 'subflow',
+    label: 'Sub-Flow',
+    icon: '🔀',
+    color: '#0369a1',
+    group: 'control',
+    defaultConfig: {
+      flowId:       '',
+      flowName:     '',
+      inputMapping: {},
+      outputKey:    'result',
+    },
+  },
+  {
     type: 'end', label: 'End', icon: '⏹', color: '#4b5563', group: 'control',
     defaultConfig: { outcome: 'completed' },
   },

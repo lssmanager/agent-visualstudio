@@ -12,7 +12,9 @@ export type StepStatus =
   | 'waiting_approval'
   | 'completed'
   | 'failed'
-  | 'skipped';
+  | 'skipped'
+  // Added F6-09: blocked state for failed delegation (HierarchyOrchestrator F2a-07)
+  | 'blocked';
 
 export interface RunTrigger {
   type: string;

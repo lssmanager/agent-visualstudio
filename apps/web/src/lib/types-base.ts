@@ -71,6 +71,24 @@ export interface StudioState {
 
 // ── Flow Node types ───────────────────────────────────────────────────────────
 
+/** Todos los tipos de nodo válidos en el canvas. Sincronizado con NODE_TYPES
+ *  en EditableFlowCanvas.tsx y NODE_TEMPLATES en canvas-utils.ts */
+export type FlowNodeType =
+  | 'trigger'
+  | 'agent'
+  | 'subagent'
+  | 'skill'
+  | 'tool'
+  | 'condition'
+  | 'handoff'
+  | 'loop'
+  | 'approval'
+  | 'end'
+  | 'supervisor'
+  | 'n8n_webhook'
+  | 'n8n_workflow'
+  | 'subflow';
+
 /** Mapeado de entradas del canvas al payload del workflow n8n.
  *  Cada entrada es una expresión libre: puede ser un valor literal
  *  o una referencia tipo "{{output.fieldName}}". */
@@ -87,10 +105,11 @@ export interface N8nNodeConfig {
 
 export interface FlowNode {
   id:        string;
-  type:      string;
+  /** Tipo de nodo — union exhaustivo de todos los tipos válidos del canvas */
+  type:      FlowNodeType;
   label?:    string;
   position?: { x: number; y: number };
-  /** Presente cuando type === 'n8n' */
+  /** Presente cuando type === 'n8n_workflow' o 'n8n_webhook' */
   n8n?:      N8nNodeConfig;
   /** Metadatos abiertos para otros tipos de nodo */
   config?:   Record<string, unknown>;

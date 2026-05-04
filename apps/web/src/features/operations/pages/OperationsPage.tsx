@@ -6,6 +6,7 @@ import { CostChart } from '../components/CostChart';
 import { TokenUsageTable } from '../components/TokenUsageTable';
 import { RunReplay } from '../components/RunReplay';
 import { RunComparison } from '../components/RunComparison';
+import { Approvals } from '../components/Approvals';
 import {
   ConsoleEmpty,
   ConsolePanel,
@@ -13,7 +14,7 @@ import {
   consoleToolButtonStyle,
 } from '../components/ObservabilityShell';
 
-type ActiveTab = 'overview' | 'agents' | 'replay' | 'compare';
+type ActiveTab = 'overview' | 'agents' | 'replay' | 'compare' | 'approvals';
 
 export default function OperationsPage() {
   const [tab, setTab] = useState<ActiveTab>('overview');
@@ -119,13 +120,14 @@ export default function OperationsPage() {
         </button>
       }
     >
-      <ConsolePanel title="Operations Views" description="Choose analytical, replay, or compare mode.">
+      <ConsolePanel title="Operations Views" description="Choose analytical, replay, compare, or approvals mode.">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
           {([
-            { id: 'overview', label: 'Cost Overview' },
-            { id: 'agents', label: 'Agent Usage' },
-            { id: 'replay', label: 'Replay' },
-            { id: 'compare', label: 'Compare' },
+            { id: 'overview',   label: 'Cost Overview' },
+            { id: 'agents',     label: 'Agent Usage' },
+            { id: 'replay',     label: 'Replay' },
+            { id: 'compare',    label: 'Compare' },
+            { id: 'approvals',  label: 'Approvals' },
           ] as Array<{ id: ActiveTab; label: string }>).map((item) => (
             <button
               key={item.id}
@@ -251,6 +253,24 @@ export default function OperationsPage() {
             </ConsolePanel>
           )}
         </section>
+      )}
+
+      {/* F6-10: tab Approvals — sustituye a PendingApprovals.tsx (legacy/deprecated) */}
+      {tab === 'approvals' && (
+        <ConsolePanel
+          title="Pending Approvals"
+          description="Human-in-the-loop steps waiting for approval across all active runs."
+        >
+          <Approvals
+            pollingIntervalMs={5_000}
+            onResolved={(runId, stepId, decision) => {
+              // Refrescar métricas globales cuando se resuelve una aprobación
+              if (decision === 'approved' || decision === 'rejected') {
+                void loadUsage();
+              }
+            }}
+          />
+        </ConsolePanel>
       )}
     </ObservabilityShell>
   );

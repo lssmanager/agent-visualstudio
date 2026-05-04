@@ -7,6 +7,7 @@ import { StepBadge } from '../../../components/ui/StepBadge';
 import { RunTimeline } from '../components/RunTimeline';
 import { StepDetail } from '../components/StepDetail';
 import { ApprovalPanel } from '../components/ApprovalPanel';
+import { BlockedNode } from '../components/BlockedNode';
 import {
   ConsoleEmpty,
   ConsolePanel,
@@ -36,7 +37,14 @@ export default function RunsPage() {
   }, [loadRuns]);
 
   useEffect(() => {
-    const hasActive = runs.some((run) => run.status === 'running' || run.status === 'queued' || run.status === 'waiting_approval');
+    const hasActive = runs.some(
+      (run) =>
+        run.status === 'running' ||
+        run.status === 'queued' ||
+        run.status === 'waiting_approval' ||
+        // Poll while any step is blocked so the UI reflects retries
+        run.steps.some((s) => s.status === 'blocked'),
+    );
     if (!hasActive) return;
     const timer = setInterval(() => void loadRuns(), 2500);
     return () => clearInterval(timer);
@@ -47,6 +55,10 @@ export default function RunsPage() {
   const running = runs.filter((run) => run.status === 'running').length;
   const waitingApproval = runs.filter((run) => run.status === 'waiting_approval').length;
   const failed = runs.filter((run) => run.status === 'failed').length;
+  const blocked = runs.reduce(
+    (acc, run) => acc + run.steps.filter((s) => s.status === 'blocked').length,
+    0,
+  );
 
   async function handleCancel(runId: string) {
     await cancelRun(runId);
@@ -63,6 +75,7 @@ export default function RunsPage() {
         { label: 'Total Runs', value: runs.length, helper: 'Loaded from runtime' },
         { label: 'Running', value: running, helper: 'Active executions', tone: running > 0 ? 'success' : 'default' },
         { label: 'Waiting Approval', value: waitingApproval, helper: 'Human-in-the-loop gates', tone: waitingApproval > 0 ? 'warning' : 'default' },
+        { label: 'Blocked', value: blocked, helper: 'Delegation failed — action required', tone: blocked > 0 ? 'warning' : 'default' },
         { label: 'Failed', value: failed, helper: 'Needs investigation', tone: failed > 0 ? 'warning' : 'default' },
       ]}
       actions={
@@ -157,10 +170,18 @@ export default function RunsPage() {
                   />
                 </div>
 
+                {/* Approval panels — one per step waiting approval */}
                 {selectedRun.steps
                   .filter((step) => step.status === 'waiting_approval')
                   .map((step) => (
                     <ApprovalPanel key={step.id} runId={selectedRun.id} step={step} onResolved={() => void loadRuns()} />
+                  ))}
+
+                {/* Blocked panels — one per step with blocked delegation (F6-09) */}
+                {selectedRun.steps
+                  .filter((step) => step.status === 'blocked')
+                  .map((step) => (
+                    <BlockedNode key={step.id} runId={selectedRun.id} step={step} onResolved={() => void loadRuns()} />
                   ))}
 
                 {selectedStep && <StepDetail step={selectedStep} />}

@@ -1,9 +1,13 @@
-/**
- * PendingApprovals.tsx
- * Lista de runs en estado pending_approval con botones Approve / Reject.
- * Datos vienen de DB real vía polling + SSE.
+/** @deprecated Reemplazado por Approvals.tsx (F6-10). Eliminar en F6-cleanup.
  *
- * Patrón: n8n WaitingWebhook node + AutoGen HumanProxyAgent.get_human_input().
+ * PROBLEMAS que motivaron el reemplazo:
+ *   1. Usa fetch propio a /runs?status=pending_approval — endpoint no canónico.
+ *   2. Usa POST .../resolve — endpoint no existe en api.ts.
+ *   3. Tipo PendingApproval local, distinto de RunSpec/RunStep.
+ *   4. Dark mode hardcodeado (#1e1e2e) en lugar de design tokens.
+ *   5. Estaba huérfano — no montado en ningún shell al momento de F6-10.
+ *
+ * Ver: apps/web/src/features/operations/components/Approvals.tsx
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
@@ -126,7 +130,7 @@ export function PendingApprovals({ pollingIntervalMs = 5_000, onResolved }: Prop
               <button
                 key={choice}
                 disabled={busy === a.runId}
-                onClick={() => resolve(a.runId, a.stepId, choice)}
+                onClick={() => void resolve(a.runId, a.stepId, choice)}
                 style={{
                   flex: 1, padding: '5px 10px', borderRadius: 5,
                   border: 'none',
