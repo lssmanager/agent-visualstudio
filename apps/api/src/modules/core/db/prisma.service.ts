@@ -5,6 +5,11 @@
  *   import { prisma } from '../../core/db/prisma.service';
  *   const agents = await prisma.agent.findMany();
  *
+ * También disponible como función para compatibilidad con código que usa
+ * la forma `getPrisma()`:
+ *   import { getPrisma } from '../../core/db/prisma.service';
+ *   const prisma = getPrisma();
+ *
  * La URL de conexión viene exclusivamente de DATABASE_URL en .env.
  * Credenciales de modelos y canales se leen desde la tabla ChannelConfig
  * con su campo `credentials` cifrado, NUNCA desde .env.
@@ -35,6 +40,14 @@ export const prisma: PrismaClient =
 
 if (process.env.NODE_ENV !== 'production') {
   global.__prisma = prisma;
+}
+
+/**
+ * getPrisma — retorna el singleton PrismaClient.
+ * Alias de función para compatibilidad con módulos que importan { getPrisma }.
+ */
+export function getPrisma(): PrismaClient {
+  return prisma;
 }
 
 /**
