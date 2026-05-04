@@ -1,10 +1,10 @@
-// ─────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
 // types.ts — public interfaces for @agent-visualstudio/agency-agents-loader
 //
 // Frontmatter real (msitarzewski/agency-agents):
 //   name, description, color, emoji, vibe
 //   (sin `tags` ni `department` — se derivan en el parser)
-// ─────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────────
 
 export interface AgentTemplate {
   /** Composite id: "<department>/<slug>"  e.g. "engineering/engineering-backend-architect" */
