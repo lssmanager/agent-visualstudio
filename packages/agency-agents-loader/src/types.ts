@@ -1,97 +1,53 @@
-/**
- * Tipos canónicos para el módulo agency-agents-loader.
- *
- * Mapean la estructura flat del submodule vendor/agency-agents/
- * a la jerarquía Agency → DepartmentWorkspace → AgentTemplate
- * que consume el AgentBuilder (F4b) y la UI Agent Library (F6).
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// types.ts — public interfaces for @agent-visualstudio/agency-agents-loader
+//
+// Frontmatter real (msitarzewski/agency-agents):
+//   name, description, color, emoji, vibe
+//   (sin `tags` ni `department` — se derivan en el parser)
+// ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Un agente individual proveniente de un archivo .md del vendor.
- *
- * Ejemplo:
- *   id:              "engineering-backend-architect"
- *   slug:            "backend-architect"
- *   name:            "Backend Architect"
- *   department:      "engineering"
- *   departmentLabel: "Engineering"
- *   systemPrompt:    "<contenido completo del .md>"
- *   description:     "<primer párrafo extraído automáticamente>"
- *   tools:           ["code_review", "api_design"]
- *   tags:            ["backend", "architecture"]
- *   source:          "agency-agents"
- *   filePath:        "vendor/agency-agents/engineering/backend-architect.md"
- */
 export interface AgentTemplate {
-  /** Identificador único compuesto: "<department>-<slug>" */
+  /** Composite id: "<department>/<slug>"  e.g. "engineering/engineering-backend-architect" */
   id: string;
-
-  /** Slug del agente dentro del departamento, e.g. "backend-architect" */
+  /** Filename without .md extension */
   slug: string;
-
-  /** Nombre legible derivado del slug, e.g. "Backend Architect" */
+  /** Human-readable name from frontmatter */
   name: string;
-
-  /** Clave del departamento en minúsculas, e.g. "engineering" */
-  department: string;
-
-  /** Etiqueta legible del departamento, e.g. "Engineering" */
-  departmentLabel: string;
-
-  /** Contenido completo del archivo .md usado como systemPrompt del Agent en BD */
-  systemPrompt: string;
-
-  /** Primer párrafo no-vacío del .md, extraído para preview en UI */
+  /** One-line description from frontmatter */
   description: string;
-
-  /** Herramientas/skills sugeridas declaradas en frontmatter o inferidas del contenido */
-  tools: string[];
-
-  /** Etiquetas semánticas para búsqueda y filtrado */
+  /** Directory name e.g. "engineering", "marketing", "design" */
+  department: string;
+  /** Emoji from frontmatter, default 🤖 */
+  emoji: string;
+  /** Tailwind / hex color token from frontmatter */
+  color: string;
+  /** One-line personality vibe from frontmatter */
+  vibe?: string;
+  /**
+   * Derived tags: [department, ...vibe words truncated, ...name tokens].
+   * The raw files have no `tags` field — we synthesize them for UI filtering.
+   */
   tags: string[];
-
-  /** Origen del template — siempre 'agency-agents' para este paquete */
-  source: 'agency-agents';
-
-  /** Ruta relativa al archivo .md desde la raíz del monorepo */
-  filePath: string;
+  /** Full body of the .md file (the system prompt) */
+  systemPrompt?: string;
 }
 
-/**
- * Agrupación de AgentTemplates bajo un departamento.
- * Equivale a un Department (y a su Workspace asociado) en el schema Prisma.
- */
 export interface DepartmentWorkspace {
-  /** Clave del departamento en minúsculas, e.g. "engineering" */
+  /** Directory name */
   id: string;
-
-  /** Etiqueta legible para la UI, e.g. "Engineering" */
-  label: string;
-
-  /** Lista de agentes disponibles en este departamento */
+  /** Human-readable name from DEPARTMENTS_META */
+  name: string;
+  /** Hex accent color for UI */
+  color: string;
+  /** Emoji representing the department */
+  emoji: string;
   agents: AgentTemplate[];
-
-  /** Total de agentes — desnormalizado para evitar .length en el render */
-  agentCount: number;
 }
 
-/**
- * Catálogo completo de templates proveniente del vendor agency-agents.
- * Equivale al nivel Agency en la jerarquía del sistema.
- */
 export interface Agency {
-  /** Identificador canónico, e.g. "agency-agents" */
   id: string;
-
-  /** Nombre del catálogo para la UI, e.g. "Agency Agents Library" */
   name: string;
-
-  /** URL o path del vendor de origen */
   source: string;
-
-  /** Departamentos con sus agentes */
   departments: DepartmentWorkspace[];
-
-  /** Total de agentes sumando todos los departamentos */
   totalAgents: number;
 }
