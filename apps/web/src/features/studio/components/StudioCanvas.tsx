@@ -5,6 +5,7 @@ import type { AgentSpec, FlowSpec, SkillSpec } from '../../../lib/types';
 import { useFlowSave } from '../../flows/hooks/useFlowSave';
 import { EditableFlowCanvas } from '../../canvas/components/EditableFlowCanvas';
 import { CanvasToolbar } from '../../canvas/components/CanvasToolbar';
+import { AgentLibraryPanel } from '../../canvas/components/agent-library';
 
 interface StudioCanvasProps {
   agents: AgentSpec[];
@@ -16,6 +17,7 @@ interface StudioCanvasProps {
 export function StudioCanvas({ agents, flows, skills, onNodeSelect }: StudioCanvasProps) {
   const [editableFlow, setEditableFlow] = useState<FlowSpec | null>(flows[0] ?? null);
   const [validating, setValidating] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
 
   // Undo/redo history.
   const [history, setHistory] = useState<FlowSpec[]>(editableFlow ? [editableFlow] : []);
@@ -113,6 +115,8 @@ export function StudioCanvas({ agents, flows, skills, onNodeSelect }: StudioCanv
         validating={validating}
         saveState={saveState}
         savedAt={savedAt}
+        onToggleAgentLibrary={() => setLibraryOpen((p) => !p)}
+        agentLibraryOpen={libraryOpen}
       />
 
       <div className="min-h-0 flex-1">
@@ -128,6 +132,17 @@ export function StudioCanvas({ agents, flows, skills, onNodeSelect }: StudioCanv
           emptyState
         )}
       </div>
+
+      {/* Agent Library panel — independiente del canvas React Flow */}
+      <AgentLibraryPanel
+        isOpen={libraryOpen}
+        onClose={() => setLibraryOpen(false)}
+        onUseAgent={(agent) => {
+          // Por ahora: log — el drag-to-canvas se implementa en F6b-02
+          console.log('[AgentLibrary] onUseAgent:', agent.slug);
+          // TODO F6b-02: convertir agent → FlowNode y agregar al canvas
+        }}
+      />
     </div>
   );
 }
