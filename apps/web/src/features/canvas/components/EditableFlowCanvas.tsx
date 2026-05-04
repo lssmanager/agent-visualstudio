@@ -26,6 +26,7 @@ import { N8nWorkflowNode }  from './nodes/N8nWorkflowNode';
 import { SupervisorNode }   from './nodes/SupervisorNode';
 import { SubFlowNode }      from './nodes/SubFlowNode';
 import { generateNodeId, getNodeTemplate } from '../lib/canvas-utils';
+import type { AgentTemplate } from './agent-library/useAgencyTemplates';
 
 const NODE_TYPES = {
   trigger:       TriggerNode,
@@ -169,17 +170,50 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
   const onDrop = useCallback(
     (event: DragEvent) => {
       event.preventDefault();
-      const type = event.dataTransfer.getData('application/reactflow-type') as FlowNodeType;
-      if (!type) return;
-      const template = getNodeTemplate(type);
-      if (!template) return;
+
       const bounds = reactFlowWrapper.current?.getBoundingClientRect();
       if (!bounds || !rfInstance) return;
       const position = rfInstance.project({
         x: event.clientX - bounds.left,
         y: event.clientY - bounds.top,
       });
-      const newNode = { id: generateNodeId(type), type, config: { ...template.defaultConfig }, position };
+
+      // ── Path 1: drag desde AgentLibraryPanel ──────────────────────────────
+      const agentTemplateRaw = event.dataTransfer.getData('application/agency-agent-template');
+      if (agentTemplateRaw) {
+        let template: AgentTemplate;
+        try {
+          template = JSON.parse(agentTemplateRaw) as AgentTemplate;
+        } catch {
+          return;
+        }
+        const newNode = {
+          id:       generateNodeId('agent'),
+          type:     'agent' as FlowNodeType,
+          position,
+          config: {
+            agentId:      '',
+            name:         template.name,
+            purpose:      template.description,
+            systemPrompt: template.systemPrompt ?? '',
+            tags:         template.tags,
+            skills:       [],
+            tools:        [],
+            // Trazabilidad: origen del template
+            source:       'agency-agents' as const,
+            templateId:   template.id,
+          },
+        };
+        onChange({ ...flow, nodes: [...flow.nodes, newNode] });
+        return;
+      }
+
+      // ── Path 2: drag desde NodePalette (comportamiento original) ──────────
+      const type = event.dataTransfer.getData('application/reactflow-type') as FlowNodeType;
+      if (!type) return;
+      const nodeTemplate = getNodeTemplate(type);
+      if (!nodeTemplate) return;
+      const newNode = { id: generateNodeId(type), type, config: { ...nodeTemplate.defaultConfig }, position };
       onChange({ ...flow, nodes: [...flow.nodes, newNode] });
     },
     [rfInstance, flow, onChange],

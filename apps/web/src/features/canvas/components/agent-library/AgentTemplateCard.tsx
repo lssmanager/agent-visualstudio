@@ -31,21 +31,33 @@ export function AgentTemplateCard({ agent, onClick }: AgentTemplateCardProps) {
       ? agent.description.slice(0, 147) + '…'
       : agent.description;
 
+  const handleDragStart = (e: React.DragEvent<HTMLButtonElement>) => {
+    // Serializar el AgentTemplate completo para que EditableFlowCanvas lo consuma
+    e.dataTransfer.setData(
+      'application/agency-agent-template',
+      JSON.stringify(agent),
+    );
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
   return (
     <button
+      draggable
+      onDragStart={handleDragStart}
       onClick={() => onClick(agent)}
       className="w-full text-left rounded-lg border p-3 transition-all hover:shadow-sm focus-visible:outline-none focus-visible:ring-2"
       style={{
         background: 'var(--bg-secondary)',
         borderColor: 'var(--border-primary)',
+        cursor: 'grab',
       }}
       onMouseEnter={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.borderColor = colors.dot;
+        e.currentTarget.style.borderColor = colors.dot;
       }}
       onMouseLeave={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-primary)';
+        e.currentTarget.style.borderColor = 'var(--border-primary)';
       }}
-      aria-label={`Ver agente ${agent.name}`}
+      aria-label={`Ver o arrastrar agente ${agent.name}`}
     >
       {/* Header */}
       <div className="flex items-start justify-between gap-2 mb-1.5">
@@ -61,13 +73,22 @@ export function AgentTemplateCard({ agent, onClick }: AgentTemplateCardProps) {
           </span>
         </div>
 
-        {/* Badge fuente */}
-        <span
-          className="flex-shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none"
-          style={{ background: colors.bg, color: colors.text }}
-        >
-          agency-agents
-        </span>
+        {/* Badge fuente + hint drag */}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <span
+            className="text-[9px] opacity-40"
+            style={{ color: 'var(--text-muted)' }}
+            title="Arrastra al canvas"
+          >
+            ☰
+          </span>
+          <span
+            className="rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none"
+            style={{ background: colors.bg, color: colors.text }}
+          >
+            agency-agents
+          </span>
+        </div>
       </div>
 
       {/* Descripción corta */}
