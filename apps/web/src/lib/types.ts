@@ -31,6 +31,30 @@ export interface ChannelRecord {
   updatedAt: string;
 }
 
+// F6-13: ChannelConfig — configuración de un canal del workspace
+export interface ChannelConfig {
+  id: string;
+  workspaceId: string;
+  type: 'webchat' | 'telegram' | 'whatsapp' | 'slack' | 'discord' | 'teams' | 'webhook';
+  name: string;
+  enabled: boolean;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+// F6-13: ChannelBinding — vinculación canal ↔ agente con modo y toggle
+export interface ChannelBinding {
+  id: string;
+  channelId: string;
+  agentId: string;
+  agentName?: string;
+  enabled: boolean;
+  mode: 'primary' | 'fallback' | 'broadcast';
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface LlmProviderRecord {
   id: string;
   workspaceId: string;

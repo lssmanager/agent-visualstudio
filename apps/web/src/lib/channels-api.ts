@@ -1,4 +1,4 @@
-import type { ChannelRecord, ChannelKind, LlmProviderRecord } from './types';
+import type { ChannelRecord, ChannelKind, LlmProviderRecord, ChannelBinding } from './types';
 
 const BASE = (import.meta as { env: Record<string, string> }).env.VITE_API_URL ?? 'http://localhost:3001';
 
@@ -37,6 +37,18 @@ export function provisionChannel(
   });
 }
 
+// F6-13: actualizar nombre/enabled de un canal existente
+export function updateChannel(
+  workspaceId: string,
+  channelId: string,
+  payload: { name?: string; enabled?: boolean },
+) {
+  return request<ChannelRecord>(`/workspaces/${workspaceId}/channels/${channelId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
 export function bindChannel(workspaceId: string, channelId: string, agentId: string) {
   return request<ChannelRecord>(`/workspaces/${workspaceId}/channels/${channelId}/bind`, {
     method: 'POST',
@@ -65,6 +77,50 @@ export function subscribeChannelStatus(
     try { onEvent(JSON.parse(e.data as string)); } catch { /* ignore */ }
   };
   return () => es.close();
+}
+
+// ─── Channel Bindings (F6-13) ─────────────────────────────────────────────────────────────
+
+/** Lista todos los bindings de un canal */
+export function listBindings(workspaceId: string, channelId: string) {
+  return request<ChannelBinding[]>(`/workspaces/${workspaceId}/channels/${channelId}/bindings`);
+}
+
+/** Crea un nuevo binding canal ↔ agente */
+export function createBinding(
+  workspaceId: string,
+  channelId: string,
+  payload: { agentId: string; mode?: ChannelBinding['mode']; enabled?: boolean },
+) {
+  return request<ChannelBinding>(`/workspaces/${workspaceId}/channels/${channelId}/bindings`, {
+    method: 'POST',
+    body: JSON.stringify({ mode: 'primary', enabled: true, ...payload }),
+  });
+}
+
+/** Actualiza enabled y/o mode de un binding */
+export function updateBinding(
+  workspaceId: string,
+  channelId: string,
+  bindingId: string,
+  payload: { enabled?: boolean; mode?: ChannelBinding['mode'] },
+) {
+  return request<ChannelBinding>(
+    `/workspaces/${workspaceId}/channels/${channelId}/bindings/${bindingId}`,
+    { method: 'PATCH', body: JSON.stringify(payload) },
+  );
+}
+
+/** Elimina un binding */
+export function deleteBinding(
+  workspaceId: string,
+  channelId: string,
+  bindingId: string,
+) {
+  return request<void>(
+    `/workspaces/${workspaceId}/channels/${channelId}/bindings/${bindingId}`,
+    { method: 'DELETE' },
+  );
 }
 
 // ─── LLM Providers ───────────────────────────────────────────────────────────────────────
