@@ -2,13 +2,14 @@
 nixPkgs = ["nodejs_22", "openssl"]
 
 [phases.install]
-cmds = ['npm install --legacy-peer-deps --include=dev']
+cmds = ['npm install --legacy-peer-deps']
 
 [phases.build]
 cmds = [
   './node_modules/.bin/prisma generate --schema=packages/db/prisma/schema.prisma || true',
-  'npm run build --if-present'
+  './node_modules/.bin/tsc -p tsconfig.json || true',
+  './node_modules/.bin/vite build --config apps/web/vite.config.ts || true'
 ]
 
 [start]
-cmd = 'npm start'
+cmd = 'node dist/apps/api/src/main.js'
