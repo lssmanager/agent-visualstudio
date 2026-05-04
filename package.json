@@ -7,6 +7,26 @@
   "engines": {
     "node": ">=18.0.0"
   },
+  "workspaces": [
+    "packages/agency-agents-loader",
+    "packages/canonical-types",
+    "packages/core-types",
+    "packages/crypto",
+    "packages/db",
+    "packages/flow-engine",
+    "packages/gateway-sdk",
+    "packages/hierarchy",
+    "packages/mcp-server",
+    "packages/n8n-service",
+    "packages/openclaw-fs",
+    "packages/profile-engine",
+    "packages/run-engine",
+    "packages/schemas",
+    "packages/skill-registry",
+    "packages/version-engine",
+    "packages/workspace-engine",
+    "packages/workspace-store"
+  ],
   "scripts": {
     "build": "prisma generate && tsc -p tsconfig.json && npx vite build --config apps/web/vite.config.ts",
     "build:packages": "echo 'Skipping package builds - packages are part of main TypeScript compilation'",
@@ -100,7 +120,7 @@
     "jest": "^29.5.0",
     "postcss": "^8.4.0",
     "prisma": "^5.22.0",
-    "supertest": "^7.2.2",
+    "supertest": "^7.7.0",
     "tailwindcss": "^3.4.0",
     "ts-jest": "^29.1.0",
     "ts-node": "^10.9.2",
