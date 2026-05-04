@@ -3,7 +3,7 @@ import { Settings as SettingsIcon } from 'lucide-react';
 
 import { PageHeader } from '../../../components';
 import { useStudioState } from '../../../lib/StudioStateContext';
-import { BudgetPanel } from '../components/BudgetPanel';
+import { BudgetSettings } from '../components/BudgetSettings';
 import { AuditLogPanel } from '../components/AuditLogPanel';
 import { McpRegistryPanel } from '../components/McpRegistryPanel';
 import { ChannelsSettingsTab } from '../components/ChannelsSettingsTab';
@@ -11,6 +11,7 @@ import { LlmProvidersTab } from '../components/LlmProvidersTab';
 import { ModelSettings } from '../components/ModelSettings';
 
 // F6-11: añadir 'Model Policy' junto a 'LLM Keys' (misma sección LLM, tab hermano)
+// F6-12: BudgetPanel → BudgetSettings
 const TABS = ['General', 'Budgets', 'Audit', 'MCP', 'Channels', 'LLM Keys', 'Model Policy'] as const;
 type Tab = typeof TABS[number];
 
@@ -75,7 +76,12 @@ export default function SettingsPage() {
             )}
           </div>
         )}
-        {activeTab === 'Budgets'  && <BudgetPanel />}
+        {/* F6-12: BudgetPanel → BudgetSettings con props scope-aware */}
+        {activeTab === 'Budgets' && (
+          workspace
+            ? <BudgetSettings workspaceId={workspace.id} agents={state.agents} />
+            : <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Select a workspace first.</p>
+        )}
         {activeTab === 'Audit'    && <AuditLogPanel />}
         {activeTab === 'MCP'      && <McpRegistryPanel />}
         {activeTab === 'Channels' && workspace && (
