@@ -77,7 +77,7 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
     return map;
   }, [activeRun]);
 
-  // Convert FlowSpec nodes \u2192 ReactFlow nodes.
+  // Convert FlowSpec nodes → ReactFlow nodes.
   const rfNodes = useMemo<Node[]>(
     () =>
       flow.nodes.map((node) => {
@@ -95,7 +95,7 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
     [flow.nodes, stepStatusMap],
   );
 
-  // Convert FlowSpec edges \u2192 ReactFlow edges.
+  // Convert FlowSpec edges → ReactFlow edges.
   const rfEdges = useMemo<Edge[]>(
     () =>
       flow.edges.map((edge, i) => ({
@@ -165,17 +165,16 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
   const onDragOver = useCallback((event: DragEvent) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
-    // Feedback visual: resaltar borde si el drag viene del AgentLibraryPanel
-    const hasTemplate = Array.from(event.dataTransfer.types).includes(
-      'application/agency-agent-template',
+    // CONFLICT-03 fix: usar .contains() nativo de DOMStringList en lugar de Array.from().includes()
+    setIsDragOverFromLibrary(
+      event.dataTransfer.types.contains('application/agency-agent-template'),
     );
-    setIsDragOverFromLibrary(hasTemplate);
   }, []);
 
   const onDrop = useCallback(
     (event: DragEvent) => {
       event.preventDefault();
-      setIsDragOverFromLibrary(false); // limpiar highlight
+      setIsDragOverFromLibrary(false);
 
       const type = event.dataTransfer.getData('application/reactflow-type') as FlowNodeType;
       if (!type) return;
@@ -189,7 +188,7 @@ export function EditableFlowCanvas({ flow, onChange, activeRun, agents, skills, 
         y: event.clientY - bounds.top,
       });
 
-      // +5 l\u00edneas: leer template de agency-agents y fusionar con defaultConfig
+      // Leer template de agency-agents y fusionar con defaultConfig si existe
       const rawTemplate = event.dataTransfer.getData('application/agency-agent-template');
       const templateConfig = rawTemplate
         ? (JSON.parse(rawTemplate) as Record<string, unknown>)
