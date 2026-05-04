@@ -40,7 +40,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         <div>Type: <span className="font-semibold">{nodeType}</span></div>
       </div>
 
-      {/* ── Trigger ──────────────────────────────────────────────────────── */}
+      {/* ── Trigger ──────────────────────────────────────────────────────────────────── */}
       {nodeType === 'trigger' && (
         <div className="space-y-2">
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Trigger Type</label>
@@ -89,29 +89,87 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
       {/* ── Agent / Subagent ──────────────────────────────────────────── */}
       {(nodeType === 'agent' || nodeType === 'subagent') && (
         <div className="space-y-2">
-          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Agent</label>
-          <select
-            value={(config.agentId as string) ?? ''}
-            onChange={(e) => {
-              const agent = agents.find((a) => a.id === e.target.value);
-              updateField('agentId', e.target.value);
-              if (agent) onChange({ ...config, agentId: agent.id, agentName: agent.name, model: agent.model });
-            }}
-            className="w-full rounded border px-2 py-1 text-xs"
-            style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
-          >
-            <option value="">-- Select agent --</option>
-            {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
-          {config.agentName && (
-            <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-              model: <span className="font-mono">{(config.model as string) ?? '\u2014'}</span>
-            </div>
+
+          {/* Nodo creado desde AgentLibraryPanel (agency-agents) */}
+          {config.source === 'agency-agents' ? (
+            <>
+              {/* Badge de origen */}
+              <div
+                className="flex items-center gap-1.5 px-2 py-1 rounded text-[10px]"
+                style={{ background: '#eff6ff', color: '#1d4ed8' }}
+              >
+                <span>📦</span>
+                <span className="font-medium truncate">
+                  Template: {(config.templateId as string) ?? (config.agentId as string)}
+                </span>
+              </div>
+
+              {/* Agent Name editable */}
+              <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
+                Agent Name
+              </label>
+              <input
+                value={(config.agentName as string) ?? ''}
+                onChange={(e) => updateField('agentName', e.target.value)}
+                placeholder="Agent name"
+                className="w-full rounded border px-2 py-1 text-xs"
+                style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)', color: 'var(--text-primary)' }}
+              />
+
+              {/* System Prompt */}
+              <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
+                System Prompt
+              </label>
+              <textarea
+                value={(config.systemPrompt as string) ?? ''}
+                onChange={(e) => updateField('systemPrompt', e.target.value)}
+                rows={8}
+                className="w-full rounded border px-2 py-1 text-[10px] font-mono resize-y"
+                style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)', color: 'var(--text-primary)' }}
+                placeholder="System prompt del agente..."
+              />
+
+              {/* Purpose */}
+              <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>
+                Purpose
+              </label>
+              <textarea
+                value={(config.purpose as string) ?? ''}
+                onChange={(e) => updateField('purpose', e.target.value)}
+                rows={3}
+                className="w-full rounded border px-2 py-1 text-[10px] resize-y"
+                style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)', color: 'var(--text-primary)' }}
+                placeholder="Descripción del agente..."
+              />
+            </>
+          ) : (
+            /* Nodo creado manualmente — select de agentes del sistema (comportamiento original) */
+            <>
+              <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Agent</label>
+              <select
+                value={(config.agentId as string) ?? ''}
+                onChange={(e) => {
+                  const agent = agents.find((a) => a.id === e.target.value);
+                  updateField('agentId', e.target.value);
+                  if (agent) onChange({ ...config, agentId: agent.id, agentName: agent.name, model: agent.model });
+                }}
+                className="w-full rounded border px-2 py-1 text-xs"
+                style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
+              >
+                <option value="">-- Select agent --</option>
+                {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+              {config.agentName && (
+                <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                  model: <span className="font-mono">{(config.model as string) ?? '\u2014'}</span>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
 
-      {/* ── Supervisor ─────────────────────────────────────────────────── */}
+      {/* ── Supervisor ───────────────────────────────────────────────────────────────── */}
       {nodeType === 'supervisor' && (
         <div className="space-y-2">
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Supervisor Agent</label>
@@ -150,7 +208,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         </div>
       )}
 
-      {/* ── Skill ───────────────────────────────────────────────────────────── */}
+      {/* ── Skill ─────────────────────────────────────────────────────────────────────── */}
       {nodeType === 'skill' && (
         <div className="space-y-2">
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Skill</label>
@@ -166,17 +224,18 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         </div>
       )}
 
-      {/* ── Tool ────────────────────────────────────────────────────────────── */}
+      {/* ── Tool ──────────────────────────────────────────────────────────────────────── */}
       {nodeType === 'tool' && (
         <div className="space-y-2">
-          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Skill</label>
+          {/* CONFLICT-02 fix: era 'Skill', correcto es 'Tool (via Skill)' */}
+          <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Tool (via Skill)</label>
           <select
             value={(config.skillId as string) ?? ''}
             onChange={(e) => updateField('skillId', e.target.value)}
             className="w-full rounded border px-2 py-1 text-xs"
             style={{ borderColor: 'var(--border-primary)', background: 'var(--bg-primary)' }}
           >
-            <option value="">-- Select skill --</option>
+            <option value="">-- Select tool --</option>
             {skills.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Function</label>
@@ -190,7 +249,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         </div>
       )}
 
-      {/* ── Condition ────────────────────────────────────────────────────────── */}
+      {/* ── Condition ────────────────────────────────────────────────────────────────── */}
       {nodeType === 'condition' && (
         <ConditionBuilder
           value={(config.expression as string) ?? ''}
@@ -198,22 +257,22 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         />
       )}
 
-      {/* ── Handoff ──────────────────────────────────────────────────────────── */}
+      {/* ── Handoff ─────────────────────────────────────────────────────────────────── */}
       {nodeType === 'handoff' && (
         <HandoffPanel config={config} agents={agents} onChange={onChange} />
       )}
 
-      {/* ── Loop ────────────────────────────────────────────────────────────── */}
+      {/* ── Loop ─────────────────────────────────────────────────────────────────────── */}
       {nodeType === 'loop' && (
         <LoopPanel config={config} onChange={onChange} />
       )}
 
-      {/* ── Subflow ──────────────────────────────────────────────────────────── */}
+      {/* ── Subflow ─────────────────────────────────────────────────────────────────── */}
       {nodeType === 'subflow' && (
         <SubflowPanel config={config} onChange={onChange} />
       )}
 
-      {/* ── Approval ──────────────────────────────────────────────────────────── */}
+      {/* ── Approval ─────────────────────────────────────────────────────────────────── */}
       {nodeType === 'approval' && (
         <div className="space-y-2">
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Approval Role</label>
@@ -239,7 +298,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         </div>
       )}
 
-      {/* ── End ──────────────────────────────────────────────────────────────── */}
+      {/* ── End ───────────────────────────────────────────────────────────────────────── */}
       {nodeType === 'end' && (
         <div className="space-y-2">
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Outcome</label>
@@ -256,7 +315,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         </div>
       )}
 
-      {/* ── n8n Webhook ──────────────────────────────────────────────────── */}
+      {/* ── n8n Webhook ──────────────────────────────────────────────────────────────── */}
       {nodeType === 'n8n_webhook' && (
         <div className="space-y-2">
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Webhook Path</label>
@@ -298,7 +357,7 @@ export function NodeEditor({ nodeId, nodeType, config, agents, skills, onChange,
         </div>
       )}
 
-      {/* ── n8n Workflow ───────────────────────────────────────────────────── */}
+      {/* ── n8n Workflow ─────────────────────────────────────────────────────────────────── */}
       {nodeType === 'n8n_workflow' && (
         <div className="space-y-2">
           <label className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>

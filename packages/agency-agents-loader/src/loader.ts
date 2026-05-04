@@ -1,56 +1,129 @@
-import * as fs from 'fs';
-import * as path from 'path';
+// ─────────────────────────────────────────────────────────────────────────────
+// loader.ts — buildAgency(), getAllAgents(), findAgentBySlug()
+//
+// VENDOR_PATH resolution:
+//   At runtime, __dirname = packages/agency-agents-loader/dist/
+//   vendor/agency-agents is at monorepo root, so:
+//   __dirname/../../../../vendor/agency-agents
+//   = packages/agency-agents-loader/dist → ../../../.. → monorepo root
+//
+// The cache is module-level (singleton per process).
+// Call invalidateCache() in tests or hot-reload scenarios.
+// ─────────────────────────────────────────────────────────────────────────────
 
-// Resolved path: packages/agency-agents-loader/src/ -> monorepo root -> vendor/agency-agents
-export const SUBMODULE_PATH = path.resolve(__dirname, '../../../vendor/agency-agents');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { parseAgentFile } from './parser.js';
+import { DEPARTMENTS_META } from './departments.js';
+import type { Agency, AgentTemplate, DepartmentWorkspace } from './types.js';
 
-const NON_DEPARTMENT_DIRS = new Set(['examples', 'scripts', '.git', 'node_modules', '.github']);
+// vendor/agency-agents relative to the compiled dist/ output
+const VENDOR_PATH = path.resolve(__dirname, '../../../../vendor/agency-agents');
 
-/**
- * Returns sorted list of department folder names found in vendor/agency-agents/,
- * excluding non-department directories (examples, scripts, .git, etc.).
- */
-export function listDepartments(): string[] {
-  if (!fs.existsSync(SUBMODULE_PATH)) {
-    throw new Error(
-      `[agency-agents-loader] Submodule not found at: ${SUBMODULE_PATH}\n` +
-        'Run: git submodule update --init --recursive',
-    );
-  }
-  return fs
-    .readdirSync(SUBMODULE_PATH, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && !NON_DEPARTMENT_DIRS.has(e.name))
-    .map((e) => e.name)
-    .sort();
-}
+let _cache: Agency | null = null;
 
 /**
- * Returns sorted list of absolute .md file paths within a department folder.
+ * Build (or return cached) the full Agency catalog from vendor/agency-agents.
+ *
+ * Graceful degradation:
+ *  - If VENDOR_PATH doesn't exist → returns empty Agency with warning.
+ *  - Individual unreadable files → skipped silently.
+ *  - Unknown departments → included with generic metadata.
  */
-export function loadDepartment(department: string): string[] {
-  const deptPath = path.join(SUBMODULE_PATH, department);
-  if (!fs.existsSync(deptPath)) {
-    throw new Error(`[agency-agents-loader] Department not found: ${department}`);
-  }
-  return fs
-    .readdirSync(deptPath, { withFileTypes: true })
-    .filter((e) => e.isFile() && e.name.endsWith('.md'))
-    .map((e) => path.join(deptPath, e.name))
-    .sort();
-}
+export function buildAgency(): Agency {
+  if (_cache) return _cache;
 
-/**
- * Reads a .md file as UTF-8 string.
- * Returns empty string and logs a warning if the file cannot be read.
- */
-export function readAgentFile(filePath: string): string {
-  try {
-    return fs.readFileSync(filePath, 'utf-8');
-  } catch (err) {
+  if (!fs.existsSync(VENDOR_PATH)) {
     console.warn(
-      `[agency-agents-loader] Could not read: ${filePath}`,
-      (err as Error).message,
+      `[agency-agents-loader] vendor/agency-agents not found at ${VENDOR_PATH}.\n` +
+        `  Run: git submodule update --init vendor/agency-agents`,
     );
-    return '';
+    _cache = {
+      id: 'agency-agents',
+      name: 'Agency Agents Library',
+      source: 'vendor/agency-agents',
+      departments: [],
+      totalAgents: 0,
+    };
+    return _cache;
   }
+
+  const departments: DepartmentWorkspace[] = [];
+
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(VENDOR_PATH, { withFileTypes: true });
+  } catch (err) {
+    console.error('[agency-agents-loader] Failed to read vendor path:', err);
+    entries = [];
+  }
+
+  const SKIP_DIRS = new Set(['examples', 'scripts', '.github']);
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith('.')) continue;
+    if (SKIP_DIRS.has(entry.name)) continue;
+
+    const deptId = entry.name;
+    const deptMeta = DEPARTMENTS_META[deptId] ?? {
+      name: deptId.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+      color: '#6b7280',
+      emoji: '🤖',
+    };
+    const deptPath = path.join(VENDOR_PATH, deptId);
+
+    let files: string[];
+    try {
+      files = fs.readdirSync(deptPath).filter((f) => f.endsWith('.md'));
+    } catch {
+      files = [];
+    }
+
+    const agents: AgentTemplate[] = files
+      .map((f) => parseAgentFile(path.join(deptPath, f), deptId))
+      .filter((a): a is AgentTemplate => a !== null)
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    departments.push({
+      id: deptId,
+      name: deptMeta.name,
+      color: deptMeta.color,
+      emoji: deptMeta.emoji,
+      agents,
+    });
+  }
+
+  departments.sort((a, b) => a.name.localeCompare(b.name));
+
+  const totalAgents = departments.reduce((sum, d) => sum + d.agents.length, 0);
+
+  console.log(
+    `[agency-agents-loader] Loaded ${totalAgents} agents across ${departments.length} departments`,
+  );
+
+  _cache = {
+    id: 'agency-agents',
+    name: 'Agency Agents Library',
+    source: 'vendor/agency-agents',
+    departments,
+    totalAgents,
+  };
+
+  return _cache;
+}
+
+/** Return flat list of all agents across all departments. */
+export function getAllAgents(): AgentTemplate[] {
+  return buildAgency().departments.flatMap((d) => d.agents);
+}
+
+/** Find a single agent by slug (e.g. "engineering-backend-architect"). */
+export function findAgentBySlug(slug: string): AgentTemplate | undefined {
+  return getAllAgents().find((a) => a.slug === slug);
+}
+
+/** Invalidate the in-memory cache (useful in tests or watch mode). */
+export function invalidateCache(): void {
+  _cache = null;
 }

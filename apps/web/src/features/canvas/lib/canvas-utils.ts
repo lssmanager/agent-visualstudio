@@ -10,7 +10,7 @@ export interface NodeTemplate {
 }
 
 export const NODE_TEMPLATES: NodeTemplate[] = [
-  // ── Core ───────────────────────────────────────────────────────────────────
+  // ── Core ────────────────────────────────────────────────────────────────────────────────────────
   {
     type: 'trigger', label: 'Root', icon: '⚡', color: '#2563eb', group: 'core',
     defaultConfig: { triggerType: 'manual' },
@@ -32,7 +32,7 @@ export const NODE_TEMPLATES: NodeTemplate[] = [
     defaultConfig: { toolId: '', functionName: '' },
   },
 
-  // ── Control ────────────────────────────────────────────────────────────────
+  // ── Control ────────────────────────────────────────────────────────────────────────────────────
   {
     type: 'condition', label: 'Condition', icon: '🔀', color: '#ca8a04', group: 'control',
     defaultConfig: { expression: '', branches: ['true', 'false'] },
@@ -67,7 +67,7 @@ export const NODE_TEMPLATES: NodeTemplate[] = [
     defaultConfig: { outcome: 'completed' },
   },
 
-  // ── Hierarchy ──────────────────────────────────────────────────────────────
+  // ── Hierarchy ───────────────────────────────────────────────────────────────────────────────
   {
     type: 'supervisor', label: 'Supervisor', icon: '👑', color: '#7c3aed', group: 'hierarchy',
     defaultConfig: {
@@ -75,7 +75,7 @@ export const NODE_TEMPLATES: NodeTemplate[] = [
     },
   },
 
-  // ── n8n ────────────────────────────────────────────────────────────────────
+  // ── n8n ────────────────────────────────────────────────────────────────────────────────────────
   {
     type: 'n8n_webhook', label: 'n8n Webhook', icon: '🔗', color: '#ea580c', group: 'n8n',
     defaultConfig: { webhookPath: '/hook', method: 'POST', waitForResponse: false },
@@ -94,11 +94,11 @@ export const NODE_TEMPLATES: NodeTemplate[] = [
   },
 ];
 
-let nodeCounter = 0;
-
+// IMP-03: reemplaza contador mutable de módulo por crypto.randomUUID()
+// El contador anterior se reseteaba en cada HMR, potencialmente generando IDs duplicados.
 export function generateNodeId(type: string): string {
-  nodeCounter += 1;
-  return `${type}-${Date.now()}-${nodeCounter}`;
+  const short = crypto.randomUUID().split('-')[0]; // 8 chars hex, colisión ~1 en 2^32
+  return `${type}-${short}`;
 }
 
 export function getNodeTemplate(type: FlowNodeType): NodeTemplate | undefined {

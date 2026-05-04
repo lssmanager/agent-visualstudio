@@ -1,134 +1,139 @@
-import * as path from 'path';
-import matter from 'gray-matter';
-import type { AgentTemplate } from './types';
+// ─────────────────────────────────────────────────────────────────────────────
+// parser.ts — parse a single .md agent file into AgentTemplate
+//
+// Frontmatter format (real files):
+//   ---
+//   name: Backend Architect
+//   description: Senior backend architect specializing in...
+//   color: blue
+//   emoji: 🏗️
+//   vibe: Designs the systems that hold everything up — databases, APIs, cloud, scale.
+//   ---
+//   <body = system prompt>
+// ─────────────────────────────────────────────────────────────────────────────
 
-/** Derive a human-readable agent name from the filename or frontmatter. */
-function humanName(
-  filePath: string,
-  department: string,
-  frontmatterName?: string,
-): string {
-  if (frontmatterName?.trim()) return frontmatterName.trim();
-  const base = path.basename(filePath, '.md');
-  // Strip leading department prefix, e.g. "engineering-backend-architect" -> "backend-architect"
-  const withoutPrefix = base.startsWith(`${department}-`)
-    ? base.slice(department.length + 1)
-    : base;
-  return withoutPrefix
-    .split('-')
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
-}
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import type { AgentTemplate } from './types.js';
 
-/** Extract first meaningful paragraph from Markdown body (strips headings, code fences). */
-function extractDescription(body: string, maxChars = 200): string {
-  const lines = body.split('\n');
-  const paragraphLines: string[] = [];
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed && paragraphLines.length === 0) continue;
-    if (
-      trimmed.startsWith('#') ||
-      trimmed.startsWith('```') ||
-      trimmed.startsWith('---')
-    )
-      continue;
-    if (!trimmed && paragraphLines.length > 0) break;
-    if (trimmed) paragraphLines.push(trimmed);
+/** Matches YAML frontmatter between --- delimiters. */
+const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
+
+/**
+ * Minimal YAML line parser.
+ * Handles scalar strings, inline arrays [a, b], and quoted values.
+ * Does NOT support multi-line values — agency-agents doesn't use them.
+ */
+function parseSimpleYaml(yaml: string): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+
+  for (const rawLine of yaml.split('\n')) {
+    const line = rawLine.trimEnd();
+    const colonIdx = line.indexOf(':');
+    if (colonIdx <= 0) continue;
+
+    const key = line.slice(0, colonIdx).trim();
+    const rawVal = line.slice(colonIdx + 1).trim();
+
+    const unquoted = rawVal.replace(/^["']|["']$/g, '');
+
+    if (rawVal.startsWith('[')) {
+      const inner = rawVal.slice(1, rawVal.lastIndexOf(']'));
+      result[key] = inner
+        .split(',')
+        .map((s) => s.trim().replace(/^["']|["']$/g, ''))
+        .filter(Boolean);
+    } else {
+      result[key] = unquoted;
+    }
   }
-  if (!paragraphLines.length) return '';
-  const raw = paragraphLines
-    .join(' ')
-    .replace(/\*\*(.*?)\*\*/g, '$1')
-    .replace(/\*(.*?)\*/g, '$1')
-    .replace(/`(.*?)`/g, '$1')
-    .trim();
-  return raw.length > maxChars ? raw.slice(0, maxChars - 1) + '\u2026' : raw;
-}
 
-/** Extract suggested tools from frontmatter or body keywords. */
-function extractTools(fm: Record<string, unknown>, body: string): string[] {
-  if (Array.isArray(fm.tools)) return fm.tools as string[];
-  const matches: string[] = [];
-  const known = [
-    'code_review', 'api_design', 'database_design', 'system_design',
-    'testing', 'debugging', 'documentation', 'email', 'calendar',
-    'web_search', 'analytics', 'reporting',
-  ];
-  for (const tool of known) {
-    if (body.toLowerCase().includes(tool.replace('_', ' '))) matches.push(tool);
-  }
-  return matches;
+  return result;
 }
 
 /**
- * Parses a raw .md file string into an AgentTemplate.
- * Tolerant: an empty or unparseable file returns a minimal valid object.
+ * Derive tags from department name, vibe words, and slug tokens.
+ * Produces 3-8 lowercase tags useful for the Library panel search/filter.
  */
-export function parseAgentMarkdown(
-  filePath: string,
-  department: string,
-  raw: string,
-): AgentTemplate {
-  const slug = path.basename(filePath, '.md');
-  // Relative path from monorepo root for filePath field
-  const relPath = filePath.includes('vendor/')
-    ? filePath.slice(filePath.indexOf('vendor/'))
-    : filePath;
+function deriveTags(department: string, vibe: string | undefined, slug: string): string[] {
+  const tags = new Set<string>();
 
-  if (!raw?.trim()) {
-    console.warn(`[parser] Empty file skipped: ${filePath}`);
-    return {
-      id: slug,
-      slug,
-      department,
-      departmentLabel: department
-        .split('-')
-        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-        .join(' '),
-      name: humanName(filePath, department),
-      description: '',
-      systemPrompt: '',
-      tools: [],
-      tags: [],
-      source: 'agency-agents',
-      filePath: relPath,
-    };
+  tags.add(department.toLowerCase());
+
+  if (vibe) {
+    const vibeWords = vibe
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length > 3);
+    vibeWords.slice(0, 4).forEach((w) => tags.add(w));
   }
 
-  let parsed: matter.GrayMatterFile<string>;
+  const slugTokens = slug
+    .replace(`${department}-`, '')
+    .split('-')
+    .filter((w) => w.length > 3);
+  slugTokens.slice(0, 3).forEach((w) => tags.add(w));
+
+  return [...tags].slice(0, 8);
+}
+
+/**
+ * Parse a single .md file from vendor/agency-agents.
+ * Returns null if the file has no valid frontmatter.
+ */
+export function parseAgentFile(filePath: string, department: string): AgentTemplate | null {
+  let raw: string;
   try {
-    parsed = matter(raw);
-  } catch (err) {
-    console.warn(`[parser] gray-matter failed on ${filePath}:`, (err as Error).message);
-    parsed = { data: {}, content: raw } as matter.GrayMatterFile<string>;
+    raw = fs.readFileSync(filePath, 'utf-8');
+  } catch {
+    return null;
   }
 
-  const fm = parsed.data as Record<string, unknown>;
-  const body = parsed.content ?? '';
+  const match = FRONTMATTER_RE.exec(raw);
+  if (!match) return null;
 
-  const description =
-    typeof fm.description === 'string' && fm.description.trim()
-      ? fm.description.trim().slice(0, 200)
-      : extractDescription(body);
+  const [, yamlBlock, body] = match;
+  const meta = parseSimpleYaml(yamlBlock);
+  const slug = path.basename(filePath, '.md');
+
+  const vibe = typeof meta['vibe'] === 'string' ? meta['vibe'] : undefined;
+  const color = typeof meta['color'] === 'string' ? meta['color'] : '#6b7280';
+
+  const COLOR_MAP: Record<string, string> = {
+    blue: '#2563eb',
+    red: '#dc2626',
+    green: '#16a34a',
+    yellow: '#f59e0b',
+    purple: '#7c3aed',
+    pink: '#ec4899',
+    orange: '#ea580c',
+    teal: '#0d9488',
+    cyan: '#0891b2',
+    indigo: '#6366f1',
+    gray: '#6b7280',
+    slate: '#64748b',
+    emerald: '#059669',
+    violet: '#8b5cf6',
+    amber: '#d97706',
+    lime: '#65a30d',
+    sky: '#0284c7',
+    rose: '#e11d48',
+  };
+
+  const resolvedColor =
+    color.startsWith('#') ? color : COLOR_MAP[color.toLowerCase()] ?? '#6b7280';
 
   return {
-    id: slug,
+    id: `${department}/${slug}`,
     slug,
+    name: typeof meta['name'] === 'string' ? meta['name'] : slug,
+    description: typeof meta['description'] === 'string' ? meta['description'] : '',
     department,
-    departmentLabel:
-      typeof fm.department === 'string' && fm.department.trim()
-        ? fm.department.trim()
-        : department
-            .split('-')
-            .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-            .join(' '),
-    name: humanName(filePath, department, fm.name as string | undefined),
-    description,
-    systemPrompt: body.trim(),
-    tools: extractTools(fm, body),
-    tags: Array.isArray(fm.tags) ? (fm.tags as string[]) : [],
-    source: 'agency-agents',
-    filePath: relPath,
+    emoji: typeof meta['emoji'] === 'string' ? meta['emoji'] : '🤖',
+    color: resolvedColor,
+    vibe,
+    tags: deriveTags(department, vibe, slug),
+    systemPrompt: body.trim() || undefined,
   };
 }

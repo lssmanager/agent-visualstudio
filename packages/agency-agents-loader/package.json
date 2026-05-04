@@ -1,6 +1,16 @@
 {
   "name": "@agent-visualstudio/agency-agents-loader",
-  "version": "1.0.0",
-  "private": true,
-  "main": "src/index.ts"
+  "version": "0.1.0",
+  "description": "Loader for msitarzewski/agency-agents markdown catalog",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  }
 }
