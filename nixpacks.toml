@@ -6,10 +6,9 @@ cmds = ['npm install --legacy-peer-deps --no-workspaces']
 
 [phases.build]
 cmds = [
-  './node_modules/.bin/prisma generate --schema=packages/db/prisma/schema.prisma || true',
   './node_modules/.bin/tsc -p tsconfig.json || true',
   './node_modules/.bin/vite build --config apps/web/vite.config.ts || true'
 ]
 
 [start]
-cmd = 'node dist/apps/api/src/main.js'
+cmd = 'npx prisma generate --schema=packages/db/prisma/schema.prisma && node dist/apps/api/src/main.js'
