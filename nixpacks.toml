@@ -11,4 +11,4 @@ cmds = [
 ]
 
 [start]
-cmd = 'npx prisma generate --schema=packages/db/prisma/schema.prisma && node dist/apps/api/src/main.js'
+cmd = 'npx prisma generate --schema=/app/packages/db/prisma/schema.prisma && node /app/dist/apps/api/src/main.js'
