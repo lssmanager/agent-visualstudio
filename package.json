@@ -8,28 +8,10 @@
     "node": ">=18.0.0"
   },
   "workspaces": [
-    "packages/agency-agents-loader",
-    "packages/canonical-types",
-    "packages/core-types",
-    "packages/crypto",
-    "packages/db",
-    "packages/flow-engine",
-    "packages/gateway-sdk",
-    "packages/hierarchy",
-    "packages/mcp-server",
-    "packages/n8n-service",
-    "packages/openclaw-fs",
-    "packages/profile-engine",
-    "packages/run-engine",
-    "packages/schemas",
-    "packages/skill-registry",
-    "packages/version-engine",
-    "packages/workspace-engine",
-    "packages/workspace-store"
+    "packages/db"
   ],
   "scripts": {
-    "postinstall": "prisma generate",
-    "build": "prisma generate && tsc -p tsconfig.json && npx vite build --config apps/web/vite.config.ts",
+    "build": "npx prisma generate --schema=packages/db/prisma/schema.prisma && tsc -p tsconfig.json && npx vite build --config apps/web/vite.config.ts",
     "build:packages": "echo 'Skipping package builds - packages are part of main TypeScript compilation'",
     "build:web": "npx vite build --config apps/web/vite.config.ts",
     "build:gateway": "tsc -p apps/gateway/tsconfig.json",
