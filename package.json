@@ -11,11 +11,12 @@
     "packages/db"
   ],
   "scripts": {
+    "prestart": "npx prisma generate --schema=packages/db/prisma/schema.prisma",
+    "start": "node dist/apps/api/src/main.js",
     "build": "npx prisma generate --schema=packages/db/prisma/schema.prisma && tsc -p tsconfig.json && npx vite build --config apps/web/vite.config.ts",
-    "build:packages": "echo 'Skipping package builds - packages are part of main TypeScript compilation'",
+    "build:ci": "tsc -p tsconfig.json && npx vite build --config apps/web/vite.config.ts",
     "build:web": "npx vite build --config apps/web/vite.config.ts",
     "build:gateway": "tsc -p apps/gateway/tsconfig.json",
-    "start": "node dist/apps/api/src/main.js",
     "dev": "NODE_ENV=development ts-node -P tsconfig.json apps/api/src/main.ts",
     "dev:web": "npx vite --config apps/web/vite.config.ts",
     "dev:gateway": "NODE_ENV=development ts-node -r tsconfig-paths/register -P apps/gateway/tsconfig.json apps/gateway/src/main.ts",
