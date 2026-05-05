@@ -15,11 +15,12 @@
 //     Migración: UPDATE model_policies SET fallback_chain = ARRAY[fallback_model]
 //                WHERE fallback_model IS NOT NULL;
 // v7 — Fix P1012: unique relation names + map constraints for polymorphic scopeId FKs
+// v8 — Fix: removed custom output from generator (was causing @prisma/client stub issue)
+//      output removed → generates to node_modules/.prisma/client (default)
 // ============================================================
 
 generator client {
   provider = "prisma-client-js"
-  output   = "../generated/client"
 }
 
 datasource db {
@@ -72,9 +73,6 @@ model Workspace {
   departmentId String
   name         String
   slug         String
-  // Cache de la ModelPolicy efectiva calculada (resolución jerárquica).
-  // Se actualiza cuando cambia ModelPolicy en cualquier nivel superior.
-  // NO es la fuente de verdad — eso es la tabla ModelPolicy.
   modelPolicy  Json?     @default("{}")
   metadata     Json?     @default("{}")
   createdAt    DateTime  @default(now())
@@ -105,16 +103,13 @@ model Agent {
   role            String
   description     String   @default("")
   instructions    String   @default("")
-
-  // v3 (ProfilePropagatorService)
   goal            String?  @default("")
   backstory       String?  @default("")
-
   model           String   @default("gpt-4o-mini")
   tags            String[] @default([])
-  visibility      String   @default("private")   // private | workspace | public
-  executionMode   String   @default("direct")    // direct | orchestrated | handoff
-  kind            String   @default("agent")     // agent | subagent | orchestrator
+  visibility      String   @default("private")
+  executionMode   String   @default("direct")
+  kind            String   @default("agent")
   parentAgentId   String?
   context         String[] @default([])
   triggers        Json?    @default("[]")
@@ -143,14 +138,9 @@ model Agent {
   @@map("agents")
 }
 
-// ────────────────────────────────────────────────────────────
-// AGENT PROFILE — v3 (ProfilePropagatorService)
-// ────────────────────────────────────────────────────────────
-
 model AgentProfile {
   id              String   @id @default(cuid())
   agentId         String   @unique
-
   systemPrompt    String?  @db.Text
   persona         Json     @default("{}")
   knowledgeBase   Json     @default("[]")
@@ -160,7 +150,6 @@ model AgentProfile {
   memoryConfig    Json     @default("{}")
   version         Int      @default(1)
   propagatedAt    DateTime @default(now())
-
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -170,26 +159,16 @@ model AgentProfile {
   @@map("agent_profiles")
 }
 
-// ────────────────────────────────────────────────────────────
-// MODEL POLICY — tabla propia (v6)
-// ────────────────────────────────────────────────────────────
-
 model ModelPolicy {
   id            String   @id @default(cuid())
-  scopeType     String   // agency | department | workspace | agent
+  scopeType     String
   scopeId       String
-
   primaryModel  String
-  /// Lista ordenada de modelos fallback.
-  /// Índice 0 = primer intento tras fallo del primary.
-  /// Ejemplo: ["anthropic/claude-3-haiku", "qwen/qwen-plus", "openai/gpt-4o-mini"]
-  /// Migración desde fallbackModel: ver comentario v6 en cabecera del archivo.
   fallbackChain String[] @default([])
   temperature   Float    @default(0.7)
   maxTokens     Int      @default(4096)
   isOverride    Boolean  @default(false)
   inheritedFrom String?
-
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -213,7 +192,6 @@ model Skill {
   name         String
   description  String   @default("")
   version      String   @default("1.0.0")
-  // mcp | openapi | n8n_webhook | builtin | function | plugin
   type         String   @default("builtin")
   category     String   @default("general")
   permissions  String[] @default([])
@@ -221,7 +199,6 @@ model Skill {
   plugin       Json?
   openapiSpec  Json?
   mcpConfig    Json?
-  // Para type=n8n_webhook: { workflowId, webhookUrl, method, auth? }
   n8nConfig    Json?
   files        String[] @default([])
   dependencies String[] @default([])
@@ -246,7 +223,7 @@ model AgentSkill {
 }
 
 // ────────────────────────────────────────────────────────────
-// N8N INTEGRATION — v4
+// N8N INTEGRATION
 // ────────────────────────────────────────────────────────────
 
 model N8nConnection {
@@ -310,7 +287,7 @@ model Flow {
 }
 
 // ────────────────────────────────────────────────────────────
-// RUNS — durable execution
+// RUNS
 // ────────────────────────────────────────────────────────────
 
 model Run {
@@ -357,11 +334,11 @@ model RunStep {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  checkpointData   Json?    // messages[], tool_calls[], observations[]
+  checkpointData   Json?
   checkpointSeq    Int      @default(0)
-  interruptReason  String?  // human_approval | budget_exceeded | tool_error | max_iter
+  interruptReason  String?
   resumePayload    Json?
-  durableState     String   @default("none") // none | paused | resuming | replaying
+  durableState     String   @default("none")
 
   run        Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
   agent      Agent?    @relation(fields: [agentId], references: [id])
@@ -375,13 +352,13 @@ model RunStep {
 }
 
 // ────────────────────────────────────────────────────────────
-// CHANNELS — gateway multi-canal
+// CHANNELS
 // ────────────────────────────────────────────────────────────
 
 model ChannelConfig {
   id          String   @id @default(cuid())
   workspaceId String
-  channel     String   // whatsapp | telegram | slack | email | web | custom
+  channel     String
   displayName String
   credentials Json     @default("{}")
   settings    Json?    @default("{}")
@@ -412,10 +389,6 @@ model ChannelBinding {
   @@map("channel_bindings")
 }
 
-// ────────────────────────────────────────────────────────────
-// GATEWAY SESSION + CONVERSATION MESSAGES
-// ────────────────────────────────────────────────────────────
-
 model GatewaySession {
   id              String   @id @default(cuid())
   channelConfigId String
@@ -440,7 +413,7 @@ model GatewaySession {
 model ConversationMessage {
   id               String   @id @default(cuid())
   sessionId        String
-  role             String   // user | assistant | system | tool
+  role             String
   contentText      String?  @db.Text
   contentJson      Json
   channelMessageId String?
@@ -513,10 +486,6 @@ model BudgetIncident {
   @@map("budget_incidents")
 }
 
-// ────────────────────────────────────────────────────────────
-// COST EVENTS
-// ────────────────────────────────────────────────────────────
-
 model CostEvent {
   id            String   @id @default(cuid())
   runStepId     String?
@@ -585,10 +554,6 @@ model ApprovalComment {
   @@map("approval_comments")
 }
 
-// ────────────────────────────────────────────────────────────
-// ROUTINES
-// ────────────────────────────────────────────────────────────
-
 model Routine {
   id          String   @id @default(cuid())
   workspaceId String
@@ -612,16 +577,6 @@ model Routine {
   @@map("routines")
 }
 
-// ────────────────────────────────────────────────────────────
-// ACTIVITY LOG — v5: alineado con Plan Maestro OV-06 Audit Trail
-//
-// Campos nuevos (opcionales, no rompen datos existentes):
-//   resourceType  — tipo del recurso afectado (agent | flow | skill | policy...)
-//   resourceId    — ID del recurso afectado
-//   diff          — JSON diff antes/después del cambio (para auditoría granular)
-//   ipAddress     — IP del actor (requerido por OV-06 para trazabilidad)
-// ────────────────────────────────────────────────────────────
-
 model ActivityLog {
   id           String   @id @default(cuid())
   scopeType    String
@@ -630,13 +585,10 @@ model ActivityLog {
   actorId      String?
   action       String
   payload      Json?    @default("{}")
-
-  // v5: campos OV-06 Audit Trail
-  resourceType String?  // agent | flow | skill | policy | workspace | channel...
-  resourceId   String?  // ID del recurso afectado (distinto de scopeId cuando aplica)
-  diff         Json?    // { before: {...}, after: {...} } — diff del estado del recurso
-  ipAddress    String?  // IPv4 o IPv6 del actor
-
+  resourceType String?
+  resourceId   String?
+  diff         Json?
+  ipAddress    String?
   createdAt    DateTime @default(now())
 
   agency     Agency?     @relation("ActivityLogScopeAgency",     fields: [scopeId], references: [id], map: "activity_logs_scope_agency_fkey")
@@ -650,10 +602,6 @@ model ActivityLog {
   @@index([resourceId, createdAt])
   @@map("activity_logs")
 }
-
-// ────────────────────────────────────────────────────────────
-// AGENT WAKEUP REQUESTS
-// ────────────────────────────────────────────────────────────
 
 model AgentWakeupRequest {
   id          String    @id @default(cuid())

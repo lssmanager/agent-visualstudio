@@ -7,9 +7,6 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "workspaces": [
-    "packages/db"
-  ],
   "scripts": {
     "prestart": "npx prisma generate --schema=apps/api/prisma/schema.prisma",
     "start": "node dist/apps/api/src/main.js",
