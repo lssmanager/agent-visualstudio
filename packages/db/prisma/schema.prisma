@@ -14,6 +14,7 @@
 //     Lista ordenada de fallbacks; índice 0 = primer fallback.
 //     Migración: UPDATE model_policies SET fallback_chain = ARRAY[fallback_model]
 //                WHERE fallback_model IS NOT NULL;
+// v7 — Fix P1012: unique relation names + map constraints for polymorphic scopeId FKs
 // ============================================================
 
 generator client {
@@ -40,9 +41,9 @@ model Agency {
   updatedAt   DateTime     @updatedAt
 
   departments  Department[]
-  budgetPolicy BudgetPolicy[]
-  modelPolicy  ModelPolicy[]
-  activityLogs ActivityLog[]
+  budgetPolicy BudgetPolicy[] @relation("BudgetPolicyScopeAgency")
+  modelPolicy  ModelPolicy[]  @relation("ModelPolicyScopeAgency")
+  activityLogs ActivityLog[]  @relation("ActivityLogScopeAgency")
 
   @@map("agencies")
 }
@@ -58,9 +59,9 @@ model Department {
 
   agency       Agency        @relation(fields: [agencyId], references: [id], onDelete: Cascade)
   workspaces   Workspace[]
-  budgetPolicy BudgetPolicy[]
-  modelPolicy  ModelPolicy[]
-  activityLogs ActivityLog[]
+  budgetPolicy BudgetPolicy[] @relation("BudgetPolicyScopeDepartment")
+  modelPolicy  ModelPolicy[]  @relation("ModelPolicyScopeDepartment")
+  activityLogs ActivityLog[]  @relation("ActivityLogScopeDepartment")
 
   @@unique([agencyId, slug])
   @@map("departments")
@@ -84,10 +85,10 @@ model Workspace {
   flows          Flow[]
   runs           Run[]
   channelConfigs ChannelConfig[]
-  budgetPolicy   BudgetPolicy[]
-  modelPolicies  ModelPolicy[]
+  budgetPolicy   BudgetPolicy[]   @relation("BudgetPolicyScopeWorkspace")
+  modelPolicies  ModelPolicy[]    @relation("ModelPolicyScopeWorkspace")
   routines       Routine[]
-  activityLogs   ActivityLog[]
+  activityLogs   ActivityLog[]    @relation("ActivityLogScopeWorkspace")
 
   @@unique([departmentId, slug])
   @@map("workspaces")
@@ -133,9 +134,9 @@ model Agent {
   channelBindingRecords ChannelBinding[]
   gatewaySessions       GatewaySession[]
   wakeupRequests        AgentWakeupRequest[]
-  budgetPolicy          BudgetPolicy[]
-  modelPolicy           ModelPolicy[]
-  activityLogs          ActivityLog[]
+  budgetPolicy          BudgetPolicy[]        @relation("BudgetPolicyScopeAgent")
+  modelPolicy           ModelPolicy[]         @relation("ModelPolicyScopeAgent")
+  activityLogs          ActivityLog[]         @relation("ActivityLogScopeAgent")
   agentProfile          AgentProfile?
 
   @@index([workspaceId])
@@ -193,10 +194,10 @@ model ModelPolicy {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  agency     Agency?     @relation(fields: [scopeId], references: [id])
-  department Department? @relation(fields: [scopeId], references: [id])
-  workspace  Workspace?  @relation(fields: [scopeId], references: [id])
-  agent      Agent?      @relation(fields: [scopeId], references: [id])
+  agency     Agency?     @relation("ModelPolicyScopeAgency",     fields: [scopeId], references: [id], map: "model_policies_scope_agency_fkey")
+  department Department? @relation("ModelPolicyScopeDepartment", fields: [scopeId], references: [id], map: "model_policies_scope_department_fkey")
+  workspace  Workspace?  @relation("ModelPolicyScopeWorkspace",  fields: [scopeId], references: [id], map: "model_policies_scope_workspace_fkey")
+  agent      Agent?      @relation("ModelPolicyScopeAgent",      fields: [scopeId], references: [id], map: "model_policies_scope_agent_fkey")
 
   @@unique([scopeType, scopeId])
   @@index([scopeId])
@@ -481,10 +482,10 @@ model BudgetPolicy {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
-  agency     Agency?     @relation(fields: [scopeId], references: [id])
-  department Department? @relation(fields: [scopeId], references: [id])
-  workspace  Workspace?  @relation(fields: [scopeId], references: [id])
-  agent      Agent?      @relation(fields: [scopeId], references: [id])
+  agency     Agency?     @relation("BudgetPolicyScopeAgency",     fields: [scopeId], references: [id], map: "budget_policies_scope_agency_fkey")
+  department Department? @relation("BudgetPolicyScopeDepartment", fields: [scopeId], references: [id], map: "budget_policies_scope_department_fkey")
+  workspace  Workspace?  @relation("BudgetPolicyScopeWorkspace",  fields: [scopeId], references: [id], map: "budget_policies_scope_workspace_fkey")
+  agent      Agent?      @relation("BudgetPolicyScopeAgent",      fields: [scopeId], references: [id], map: "budget_policies_scope_agent_fkey")
   incidents  BudgetIncident[]
 
   @@unique([scopeType, scopeId, window])
@@ -638,10 +639,10 @@ model ActivityLog {
 
   createdAt    DateTime @default(now())
 
-  agency     Agency?     @relation(fields: [scopeId], references: [id])
-  department Department? @relation(fields: [scopeId], references: [id])
-  workspace  Workspace?  @relation(fields: [scopeId], references: [id])
-  agent      Agent?      @relation(fields: [scopeId], references: [id])
+  agency     Agency?     @relation("ActivityLogScopeAgency",     fields: [scopeId], references: [id], map: "activity_logs_scope_agency_fkey")
+  department Department? @relation("ActivityLogScopeDepartment", fields: [scopeId], references: [id], map: "activity_logs_scope_department_fkey")
+  workspace  Workspace?  @relation("ActivityLogScopeWorkspace",  fields: [scopeId], references: [id], map: "activity_logs_scope_workspace_fkey")
+  agent      Agent?      @relation("ActivityLogScopeAgent",      fields: [scopeId], references: [id], map: "activity_logs_scope_agent_fkey")
 
   @@index([scopeId, createdAt])
   @@index([action, createdAt])
