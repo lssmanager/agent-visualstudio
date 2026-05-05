@@ -2,10 +2,19 @@ FROM node:20-bookworm-slim AS builder
 
 WORKDIR /app
 
+# openssl needed by Prisma query-engine even at generate time
+RUN apt-get update -qq && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+
 COPY package*.json ./
 RUN npm install --legacy-peer-deps --include=dev
 
 COPY . .
+
+# Generate Prisma client BEFORE compiling TypeScript.
+# Without this, tsc resolves @prisma/client to an empty stub and the
+# compiled JS crashes at runtime with "did not initialize yet".
+RUN ./node_modules/.bin/prisma generate --schema ./apps/api/prisma/schema.prisma
+
 RUN npm run build
 
 # ── Runner ────────────────────────────────────────────────────────────────────
@@ -27,8 +36,9 @@ COPY --from=builder /app/apps/web/dist ./apps/web/dist
 COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
 COPY --from=builder /app/docker ./docker
 
-# Generate Prisma client for THIS image's OS/arch at build time.
-# Running it here (not in builder) guarantees the correct native binary.
+# Re-generate Prisma client for the runner OS/arch (debian-slim native binary).
+# The builder already generated it for compilation; this ensures the correct
+# linux query-engine binary is present in the final image.
 RUN ./node_modules/.bin/prisma generate --schema ./apps/api/prisma/schema.prisma
 
 RUN chmod +x /app/docker/start.sh
