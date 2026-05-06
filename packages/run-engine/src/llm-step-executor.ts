@@ -37,6 +37,7 @@ import { SkillInvoker } from './skill-invoker';
 import { buildToolDefinitions } from './build-tool-definitions';
 import {
   buildLLMClient,
+  toLlmResponse,
   type ChatMessage,
   type ToolDefinition,
   type LlmResponse,
@@ -245,12 +246,12 @@ export class LlmStepExecutor extends StepExecutor {
     const modelId    = (agent.model as string) ?? 'openai/gpt-4o-mini';
     const adapter    = buildLLMClient(modelId);
     const supervisorFn: import('../../hierarchy/src').SupervisorFn = async (prompt: string) => {
-      const resp = await adapter.chat(
+      const raw  = await adapter.chat(
         [{ role: 'user', content: prompt }],
         [],
         { model: modelId, temperature: 0.3, maxTokens: 2048 },
       );
-      return resp.content ?? '';
+      return raw.content ?? '';
     };
 
     const task = (node.config?.prompt as string)
@@ -471,17 +472,18 @@ export class LlmStepExecutor extends StepExecutor {
       // ── LLM call with fallback chain ──────────────────────────────────
       let llmResp: LlmResponse;
       try {
-        llmResp = await adapter.chat(messages, tools, {
-          model: activeModel, temperature, maxTokens,
-        });
+        // Wrap adapter result into LlmResponse (normalises tool_calls + usage field names)
+        llmResp = toLlmResponse(
+          await adapter.chat(messages, tools, { model: activeModel, temperature, maxTokens }),
+        );
       } catch (primaryErr) {
         let recovered = false;
         for (const fallbackModel of fallbackChain) {
           try {
             const fallbackAdapter = buildLLMClient(fallbackModel);
-            llmResp = await fallbackAdapter.chat(messages, tools, {
-              model: fallbackModel, temperature, maxTokens,
-            });
+            llmResp = toLlmResponse(
+              await fallbackAdapter.chat(messages, tools, { model: fallbackModel, temperature, maxTokens }),
+            );
             adapter     = fallbackAdapter;
             activeModel = fallbackModel;
             recovered   = true;
@@ -503,6 +505,7 @@ export class LlmStepExecutor extends StepExecutor {
       // ── Count this round ──────────────────────────────────────────────
       toolRoundsUsed++;
 
+      // Push assistant message with tool_calls back into context
       messages.push({
         role:       'assistant',
         content:    llmResp!.content,

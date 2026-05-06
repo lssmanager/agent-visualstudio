@@ -128,13 +128,24 @@ export class UnknownProviderError extends Error {
   }
 }
 
-// ─── Provider Adapter interface ──────────────────────────────────────────────
+// ─── Core message / tool types ───────────────────────────────────────────────
 
 export interface ChatMessage {
-  role:    'system' | 'user' | 'assistant' | 'tool'
-  content: string
+  role:          'system' | 'user' | 'assistant' | 'tool'
+  /**
+   * content is string | null because:
+   *  - OpenAI returns null when the response is tool_calls-only
+   *  - Anthropic text block may be absent
+   * Callers that push assistant messages back into the context must handle null.
+   */
+  content:       string | null
   tool_call_id?: string
   name?:         string
+  /**
+   * Present only when role='assistant' and the model emitted tool calls.
+   * Needed to push assistant messages with tool_calls back into the loop.
+   */
+  tool_calls?:   ToolCall[]
 }
 
 export interface ToolDefinition {
@@ -151,6 +162,15 @@ export interface ToolCall {
   type:     'function'
   function: { name: string; arguments: string }
 }
+
+/**
+ * ToolCallRequest — canonical alias for ToolCall.
+ *
+ * llm-step-executor imports this name to describe individual tool call
+ * requests dispatched inside the agentic loop. Both names are exported
+ * to avoid renaming across consumers.
+ */
+export type ToolCallRequest = ToolCall
 
 export interface ChatCompletionOptions {
   model:        string
@@ -169,6 +189,51 @@ export interface ChatCompletionResult {
     totalTokens:      number
   }
   model: string
+}
+
+/**
+ * LlmResponse — executor-facing view of a completed LLM call.
+ *
+ * Differs from ChatCompletionResult in two ways that matter for the
+ * agentic tool-call loop in llm-step-executor.ts:
+ *
+ *   1. tool_calls is always a ToolCall[] (never undefined) — safe to check
+ *      .length without a null guard.
+ *   2. usage fields use short names (.input / .output) rather than the
+ *      verbose promptTokens / completionTokens.
+ *
+ * Produced by toLlmResponse(); adapters still return ChatCompletionResult
+ * so existing consumers are unaffected.
+ */
+export interface LlmResponse {
+  content:    string | null
+  tool_calls: ToolCall[]
+  usage: {
+    input:  number
+    output: number
+    total:  number
+  }
+  model: string
+}
+
+/**
+ * Maps a ChatCompletionResult (returned by adapters) to the LlmResponse
+ * shape consumed by the tool-call loop in llm-step-executor.
+ *
+ * Handles missing usage / toolCalls gracefully — callers never need to
+ * null-check these fields on the returned LlmResponse.
+ */
+export function toLlmResponse(r: ChatCompletionResult): LlmResponse {
+  return {
+    content:    r.content,
+    tool_calls: r.toolCalls ?? [],
+    usage: {
+      input:  r.usage?.promptTokens     ?? 0,
+      output: r.usage?.completionTokens ?? 0,
+      total:  r.usage?.totalTokens      ?? 0,
+    },
+    model: r.model,
+  }
 }
 
 export interface ProviderAdapter {
@@ -481,7 +546,7 @@ class OpenAIAdapter implements ProviderAdapter {
     const data = await res.json() as {
       choices: Array<{
         message: {
-          content:    string | null
+          content:     string | null
           tool_calls?: ToolCall[]
         }
       }>
@@ -559,10 +624,10 @@ class AnthropicAdapter implements ProviderAdapter {
 
     const data = await res.json() as {
       content: Array<{
-        type:  string
-        text?: string
-        id?:   string
-        name?: string
+        type:   string
+        text?:  string
+        id?:    string
+        name?:  string
         input?: Record<string, unknown>
       }>
       usage?: { input_tokens: number; output_tokens: number }
