@@ -4,6 +4,10 @@
   "description": "Real-time monitoring dashboard for OpenClaw AI agents",
   "main": "dist/apps/api/src/main.js",
   "type": "commonjs",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "engines": {
     "node": ">=18.0.0"
   },
