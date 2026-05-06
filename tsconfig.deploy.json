@@ -31,6 +31,8 @@
     "**/*.spec.ts",
     "**/jest.config.ts",
     "packages/*/scripts/**",
+    "packages/agency-agents-loader/**",
+    "packages/gateway-sdk/**",
     "scripts/**"
   ]
 }
