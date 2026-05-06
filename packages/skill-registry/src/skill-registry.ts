@@ -9,8 +9,8 @@
  *
  * Remains backward-compatible with the original register/registerMany/list/get API.
  */
-import type { SkillSpec, SkillFunctionSpec } from '../../core-types/src/index';
-import { skillSpecSchema } from '../../schemas/src/index';
+import type { SkillSpec, SkillFunctionSpec } from '@lssmanager/core-types';
+import { skillSpecSchema } from '@lssmanager/schemas';
 
 export class SkillRegistry {
   private readonly byId = new Map<string, SkillSpec>();
