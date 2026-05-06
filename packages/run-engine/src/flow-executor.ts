@@ -61,6 +61,11 @@ export class FlowExecutor {
         include: { flow: true },
       });
 
+      // null-guard: flowId es opcional en Run
+      if (!run.flow) {
+        throw new Error(`Run ${runId} has no associated Flow (flowId is null)`);
+      }
+
       const spec = run.flow.spec as unknown as FlowSpec;
       const nodes = spec?.nodes ?? [];
       if (nodes.length === 0) throw new Error('Flow.spec has no nodes');
@@ -144,8 +149,9 @@ export class FlowExecutor {
       const result = await executeAgent(runStep.id);
 
       // Determinar siguientes nodos
+      // Paréntesis explícitos para precedencia correcta del ternario
       if (node.type === 'condition') {
-        const branch = result.branch ?? (result.output as any)?.conditionResult ? 'true' : 'false';
+        const branch = result.branch ?? ((result.output as any)?.conditionResult ? 'true' : 'false');
         const nextNodeId = node.branches?.[branch as 'true' | 'false'];
         if (nextNodeId) queue.push(nextNodeId);
       } else {

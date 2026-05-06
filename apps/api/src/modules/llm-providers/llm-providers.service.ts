@@ -3,7 +3,7 @@
  *
  * CRUD de LlmProvider + operaciones de apoyo:
  *   - cifrado/descifrado de apiKeyEnc
- *   - construcción de LlmProvider desde ProviderCatalog
+ *   - construcción de LlmProvider desde LlmProviderCatalog
  *   - shortcut getForWorkspace con catalog incluido
  */
 import type { PrismaClient } from '@prisma/client'
@@ -38,7 +38,7 @@ export function decryptSecret(enc: string): string {
 // ── DTOs ───────────────────────────────────────────────────────────────────
 
 export interface CreateLlmProviderDto {
-  provider:   string        // slug FK a ProviderCatalog
+  provider:   string        // slug FK a LlmProviderCatalog
   apiKey?:    string        // plano — se cifra al guardar (null si authType=oauth|none)
   baseUrl?:   string
   isDefault?: boolean
@@ -83,7 +83,7 @@ export class LlmProvidersService {
 
   async create(workspaceId: string, dto: CreateLlmProviderDto) {
     // Verificar que el provider existe en el catálogo
-    const catalog = await this.prisma.providerCatalog.findUnique({
+    const catalog = await this.prisma.llmProviderCatalog.findUnique({
       where: { id: dto.provider },
     })
     if (!catalog) throw new Error(`Provider "${dto.provider}" not found in catalog`)
@@ -142,7 +142,7 @@ export class LlmProvidersService {
 
   /** Catálogo completo — para el selector del frontend */
   async listCatalog() {
-    return this.prisma.providerCatalog.findMany({
+    return this.prisma.llmProviderCatalog.findMany({
       where:   { isEnabled: true },
       orderBy: { displayName: 'asc' },
     })
