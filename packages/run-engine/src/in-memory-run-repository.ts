@@ -4,11 +4,7 @@ import type { IRunRepository } from './flow-executor';
 /**
  * In-memory implementation of IRunRepository.
  *
- * Used by FlowExecutor during execution (synchronous interface required).
- * AgentExecutor passes this adapter to FlowExecutor, then syncs the
- * completed run/steps back to Prisma once execution finishes.
- *
- * Thread safety: single-threaded Node.js event loop — no locking needed.
+ * Used during testing or when Prisma is not available.
  * Each save() deep-clones the RunSpec to prevent aliasing bugs.
  */
 export class InMemoryRunRepository implements IRunRepository {
@@ -33,7 +29,7 @@ export class InMemoryRunRepository implements IRunRepository {
     return Array.from(this.store.values()).map((r) => structuredClone(r));
   }
 
-  /** Number of runs currently stored. Useful for assertions in tests. */
+  /** Number of runs currently stored. */
   get size(): number {
     return this.store.size;
   }

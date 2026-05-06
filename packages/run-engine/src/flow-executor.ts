@@ -14,6 +14,9 @@
  */
 import type { PrismaClient } from '@prisma/client';
 import type { AgentExecutorFn } from './agent-executor.service';
+import type { RunSpec } from '../../core-types/src';
+import { ApprovalQueue } from './approval-queue';
+import { RunRepository } from './run-repository';
 
 /** Nodo mínimo del Flow.spec */
 export interface FlowNode {
@@ -25,6 +28,8 @@ export interface FlowNode {
   conditionExpr?: string;
   /** ID del agente o subagente asignado a este nodo */
   agentId?: string;
+  /** Config adicional del nodo */
+  config?: Record<string, unknown>;
 }
 
 /** Spec mínima del Flow */
@@ -34,20 +39,97 @@ export interface FlowSpec {
   entryNodeId?: string;
 }
 
+/**
+ * IRunRepository — interfaz para persistencia de runs en memoria o Prisma.
+ * Exportada aquí para que InMemoryRunRepository la implemente.
+ */
+export interface IRunRepository {
+  save(run: RunSpec): void;
+  findById(runId: string): RunSpec | null;
+  getAll(): RunSpec[];
+}
+
 export interface FlowExecutorDeps {
-  prisma: PrismaClient;
-  executeAgent: AgentExecutorFn;
+  /** Prisma client para persistencia directa */
+  prisma?: PrismaClient;
+  /** Función de ejecución de agentes */
+  executeAgent?: AgentExecutorFn;
+  /** workspaceId del flow en ejecución */
+  workspaceId?: string;
+  /** Repositorio de runs (in-memory o Prisma) */
+  repository?: RunRepository;
+  /** Cola de aprobaciones HITL */
+  approvalQueue?: ApprovalQueue;
+  /** DB client (alias de prisma para compatibilidad) */
+  db?: PrismaClient;
+  /** Max rondas de tool calls */
+  maxToolRounds?: number;
 }
 
 export class FlowExecutor {
-  constructor(private readonly deps: FlowExecutorDeps) {}
+  private readonly deps: FlowExecutorDeps;
+
+  constructor(deps: FlowExecutorDeps) {
+    this.deps = deps;
+  }
+
+  /**
+   * Inicia la ejecución de un flow creando el Run en Prisma
+   * y disparando el recorrido del grafo de forma asíncrona.
+   * Retorna el RunSpec con el id del Run creado.
+   */
+  async startRun(
+    flow: FlowSpec,
+    trigger: { event: string; payload?: Record<string, unknown> },
+    opts?: { agentId?: string; sessionId?: string; channelKind?: string },
+  ): Promise<RunSpec> {
+    const prisma = this.deps.db ?? this.deps.prisma;
+    if (!prisma) throw new Error('FlowExecutor: no prisma/db client provided');
+
+    // Buscar o resolver el workspaceId desde el flow si está embebido
+    const workspaceId = this.deps.workspaceId ?? '';
+
+    // Crear el Run en Prisma
+    const run = await prisma.run.create({
+      data: {
+        workspaceId,
+        agentId:     opts?.agentId    ?? null,
+        sessionId:   opts?.sessionId  ?? null,
+        channelKind: opts?.channelKind ?? null,
+        status:      'pending',
+        trigger:     { event: trigger.event, payload: trigger.payload ?? {} },
+        flowId:      null, // sin flow persistido, spec viaja en trigger.payload
+      },
+    });
+
+    const runSpec: RunSpec = {
+      id:          run.id,
+      workspaceId: run.workspaceId,
+      agentId:     run.agentId ?? undefined,
+      status:      run.status as RunSpec['status'],
+      trigger:     trigger,
+      steps:       [],
+    };
+
+    // Disparar ejecución async (fire-and-forget)
+    setImmediate(() => {
+      void this.executeRun(run.id).catch((err: unknown) => {
+        console.error('[FlowExecutor] async execution error:', err);
+      });
+    });
+
+    return runSpec;
+  }
 
   /**
    * Ejecuta el Run identificado por `runId`.
    * Actualiza Run.status → 'running' al inicio y 'completed'|'failed' al final.
    */
   async executeRun(runId: string): Promise<void> {
-    const { prisma, executeAgent } = this.deps;
+    const prisma = this.deps.db ?? this.deps.prisma;
+    const executeAgent = this.deps.executeAgent;
+    if (!prisma) throw new Error('FlowExecutor: no prisma/db client provided');
+    if (!executeAgent) throw new Error('FlowExecutor: no executeAgent function provided');
 
     // Marcar Run como running
     await prisma.run.update({
@@ -61,6 +143,8 @@ export class FlowExecutor {
         include: { flow: true },
       });
 
+      if (!run.flow) throw new Error('Run has no associated Flow');
+
       const spec = run.flow.spec as unknown as FlowSpec;
       const nodes = spec?.nodes ?? [];
       if (nodes.length === 0) throw new Error('Flow.spec has no nodes');
@@ -69,7 +153,7 @@ export class FlowExecutor {
       const entryNodeId =
         spec.entryNodeId ??
         nodes.find((n) => n.type === 'input')?.id ??
-        nodes[0].id;
+        nodes[0]!.id;
 
       // Ejecutar el grafo en orden topológico (BFS)
       await this._traverseGraph(runId, spec, entryNodeId, executeAgent, prisma);
@@ -125,8 +209,6 @@ export class FlowExecutor {
       }
 
       // Crear RunStep para este nodo.
-      // conditionExpr no es columna en RunStep: se guarda en el campo JSON
-      // `input` para que AgentExecutor pueda leerlo al evaluar la condición.
       const runStep = await prisma.runStep.create({
         data: {
           runId,
@@ -145,7 +227,7 @@ export class FlowExecutor {
 
       // Determinar siguientes nodos
       if (node.type === 'condition') {
-        const branch = result.branch ?? (result.output as any)?.conditionResult ? 'true' : 'false';
+        const branch = result.branch ?? ((result.output as Record<string, unknown>)?.['conditionResult'] ? 'true' : 'false');
         const nextNodeId = node.branches?.[branch as 'true' | 'false'];
         if (nextNodeId) queue.push(nextNodeId);
       } else {
