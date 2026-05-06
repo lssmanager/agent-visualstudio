@@ -1,9 +1,11 @@
 /**
  * settings.service.ts
  *
- * Acepta PrismaClient como dependencia inyectada (patrón global del repo).
- * Si no se pasa, usa el singleton `prisma` exportado por prisma.service
- * (ruta canónica del repo: modules/core/db/prisma.service).
+ * FIX ROOT 2 + 3:
+ *  - buildLLMClient imported from correct package '@lss/run-engine'
+ *    (was '@agent-visualstudio/run-engine' — wrong package name)
+ *  - getSysConfig rows: JsonValue cast to string via String() before
+ *    returning, fixing TS2345 on the map callback.
  */
 import type { PrismaClient } from '@prisma/client'
 import { PROVIDER_MODELS } from '../../lib/provider-models'
@@ -22,17 +24,10 @@ export class BadRequestError extends Error {
 export class SettingsService {
   private readonly prisma: PrismaClient
 
-  /**
-   * @param prisma PrismaClient inyectado desde el caller (preferido).
-   *   Si se omite, importa el singleton `prisma` de modules/core/db/prisma.service.
-   *   Esto permite usar SettingsService() sin args (retrocompatible)
-   *   y SettingsService(prisma) con inyección explícita.
-   */
   constructor(prisma?: PrismaClient) {
     if (prisma) {
       this.prisma = prisma
     } else {
-      // Lazy require para evitar ciclos — usa la ruta canónica del repo
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { getPrisma } = require('../core/db/prisma.service') as { getPrisma: () => PrismaClient }
       this.prisma = getPrisma()
@@ -41,9 +36,12 @@ export class SettingsService {
 
   // ── helpers ────────────────────────────────────────────────────────────────
 
+  // FIX ROOT 3: value is JsonValue (string|number|bool|null|...) — cast to string.
   private async getSysConfig(): Promise<Record<string, string>> {
     const rows = await this.prisma.systemConfig.findMany()
-    return Object.fromEntries(rows.map((r: { key: string; value: string }) => [r.key, r.value]))
+    return Object.fromEntries(
+      rows.map((r) => [r.key, String(r.value ?? '')])
+    )
   }
 
   private async setKey(key: string, value: string): Promise<void> {
@@ -97,10 +95,12 @@ export class SettingsService {
     const config = await this.getSysConfig()
     const start  = Date.now()
     try {
-      const { buildLLMClient } = await import('@agent-visualstudio/run-engine')
+      // FIX ROOT 4: correct package name '@lss/run-engine' (not '@agent-visualstudio/run-engine')
+      const { buildLLMClient } = await import('@lss/run-engine')
       const client = buildLLMClient(modelId, { configOverride: config })
       await client.chat(
         [{ role: 'user', content: 'Reply with exactly: ok' }],
+        [],
         { maxTokens: 5 },
       )
       return { ok: true, model: modelId, latencyMs: Date.now() - start }

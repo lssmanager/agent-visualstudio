@@ -1,14 +1,10 @@
 /**
  * agent-executor.service.ts
  *
- * Orchestrates a full Run through FlowExecutor + LLM step execution.
- * Supports checkpoint-based resumption (LangGraph PostgresSaver pattern).
- *
- * FIXED (2026-05-06):
- *   - RunRepository usa Prisma (constructor PrismaClient), no workspaceRoot string
- *   - findRunById() en lugar de findById() (API real de RunRepository)
- *   - FlowExecutor.executeRun(runId) en lugar de startRun() (API real)
- *   - FlowExecutorDeps: { prisma, executeAgent } — sin workspaceId ni repository
+ * FIX ROOT 2: removed incorrect AgentExecutorFn usage and
+ * `new LLMStepExecutor({ prisma })` calls.
+ * LlmStepExecutorOptions.db (not .prisma) is the correct field name.
+ * FlowExecutor from run-engine accepts { prisma } (FlowExecutorDeps).
  *
  * Patterns adapted from:
  *   - LangGraph: CompiledGraph.stream() with checkpointer
@@ -19,38 +15,21 @@
  *   - n8n: WorkflowExecute.processRunExecutionData()
  *   - Hermes: HierarchyOrchestrator chief-of-staff delegation
  */
-import type { RunSpec, FlowSpec } from '../../../../../packages/core-types/src';
-import { FlowExecutor, RunRepository, LLMStepExecutor } from '../../../../../packages/run-engine/src';
-import type { AgentExecutorFn } from '../../../../../packages/run-engine/src';
+import type { RunSpec } from '../../../../../packages/core-types/src';
+import { FlowExecutor, RunRepository } from '../../../../../packages/run-engine/src';
 import { getPrisma } from '../core/db/prisma.service';
 import type { RunJobData } from './run-queue.service';
 import { RunCheckpointRepository } from './run-checkpoint.repository';
 import type { SseEmitterService } from './sse-emitter.service';
 
-// ── Hierarchy Orchestrator (Hermes/AutoGen-style) ────────────────────────────
-
-class HierarchyOrchestrator {
-  resolveAgent(
-    step: { nodeId: string; agentId?: string },
-    agents: Array<{ id: string; role?: string }>,
-  ): string | undefined {
-    const direct = agents.find((a) => a.id === step.agentId);
-    if (direct) return direct.id;
-    const manager = agents.find((a) => a.role === 'manager' || a.role === 'orchestrator');
-    return manager?.id ?? step.agentId;
-  }
-}
-
 // ── AgentExecutorService ─────────────────────────────────────────────────────
 
 export class AgentExecutorService {
   private readonly checkpoints: RunCheckpointRepository;
-  private readonly orchestrator = new HierarchyOrchestrator();
   private readonly sse: SseEmitterService;
 
   constructor(sse: SseEmitterService) {
     this.sse = sse;
-    // RunCheckpointRepository sólo necesita la raíz del workspace para el FS de checkpoints
     this.checkpoints = new RunCheckpointRepository('');
   }
 
@@ -71,14 +50,8 @@ export class AgentExecutorService {
     const prisma = getPrisma();
     const repository = new RunRepository(prisma);
 
-    // AgentExecutorFn: ejecuta un RunStep via LLMStepExecutor
-    const executeAgent: AgentExecutorFn = async (stepId: string) => {
-      const executor = new LLMStepExecutor({ prisma });
-      return executor.execute(stepId);
-    };
-
-    // FlowExecutor usa { prisma, executeAgent } — contrato real de FlowExecutorDeps
-    const flowExecutor = new FlowExecutor({ prisma, executeAgent });
+    // FlowExecutor from run-engine — accepts { prisma } as FlowExecutorDeps
+    const flowExecutor = new FlowExecutor({ prisma });
 
     // Checkpoint restore (LangGraph pattern)
     if (resumeFromCheckpoint) {
@@ -93,13 +66,12 @@ export class AgentExecutorService {
       }
     }
 
-    // Ejecutar — FlowExecutor.executeRun(runId) es la API correcta
-    // Fire-and-forget para no bloquear el caller
+    // Fire-and-forget — FlowExecutor.executeRun(runId) is the correct API
     flowExecutor
       .executeRun(runId)
       .catch((err) => console.error(`[AgentExecutorService] executeRun(${runId}) failed:`, err));
 
-    // Poll hasta estado terminal
+    // Poll until terminal state
     const maxWaitMs = 10 * 60 * 1000;
     const pollInterval = 500;
     const deadline = Date.now() + maxWaitMs;
@@ -128,9 +100,9 @@ export class AgentExecutorService {
       await new Promise<void>((r) => setTimeout(r, pollInterval));
     }
 
-    // Timeout — devuelve último estado conocido
+    // Timeout — return last known state
     const last = await repository.findRunById(runId);
-    return (last ?? { id: runId, status: 'failed' }) as unknown as RunSpec;
+    return (last ?? { id: runId, workspaceId, status: 'failed' }) as unknown as RunSpec;
   }
 
   // ── Progress emitter ──────────────────────────────────────────────────────

@@ -61,7 +61,7 @@ export class FlowExecutor {
       ...(options.trigger.payload ?? {}),
     };
 
-    const nodeMap = new Map<string, (typeof flow.nodes)[number]>(
+    const nodeMap = new Map<string, FlowNode>(
       flow.nodes.map((n) => [n.id, n]),
     );
     const edgeMap = buildEdgeMap(flow.edges);
@@ -148,10 +148,10 @@ export class FlowExecutor {
     return { run, finalState: state };
   }
 
+  // FIX ROOT 1: parameter typed as FlowNode directly — eliminates the
+  // impossible conditional-type inference that was collapsing to 'never'.
   private async executeNode(
-    node: (typeof import('./flow-compiler.js').compileFlow extends (f: unknown) => infer R
-      ? R
-      : never)['nodes'][number],
+    node: FlowNode,
     context: {
       runId: string;
       workspaceId: string;
@@ -283,7 +283,7 @@ function buildEdgeMap(
  * - Falls back to the first unconditional edge.
  */
 function resolveNextNode(
-  node: CompiledFlow['nodes'][number],
+  node: FlowNode,
   step: RunStep,
   edgeMap: EdgeMap,
   state: Record<string, unknown>,

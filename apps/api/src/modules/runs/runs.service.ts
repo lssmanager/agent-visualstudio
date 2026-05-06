@@ -1,33 +1,17 @@
 /**
  * runs.service.ts  —  F1a / RunsService (Prisma edition)
  *
- * Reemplaza la implementación basada en workspaceStore (JSON) por Prisma + PostgreSQL.
- * RunRepository se construye con PrismaClient (via getPrisma()).
- * FlowExecutor usa { prisma, executeAgent } — sin repository ni stepExecutor propio.
- *
- * Métodos públicos mantenidos para compatibilidad con runs.routes.ts:
- *   findAll()           → findRunsByWorkspace()  (async)
- *   findById(id)        → findRunById(id)        (async)
- *   startRun(...)       → createRun + executeRun (async, no-block)
- *   cancelRun(id)       → runRepository.cancelRun(id)
- *   approveStep(...)    → atomic updateMany (sin race condition)
- *   rejectStep(...)     → atomic updateMany (sin race condition)
- *   getTrace(id)        → findRunById(id)
- *   getReplayMetadata   → findRunById + metadata
- *   replayRun(id)       → createRun + executeRun (guarda flowId nulo)
- *   compareRuns(ids)    → findRunById × N  (usa tokenUsage.input/output)
- *   getRunCost(id)      → findRunById + steps aggregate
- *   getUsage(filters)   → findRunsByWorkspace + aggregate por run
- *   getUsageByAgent()   → findRunsByWorkspace + per-agent aggregate
+ * FIX ROOT 2: LlmStepExecutorOptions uses `db` (not `prisma`).
+ * The old executeAgent: AgentExecutorFn used executor.execute(stepId:string)
+ * which is the old StepExecutor two-arg signature. Replaced with the correct
+ * FlowExecutor.executeRun(runId) API from run-engine.
  */
 
 import { getPrisma } from '../core/db/prisma.service';
 import {
   RunRepository,
   FlowExecutor,
-  LLMStepExecutor,
 } from '@lss/run-engine';
-import type { AgentExecutorFn } from '@lss/run-engine';
 
 // ── Singletons (lazy, construidos en la primera llamada) ─────────────────────
 
@@ -38,18 +22,9 @@ function getRepo(): RunRepository {
   return _repo;
 }
 
-/**
- * AgentExecutorFn mínima que usa LLMStepExecutor para ejecutar un RunStep.
- */
-const executeAgent: AgentExecutorFn = async (stepId: string) => {
-  const executor = new LLMStepExecutor({ prisma: getPrisma() });
-  return executor.execute(stepId);
-};
-
 function getFlowExecutor(): FlowExecutor {
   return new FlowExecutor({
     prisma: getPrisma(),
-    executeAgent,
   });
 }
 
@@ -172,7 +147,6 @@ export class RunsService {
     const original = await getRepo().findRunById(id);
     if (!original) throw new Error(`Run not found: ${id}`);
 
-    // status comparison as plain string (RunStatus enum removed from @prisma/client)
     const status = original.status as string;
     if (status !== 'completed' && status !== 'failed') {
       throw new Error('Can only replay completed or failed runs');
