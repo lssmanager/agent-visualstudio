@@ -5,8 +5,8 @@
  * 3. Appends tool results to the history
  * 4. Repeats until the model returns a final text response or maxIterations is reached
  */
-import type { ILLMProvider, LLMMessage, LLMCallOptions, LLMCallResult } from './llm-provider.js';
-import type { McpToolDefinition } from '../../mcp-server/src/tools.js';
+import type { ILLMProvider, LLMMessage, LLMCallOptions, LLMCallResult } from './llm-provider';
+import type { McpToolDefinition } from '../../mcp-server/src/tools';
 
 export interface ToolCallLoopOptions {
   provider: ILLMProvider;

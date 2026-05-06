@@ -10,91 +10,53 @@
  *   - Mantiene backwards-compat: si no se inyecta prisma, funciona igual
  *     que antes (resolución por nodeConfig solamente)
  */
-import type { FlowNode } from '../../core-types/src/flow-spec.js'
-import type { RunStep, RunStepTokenUsage } from '../../core-types/src/run-spec.js'
-import { OpenAILLMProvider } from './llm-provider.js'
-import type { ILLMProvider } from './llm-provider.js'
-import { runToolCallLoop } from './tool-call-loop.js'
-import type { McpToolDefinition } from '../../mcp-server/src/tools.js'
-import { skillsToMcpTools } from '../../mcp-server/src/skill-bridge.js'
-import type { SkillSpec } from '../../core-types/src/skill-spec.js'
-import { ModelPolicyResolver } from './model-policy-resolver.js'
-import type { ResolvedModel } from './model-policy-resolver.js'
+import type { FlowNode } from '../../core-types/src/flow-spec'
+import type { RunStep, RunStepTokenUsage } from '../../core-types/src/run-spec'
+import { OpenAILLMProvider } from './llm-provider'
+import type { ILLMProvider } from './llm-provider'
+import { runToolCallLoop } from './tool-call-loop'
+import type { McpToolDefinition } from '../../mcp-server/src/tools'
+import { skillsToMcpTools } from '../../mcp-server/src/skill-bridge'
+import type { SkillSpec } from '../../core-types/src/skill-spec'
+import { ModelPolicyResolver } from './model-policy-resolver'
+import type { ResolvedModel } from './model-policy-resolver'
 import type { PrismaClient } from '@prisma/client'
 
-// ── Contrato mínimo de OAuthService ─────────────────────────────────────
-// No importamos desde apps/api para no cruzar el monorepo-graph.
-// El servicio real (apps/api/src/services/oauth.service.ts) implementa
-// esta interfaz. Se inyecta en runtime desde la app.
-// Patrón idéntico al usado en agent-runner.ts → IOAuthService.
-
+// ── Contrato mínimo de OAuthService ────────────────────────────────────────
 /** Contrato mínimo de OAuthService usado por LLMStepExecutor.
  *  El servicio real (apps/api) lo implementa. Se inyecta en runtime. */
 export interface IOAuthService {
   getAccessToken(llmProviderId: string): Promise<string>
 }
 
-// ── Config ──────────────────────────────────────────────────────────────
+// ── Config ───────────────────────────────────────────────────────────
 
 export interface LLMStepExecutorConfig {
-  /**
-   * Mapa de providers instanciados.
-   * Clave = slug del provider ("openai", "qwen", "deepseek", etc.)
-   * El executor selecciona el provider correcto según ModelPolicyResolver.
-   */
   providers: Map<string, ILLMProvider>
-
-  /**
-   * Provider por defecto cuando el slug resuelto no está en el mapa.
-   * Retroceso a comportamiento anterior: acepta ILLMProvider directamente.
-   */
   defaultProvider?: ILLMProvider
-
-  /**
-   * Prisma client para:
-   *   - ModelPolicyResolver (lectura de ModelPolicy)
-   *   - escritura de CostEvent
-   *   - lectura de LlmProvider (para obtener LlmProviderId OAuth)
-   * Si no se inyecta, el executor funciona en modo "sin DB" (backwards-compat).
-   */
   prisma?: PrismaClient
-
-  /**
-   * OAuthService para obtener access tokens de providers OAuth.
-   * Solo necesario si algún provider usa authType = 'oauth'.
-   * Tipado como IOAuthService local para evitar import cross-package.
-   */
   oauthService?: IOAuthService
-
-  /**
-   * Cost estimator — solo usado en modo "sin DB" (sin CostEvent).
-   * Con prisma, el costo se registra via CostEvent.
-   */
   estimateCost?: (model: string, usage: RunStepTokenUsage) => number
 }
 
-// ── Contexto de ejecución ───────────────────────────────────────────────
+// ── Contexto de ejecución ──────────────────────────────────────────────
 
 export interface StepExecutionContext {
   runId:       string
   workspaceId: string
   agentId?:    string
-  /** Skills disponibles en este run (ya resueltos desde SkillRegistry) */
   availableSkills: SkillSpec[]
-  /** MCP tools extra inyectadas por el caller (e.g. McpServer) */
   extraTools?: McpToolDefinition[]
-  /** Estado key-value propagado entre steps */
   state: Record<string, unknown>
 }
 
 export interface StepExecutionResult {
   step:  RunStep
   state: Record<string, unknown>
-  /** Modelo resuelto — para trazabilidad en el caller */
   resolvedModel: ResolvedModel
 }
 
-// ── LLMStepExecutor ─────────────────────────────────────────────────────
+// ── LLMStepExecutor ───────────────────────────────────────────────────
 
 export class LLMStepExecutor {
   private readonly resolver: ModelPolicyResolver | null
@@ -112,7 +74,6 @@ export class LLMStepExecutor {
     const startedAt = new Date().toISOString()
     const stepId    = `${context.runId}::${node.id}`
 
-    // ── 1. Resolver modelo ────────────────────────────────────────────
     const resolved = this.resolver
       ? await this.resolver.resolve({
           workspaceId: context.workspaceId,
@@ -126,10 +87,8 @@ export class LLMStepExecutor {
           resolvedAt: 'node_config' as const,
         }
 
-    // ── 2. Obtener provider instanciado ───────────────────────────────
     const provider = await this.resolveProvider(resolved, context.workspaceId)
 
-    // ── 3. Construir step inicial ─────────────────────────────────────
     const step: RunStep = {
       id:        stepId,
       runId:     context.runId,
@@ -141,19 +100,16 @@ export class LLMStepExecutor {
     }
 
     try {
-      // ── 4. System prompt ───────────────────────────────────────────
       const systemPrompt =
         typeof node.config.systemPrompt === 'string'
           ? node.config.systemPrompt
           : buildDefaultSystemPrompt(node, context, resolved)
 
-      // ── 5. User message ────────────────────────────────────────────
       const userContent =
         typeof node.config.input === 'string'
           ? interpolate(node.config.input as string, context.state)
           : JSON.stringify(context.state)
 
-      // ── 6. Resolver tools ──────────────────────────────────────────
       const skillTools: McpToolDefinition[] = skillsToMcpTools(
         context.availableSkills.map((s) => ({
           ...s,
@@ -168,7 +124,6 @@ export class LLMStepExecutor {
         ...(context.extraTools ?? []),
       ]
 
-      // ── 7. ToolCallLoop ────────────────────────────────────────────
       const loopResult = await runToolCallLoop({
         provider,
         model:       resolved.model,
@@ -182,7 +137,6 @@ export class LLMStepExecutor {
         maxTokens:     resolved.maxTokens,
       })
 
-      // ── 8. Token usage + costo ─────────────────────────────────────
       const tokenUsage: RunStepTokenUsage = {
         input:  loopResult.totalUsage.promptTokens,
         output: loopResult.totalUsage.completionTokens,
@@ -194,7 +148,6 @@ export class LLMStepExecutor {
         totalTokens:     loopResult.totalUsage.totalTokens,
       })
 
-      // ── 9. Escribir CostEvent en DB (async fire-and-forget) ────────
       this.writeCostEvent({
         runId:       context.runId,
         workspaceId: context.workspaceId,
@@ -208,7 +161,6 @@ export class LLMStepExecutor {
         policyId: resolved.policyId,
       })
 
-      // ── 10. Output y estado ────────────────────────────────────────
       const output = {
         content:          loopResult.finalMessage.content,
         hitMaxIterations: loopResult.hitMaxIterations,
@@ -237,21 +189,13 @@ export class LLMStepExecutor {
     }
   }
 
-  // ── Helpers privados ─────────────────────────────────────────────────
-
-  /**
-   * Obtiene el ILLMProvider correcto para el slug resuelto.
-   * Si el provider es OAuth, obtiene el access token dinámico.
-   */
   private async resolveProvider(
     resolved:    ResolvedModel,
     workspaceId: string,
   ): Promise<ILLMProvider> {
-    // Buscar en el mapa de providers instanciados
     const cached = this.config.providers.get(resolved.provider)
     if (cached) return cached
 
-    // Si hay prisma y oauthService, intentar construir el provider desde DB
     if (this.config.prisma && this.config.oauthService) {
       const dbProvider = await this.config.prisma.llmProvider.findFirst({
         where:   { workspaceId, provider: resolved.provider },
@@ -262,10 +206,8 @@ export class LLMStepExecutor {
         let apiKey = ''
 
         if (dbProvider.catalog.authType === 'oauth') {
-          // OAuth: obtener access token dinámico (refresca si es necesario)
           apiKey = await this.config.oauthService.getAccessToken(dbProvider.id)
         } else if (dbProvider.apiKeyEnc) {
-          // API key: descifrar
           apiKey = decryptApiKey(dbProvider.apiKeyEnc)
         }
 
@@ -275,13 +217,11 @@ export class LLMStepExecutor {
           defaultModel: resolved.model,
         })
 
-        // Cachear para el resto de la ejecución del run
         this.config.providers.set(resolved.provider, instance)
         return instance
       }
     }
 
-    // Fallback: defaultProvider o error
     if (this.config.defaultProvider) return this.config.defaultProvider
 
     throw new Error(
@@ -295,18 +235,15 @@ export class LLMStepExecutor {
     model:    string,
     usage:    { promptTokens: number; completionTokens: number; totalTokens: number },
   ): number | undefined {
-    // Preferir estimateCost del provider si es OpenAILLMProvider
     if (provider instanceof OpenAILLMProvider) {
       return provider.estimateCost(model, usage)
     }
-    // Callback legacy
     if (this.config.estimateCost) {
       return this.config.estimateCost(model, { input: usage.promptTokens, output: usage.completionTokens })
     }
     return undefined
   }
 
-  /** Fire-and-forget — no bloquea el step. Errores se loguean silenciosamente. */
   private writeCostEvent(data: {
     runId:            string
     workspaceId:      string
@@ -341,7 +278,7 @@ export class LLMStepExecutor {
   }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────
 
 function buildDefaultSystemPrompt(
   node:     FlowNode,
@@ -371,10 +308,6 @@ function interpolate(
   })
 }
 
-/**
- * Descifra una API key almacenada como "iv:authTag:ciphertext" (AES-256-GCM).
- * Reutiliza la misma lógica de OAuthService — centralizar si crece.
- */
 function decryptApiKey(enc: string): string {
   const crypto = require('node:crypto') as typeof import('node:crypto')
   const key = Buffer.from(process.env.ENCRYPTION_KEY ?? '', 'hex')

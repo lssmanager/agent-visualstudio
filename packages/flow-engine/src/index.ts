@@ -12,34 +12,34 @@ export type {
   LLMCallResult,
   LLMTokenUsage,
   OpenAILLMProviderConfig,
-} from './llm-provider.js'
-export { OpenAILLMProvider } from './llm-provider.js'
+} from './llm-provider'
+export { OpenAILLMProvider } from './llm-provider'
 
 // Model policy resolver
 export type {
   ResolveModelInput,
   ResolvedModel,
-} from './model-policy-resolver.js'
-export { ModelPolicyResolver } from './model-policy-resolver.js'
+} from './model-policy-resolver'
+export { ModelPolicyResolver } from './model-policy-resolver'
 
 // Step executor
 export type {
   LLMStepExecutorConfig,
   StepExecutionContext,
   StepExecutionResult,
-} from './llm-step-executor.js'
-export { LLMStepExecutor } from './llm-step-executor.js'
+} from './llm-step-executor'
+export { LLMStepExecutor } from './llm-step-executor'
 
 // Flow execution
-export { FlowExecutor } from './flow-executor.js'
+export { FlowExecutor } from './flow-executor'
 
 // Flow compiler — exports functions (not a class); FlowCompiler alias kept for
 // backwards-compat with any code that imported it as a namespace.
-export type { CompiledFlow } from './flow-compiler.js'
-export { compileFlow, compileFlows } from './flow-compiler.js'
+export type { CompiledFlow } from './flow-compiler'
+export { compileFlow, compileFlows } from './flow-compiler'
 
 // Tool call loop
-export { runToolCallLoop } from './tool-call-loop.js'
+export { runToolCallLoop } from './tool-call-loop'
 
 // Channel adapter
-export { OpenClawChannelAdapter } from './openclaw-channel-adapter.js'
+export { OpenClawChannelAdapter } from './openclaw-channel-adapter'
