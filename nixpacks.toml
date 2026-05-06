@@ -2,15 +2,19 @@
 # nixpacks.toml — Agent VisualStudio
 # Deploy pipeline determinístico para Coolify / Nixpacks
 #
-# Variables mínimas requeridas en Coolify (Env Vars UI):
+# Variables OBLIGATORIAS en Coolify (Env Vars UI):
 #   NODE_ENV=production
+#   PORT=3000
+#   STUDIO_API_PORT=3000
 #   DATABASE_URL=postgresql://USER:PASS@HOST:5432/DB
 #   JWT_SECRET=<cambiar en producción>
-#   CHANNEL_ENC_KEY=<32 chars exactos para AES-256-GCM>
-#   OPENAI_API_KEY=<key real o dummy para que el build no falle>
+#   CHANNEL_ENC_KEY=<32 chars para @lss/crypto>
+#   ENCRYPTION_KEY=<64 hex chars — openssl rand -hex 32>
+#   OPENAI_API_KEY=<key real o "dummy" para que el build no falle>
 #   REQUIRE_AUTH=false
 #
 # Puerto expuesto en Coolify: 3000
+# Start command en Coolify:   sh docker/start.sh
 # ============================================================
 
 [variables]
@@ -26,10 +30,12 @@ cmds = [
 ]
 
 [phases.build]
+# build:ci = prisma generate + tsc + vite build (apps/web)
+# Genera: packages/db/generated/client + dist/apps/api + apps/web/dist
 cmds = [
-  "chmod +x scripts/deploy-check.sh",
-  "./scripts/deploy-check.sh"
+  "npm run build:ci"
 ]
 
 [start]
-cmd = "node /app/dist/apps/api/src/main.js"
+# docker/start.sh: valida vars → prisma validate → generate → migrate → API
+cmd = "sh docker/start.sh"
