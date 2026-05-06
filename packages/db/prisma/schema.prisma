@@ -1,12 +1,16 @@
 // ============================================================
 // schema.prisma — Agent Visual Studio
-// SCHEMA CANÓNICO v10.2 — agregar modelo User
+// SCHEMA CANÓNICO v11 — unblock tsc build
 //
 // Arquitectura: Agency → Department → Workspace → Agent
 //
 // v10   — Fixes de tipos (para desbloquear tsc)
 // v10.1 — BotStatus expandido con los 9 estados reales
 // v10.2 — Modelo User agregado (requerido por auth.service.ts)
+// v11   — Campos faltantes en Agent/Workspace/Department/Agency/
+//          ModelPolicy/ChannelBinding/ChannelConfig/Flow/ProviderCredential
+//          para desbloquear el build (tsc exit code 2).
+//          Todos los campos nuevos son NULLABLE o tienen @default.
 // ============================================================
 
 generator client {
@@ -50,9 +54,6 @@ enum ChannelStatus {
   offline
 }
 
-// Fix 2 v10.1: Expandido con los 9 estados del lifecycle real.
-// NO reducir a 4 — el código de channel-lifecycle.service.ts
-// usa todas estas transiciones.
 enum BotStatus {
   draft
   configured
@@ -63,7 +64,6 @@ enum BotStatus {
   degraded
   offline
   deprovisioned
-  // Estados de error/pausa genéricos (aliases semánticos)
   initializing
   running
   stopped
@@ -152,13 +152,16 @@ enum ProviderAuthType {
 // ────────────────────────────────────────────────────────────
 
 model Agency {
-  id          String       @id @default(cuid())
-  name        String
-  slug        String       @unique
-  plan        String       @default("free")
-  metadata    Json?        @default("{}")
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id           String    @id @default(cuid())
+  name         String
+  slug         String    @unique
+  plan         String    @default("free")
+  metadata     Json?     @default("{}")
+  // v11: campos requeridos por agency.repository.ts y agent-builder.ts
+  systemPrompt String?   @db.Text
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   departments  Department[]
   budgetPolicy BudgetPolicy[] @relation("BudgetPolicyScopeAgency")
@@ -169,13 +172,16 @@ model Agency {
 }
 
 model Department {
-  id         String      @id @default(cuid())
-  agencyId   String
-  name       String
-  slug       String
-  metadata   Json?       @default("{}")
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
+  id           String    @id @default(cuid())
+  agencyId     String
+  name         String
+  slug         String
+  metadata     Json?     @default("{}")
+  // v11: campos requeridos por department.repository.ts y agent-builder.ts
+  systemPrompt String?   @db.Text
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   agency       Agency        @relation(fields: [agencyId], references: [id], onDelete: Cascade)
   workspaces   Workspace[]
@@ -188,16 +194,20 @@ model Department {
 }
 
 model Workspace {
-  id           String    @id @default(cuid())
-  departmentId String?
-  name         String
-  slug         String    @default("")
-  description  String?
-  config       Json      @default("{}")
-  modelPolicy  Json?     @default("{}")
-  metadata     Json?     @default("{}")
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id                  String    @id @default(cuid())
+  departmentId        String?
+  name                String
+  slug                String    @default("")
+  description         String?
+  config              Json      @default("{}")
+  modelPolicy         Json?     @default("{}")
+  metadata            Json?     @default("{}")
+  // v11: campos requeridos por workspace.repository.ts y agent-builder.ts
+  systemPrompt        String?   @db.Text
+  isLevelOrchestrator Boolean   @default(false)
+  deletedAt           DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   department          Department?          @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   agents              Agent[]
@@ -221,7 +231,7 @@ model Workspace {
 }
 
 // ────────────────────────────────────────────────────────────
-// SYSTEM CONFIG (Fix 1)
+// SYSTEM CONFIG
 // ────────────────────────────────────────────────────────────
 
 model SystemConfig {
@@ -239,31 +249,37 @@ model SystemConfig {
 // ────────────────────────────────────────────────────────────
 
 model Agent {
-  id              String   @id @default(cuid())
-  workspaceId     String
-  name            String
-  role            String   @default("")
-  description     String   @default("")
-  instructions    String   @default("")
-  goal            String?  @default("")
-  backstory       String?  @default("")
-  model           String   @default("gpt-4o-mini")
-  tools           Json     @default("[]")
-  tags            String[] @default([])
-  visibility      String   @default("private")
-  executionMode   String   @default("direct")
-  kind            String   @default("agent")
-  parentAgentId   String?
-  context         String[] @default([])
-  triggers        Json?    @default("[]")
-  permissions     Json?    @default("{}")
-  handoffRules    Json?    @default("[]")
-  channelBindings Json?    @default("[]")
-  policyBindings  Json?    @default("[]")
-  config          Json     @default("{}")
-  isEnabled       Boolean  @default(true)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                  String    @id @default(cuid())
+  workspaceId         String
+  name                String
+  role                String    @default("")
+  description         String    @default("")
+  instructions        String    @default("")
+  goal                String?   @default("")
+  backstory           String?   @default("")
+  model               String    @default("gpt-4o-mini")
+  tools               Json      @default("[]")
+  tags                String[]  @default([])
+  visibility          String    @default("private")
+  executionMode       String    @default("direct")
+  kind                String    @default("agent")
+  parentAgentId       String?
+  context             String[]  @default([])
+  triggers            Json?     @default("[]")
+  permissions         Json?     @default("{}")
+  handoffRules        Json?     @default("[]")
+  channelBindings     Json?     @default("[]")
+  policyBindings      Json?     @default("[]")
+  config              Json      @default("{}")
+  isEnabled           Boolean   @default(true)
+  // v11: campos requeridos por agent.repository.ts, workspace.repository.ts,
+  //      department.repository.ts, agency.repository.ts, profile-propagator.service.ts
+  slug                String?   // soft-unique; null en rows previas
+  isLevelOrchestrator Boolean   @default(false)
+  systemPrompt        String?   @db.Text
+  deletedAt           DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   workspace             Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   parent                Agent?                @relation("AgentHierarchy", fields: [parentAgentId], references: [id])
@@ -282,6 +298,7 @@ model Agent {
   boundChannels         Channel[]             @relation("ChannelAgent")
 
   @@index([workspaceId])
+  @@index([workspaceId, slug])
   @@map("agents")
 }
 
@@ -311,26 +328,26 @@ model AgentProfile {
 // ────────────────────────────────────────────────────────────
 
 model Skill {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
   workspaceId  String?
   name         String
-  description  String   @default("")
-  version      String   @default("1.0.0")
-  type         String   @default("builtin")
-  category     String   @default("general")
-  permissions  String[] @default([])
-  functions    Json?    @default("[]")
+  description  String    @default("")
+  version      String    @default("1.0.0")
+  type         String    @default("builtin")
+  category     String    @default("general")
+  permissions  String[]  @default([])
+  functions    Json?     @default("[]")
   plugin       Json?
   openapiSpec  Json?
   mcpConfig    Json?
   n8nConfig    Json?
-  config       Json     @default("{}")
-  files        String[] @default([])
-  dependencies String[] @default([])
-  isActive     Boolean  @default(true)
+  config       Json      @default("{}")
+  files        String[]  @default([])
+  dependencies String[]  @default([])
+  isActive     Boolean   @default(true)
   deletedAt    DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   workspace  Workspace?   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   agentLinks AgentSkill[]
@@ -490,20 +507,23 @@ model OAuthToken {
 }
 
 model ProviderCredential {
-  id               String    @id @default(cuid())
-  agencyId         String
-  agency           Workspace @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  name             String
-  type             String
-  baseUrl          String?
-  apiKeyEncrypted  String
-  extraHeaders     Json?
-  isActive         Boolean   @default(true)
-  syncedAt         DateTime?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  id              String    @id @default(cuid())
+  agencyId        String
+  agency          Workspace @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  name            String
+  type            String
+  baseUrl         String?
+  apiKeyEncrypted String
+  extraHeaders    Json?
+  isActive        Boolean   @default(true)
+  syncedAt        DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  models ModelCatalogEntry[]
+  // 'models' = relación original (backward-compat)
+  // 'catalogEntries' = alias requerido por model-catalog.service.ts
+  models         ModelCatalogEntry[] @relation("CredentialModels")
+  catalogEntries ModelCatalogEntry[] @relation("CredentialCatalogEntries")
 
   @@index([agencyId])
   @@index([agencyId, isActive])
@@ -513,7 +533,10 @@ model ProviderCredential {
 model ModelCatalogEntry {
   id                     String             @id @default(cuid())
   providerId             String
-  provider               ProviderCredential @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  // 'provider'   = relación original a través de CredentialModels
+  // 'credential' = alias requerido por model-catalog.service.ts
+  provider               ProviderCredential @relation("CredentialModels",        fields: [providerId], references: [id], onDelete: Cascade)
+  credential             ProviderCredential @relation("CredentialCatalogEntries", fields: [providerId], references: [id])
   modelId                String
   displayName            String
   families               String[]
@@ -544,6 +567,8 @@ model Flow {
   trigger     String   @default("manual")
   nodes       Json?    @default("[]")
   edges       Json?    @default("[]")
+  // v11: campo requerido por flow-executor.ts
+  spec        Json?    @default("{}")
   config      Json     @default("{}")
   tags        String[] @default([])
   isEnabled   Boolean  @default(true)
@@ -558,27 +583,27 @@ model Flow {
 }
 
 // ────────────────────────────────────────────────────────────
-// RUNS (Fix 6: totalCostUsd)
+// RUNS
 // ────────────────────────────────────────────────────────────
 
 model Run {
-  id           String      @id @default(cuid())
+  id           String       @id @default(cuid())
   workspaceId  String
   flowId       String?
   agentId      String?
   sessionId    String?
   channelKind  ChannelKind?
-  totalCostUsd Decimal?    @db.Decimal(10, 4)
-  status       RunStatus   @default(pending)
-  trigger      Json        @default("{}")
-  inputData    Json        @default("{}")
+  totalCostUsd Decimal?     @db.Decimal(10, 4)
+  status       RunStatus    @default(pending)
+  trigger      Json         @default("{}")
+  inputData    Json         @default("{}")
   outputData   Json?
   error        String?
-  metadata     Json?       @default("{}")
+  metadata     Json?        @default("{}")
   startedAt    DateTime?
   completedAt  DateTime?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 
   workspace      Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   flow           Flow?                @relation(fields: [flowId], references: [id])
@@ -597,7 +622,7 @@ model Run {
 }
 
 // ────────────────────────────────────────────────────────────
-// RUN STEPS (Fix 7: tokenUsage)
+// RUN STEPS
 // ────────────────────────────────────────────────────────────
 
 model RunStep {
@@ -678,6 +703,11 @@ model ChannelConfig {
   isActive        Boolean   @default(true)
   statusDetail    String?
   statusUpdatedAt DateTime?
+  // v11: aliases requeridos por channel-lifecycle.service.ts
+  // 'type' es el kind del canal (telegram|discord|…)
+  // 'name' es el nombre legible (display name)
+  type            String?   @default("")
+  name            String?   @default("")
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
@@ -690,12 +720,15 @@ model ChannelConfig {
 }
 
 model ChannelBinding {
-  id              String   @id @default(cuid())
-  channelConfigId String
-  agentId         String
-  route           String
-  isEnabled       Boolean  @default(true)
-  createdAt       DateTime @default(now())
+  id                String   @id @default(cuid())
+  channelConfigId   String
+  agentId           String
+  route             String
+  isEnabled         Boolean  @default(true)
+  // v11: campos requeridos por channel-binding.service.ts
+  externalChannelId String?  // Discord channel ID, Telegram chat ID, etc.
+  externalGuildId   String?  // Discord guild ID
+  createdAt         DateTime @default(now())
 
   channelConfig ChannelConfig @relation(fields: [channelConfigId], references: [id], onDelete: Cascade)
   agent         Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
@@ -752,7 +785,7 @@ model ConversationMessage {
 }
 
 // ────────────────────────────────────────────────────────────
-// BUDGET GOVERNANCE (Fix 4+5: alertAt, agencyId, departmentId, agentId)
+// BUDGET GOVERNANCE
 // ────────────────────────────────────────────────────────────
 
 model BudgetPolicy {
@@ -871,11 +904,17 @@ model ModelPolicy {
   scopeType     String           @default("workspace")
   scopeId       String           @default("")
   workspaceId   String?
+  // v11: lookup columns para findFirst por scope (NO unique — usar findFirst)
+  agencyId      String?
+  departmentId  String?
+  agentId       String?
   scope         ModelPolicyScope @default(workspace)
   targetId      String?
   provider      String           @default("openai")
   model         String           @default("gpt-4o-mini")
   primaryModel  String           @default("gpt-4o-mini")
+  // v11: fallbackModel — requerido por agent-builder.ts y policy-resolver.ts
+  fallbackModel String?
   fallbackChain String[]         @default([])
   temperature   Decimal          @default(0.7) @db.Decimal(3, 2)
   maxTokens     Int              @default(4096)
@@ -895,11 +934,14 @@ model ModelPolicy {
 
   @@index([scopeId])
   @@index([workspaceId])
+  @@index([agencyId])
+  @@index([departmentId])
+  @@index([agentId])
   @@map("model_policies")
 }
 
 // ────────────────────────────────────────────────────────────
-// APPROVALS (Fix 8: decidedAt)
+// APPROVALS
 // ────────────────────────────────────────────────────────────
 
 model Approval {
@@ -1041,7 +1083,6 @@ model ActivityLog {
 
 // ────────────────────────────────────────────────────────────
 // AUTH — LOCAL USERS
-// v10.2: Modelo User agregado para auth.service.ts (login/register local)
 // ────────────────────────────────────────────────────────────
 
 model User {
