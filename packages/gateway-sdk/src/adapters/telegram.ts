@@ -1,7 +1,9 @@
 /**
  * telegram.ts — Telegram gateway adapter
+ *
+ * Fix: Removed .js extension from relative import (CJS/node10 mode).
  */
-import type { ChannelMessage, ChannelAdapter } from '../types.js';
+import type { ChannelMessage, ChannelAdapter } from '../types';
 
 interface TelegramUpdate {
   update_id: number;
@@ -23,7 +25,6 @@ export class TelegramAdapter implements ChannelAdapter {
   readonly channelType = 'telegram' as const;
 
   parseIncoming(raw: unknown): ChannelMessage | null {
-    // Double-cast via unknown to satisfy strict TS without requiring TelegramUpdate overlap
     const update = raw as unknown as TelegramUpdate;
 
     if (!update || typeof update !== 'object') return null;
