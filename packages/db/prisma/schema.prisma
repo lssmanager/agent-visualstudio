@@ -14,6 +14,11 @@
 //     Lista ordenada de fallbacks; índice 0 = primer fallback.
 //     Migración: UPDATE model_policies SET fallback_chain = ARRAY[fallback_model]
 //                WHERE fallback_model IS NOT NULL;
+// v7 — LlmProvider (OAuth + API key):
+//   + LlmProviderCatalog: catálogo de providers soportados
+//   + OAuthToken: tokens OAuth por LlmProvider (refresco automático)
+//   + LlmProvider: registro workspace-scoped de un provider (apiKeyEnc o OAuth)
+//   ~ CostEvent: completTokens → completionTokens; +workspaceId; +metadata
 // ============================================================
 
 generator client {
@@ -88,6 +93,7 @@ model Workspace {
   modelPolicies  ModelPolicy[]
   routines       Routine[]
   activityLogs   ActivityLog[]
+  llmProviders   LlmProvider[]
 
   @@unique([departmentId, slug])
   @@map("workspaces")
@@ -201,6 +207,86 @@ model ModelPolicy {
   @@unique([scopeType, scopeId])
   @@index([scopeId])
   @@map("model_policies")
+}
+
+// ────────────────────────────────────────────────────────────
+// LLM PROVIDERS — v7
+// ────────────────────────────────────────────────────────────
+
+/// Catálogo global de providers de LLM soportados.
+/// Define el slug del provider, su authType y la URL base por defecto.
+/// No tiene datos de credenciales — eso va en LlmProvider.
+model LlmProviderCatalog {
+  id             String   @id @default(cuid())
+  /// Slug único del provider. Debe coincidir con el slug usado en ModelPolicy.primaryModel
+  /// y en los mapas de providers del LLMStepExecutor.
+  /// Ejemplos: "openai", "anthropic", "qwen", "deepseek", "mistral"
+  slug           String   @unique
+  displayName    String
+  /// Tipo de autenticación soportado por este provider en el catálogo.
+  /// api_key = clave de API estática (cifrada en LlmProvider.apiKeyEnc)
+  /// oauth    = flujo OAuth 2.0 (tokens en OAuthToken)
+  authType       String   @default("api_key") // api_key | oauth
+  defaultBaseUrl String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  providers LlmProvider[]
+
+  @@map("llm_provider_catalog")
+}
+
+/// Token OAuth asociado a un LlmProvider con authType = 'oauth'.
+/// Almacena el access token y refresh token cifrados.
+/// OAuthService.getAccessToken() lee este registro y lo refresca si ha expirado.
+model OAuthToken {
+  id              String    @id @default(cuid())
+  llmProviderId   String    @unique
+  /// Access token cifrado (AES-256-GCM, mismo formato que apiKeyEnc: iv:tag:data)
+  accessTokenEnc  String    @db.Text
+  /// Refresh token cifrado (AES-256-GCM)
+  refreshTokenEnc String?   @db.Text
+  /// Fecha de expiración del access token. NULL = no expira.
+  expiresAt       DateTime?
+  scope           String?
+  tokenType       String    @default("Bearer")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  llmProvider LlmProvider @relation(fields: [llmProviderId], references: [id], onDelete: Cascade)
+
+  @@map("oauth_tokens")
+}
+
+/// Registro workspace-scoped de un proveedor de LLM configurado.
+/// Contiene las credenciales (API key cifrada o referencia a OAuthToken).
+/// LLMStepExecutor.resolveProvider() consulta este modelo para construir
+/// el ILLMProvider correcto en runtime.
+model LlmProvider {
+  id          String   @id @default(cuid())
+  workspaceId String
+  catalogId   String
+  /// Slug del provider — denormalizado desde catalog para queries directas.
+  /// Debe coincidir con LlmProviderCatalog.slug.
+  provider    String
+  displayName String?
+  /// API key cifrada (AES-256-GCM): "iv:authTag:ciphertext".
+  /// NULL cuando authType = 'oauth' (en ese caso se usa OAuthToken).
+  apiKeyEnc   String?  @db.Text
+  /// URL base personalizada. NULL = usa LlmProviderCatalog.defaultBaseUrl.
+  baseUrl     String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace  Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  catalog    LlmProviderCatalog @relation(fields: [catalogId], references: [id])
+  oauthToken OAuthToken?
+
+  @@unique([workspaceId, provider])
+  @@index([workspaceId])
+  @@map("llm_providers")
 }
 
 // ────────────────────────────────────────────────────────────
@@ -513,25 +599,29 @@ model BudgetIncident {
 }
 
 // ────────────────────────────────────────────────────────────
-// COST EVENTS
+// COST EVENTS — v7: +workspaceId +metadata; completTokens→completionTokens
 // ────────────────────────────────────────────────────────────
 
 model CostEvent {
-  id            String   @id @default(cuid())
-  runStepId     String?
-  runId         String?
-  agentId       String?
-  scopeType     String
-  scopeId       String
-  model         String
-  provider      String   @default("openai")
-  promptTokens  Int      @default(0)
-  completTokens Int      @default(0)
-  totalTokens   Int      @default(0)
-  costUsd       Float    @default(0)
-  latencyMs     Int?
-  role          String?
-  timestamp     DateTime @default(now())
+  id               String   @id @default(cuid())
+  runStepId        String?
+  runId            String?
+  agentId          String?
+  workspaceId      String
+  scopeType        String
+  scopeId          String
+  model            String
+  provider         String   @default("openai")
+  promptTokens     Int      @default(0)
+  /// Renamed from completTokens (v7) to align with llm-step-executor.ts usage.
+  completionTokens Int      @default(0)
+  totalTokens      Int      @default(0)
+  costUsd          Float    @default(0)
+  latencyMs        Int?
+  role             String?
+  /// Metadata extra: e.g. { resolvedByPolicy: "<policyId>" }
+  metadata         Json?    @default("{}")
+  timestamp        DateTime @default(now())
 
   run     Run?     @relation(fields: [runId], references: [id])
   runStep RunStep? @relation(fields: [runStepId], references: [id])
@@ -540,6 +630,7 @@ model CostEvent {
   @@index([model, timestamp])
   @@index([runId])
   @@index([agentId, timestamp])
+  @@index([workspaceId, timestamp])
   @@map("cost_events")
 }
 
