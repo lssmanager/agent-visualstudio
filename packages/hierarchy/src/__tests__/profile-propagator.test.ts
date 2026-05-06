@@ -9,8 +9,8 @@ import {
   generateOrchestratorPrompt,
   aggregateCapabilities,
   buildChildSummary,
-} from '../profile-propagator.service.js'
-import type { ChildCapabilitySummary } from '../profile-propagator.service.js'
+} from '../profile-propagator.service'
+import type { ChildCapabilitySummary } from '../profile-propagator.service'
 
 // ── Fixtures ─────────────────────────────────────────────────────────────
 

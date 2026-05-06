@@ -19,11 +19,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { PrismaClient } from '@prisma/client'
 
-import { AgentRepository }          from '../../run-engine/src/repositories/agent.repository.js'
-import { WorkspaceRepository }      from '../../run-engine/src/repositories/workspace.repository.js'
-import { DepartmentRepository }     from '../../run-engine/src/repositories/department.repository.js'
-import { AgencyRepository }         from '../../run-engine/src/repositories/agency.repository.js'
-import { ProfilePropagatorService } from '../profile-propagator.service.js'
+import { AgentRepository }          from '../../run-engine/src/repositories/agent.repository'
+import { WorkspaceRepository }      from '../../run-engine/src/repositories/workspace.repository'
+import { DepartmentRepository }     from '../../run-engine/src/repositories/department.repository'
+import { AgencyRepository }         from '../../run-engine/src/repositories/agency.repository'
+import { ProfilePropagatorService } from '../profile-propagator.service'
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 

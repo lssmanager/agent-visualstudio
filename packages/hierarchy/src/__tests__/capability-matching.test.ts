@@ -20,7 +20,7 @@ import {
   type AgentExecutorFn,
   type SpecialistMatch,
   type HierarchyTask,
-} from '../hierarchy-orchestrator.js'
+} from '../hierarchy-orchestrator'
 import type { PrismaClient } from '@prisma/client'
 
 // ── tokenize() ────────────────────────────────────────────────────────────────

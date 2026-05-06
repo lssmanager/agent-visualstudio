@@ -151,7 +151,7 @@ describeE2E('E2E: 4-level hierarchy delegation', () => {
   jest.setTimeout(30_000)
 
   beforeAll(() => {
-    ;({ HierarchyOrchestrator } = require('../../hierarchy-orchestrator.js') as {
+    ;({ HierarchyOrchestrator } = require('../../hierarchy-orchestrator') as {
       HierarchyOrchestrator: HierarchyOrchestratorCtor
     })
     prisma = new PrismaClient({

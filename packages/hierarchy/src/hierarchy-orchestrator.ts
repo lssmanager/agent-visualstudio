@@ -18,11 +18,11 @@
  */
 
 import type { PrismaClient } from '@prisma/client'
-import { RunRepository } from '../../run-engine/src/run-repository.js'
+import { RunRepository } from '../../run-engine/src/run-repository'
 import {
   RunStepEventEmitter,
   buildStatusChangeEvent,
-} from '../../run-engine/src/events/index.js'
+} from '../../run-engine/src/events/index'
 
 // ── Constantes de módulo — se instancian UNA SOLA VEZ al importar ───────────
 

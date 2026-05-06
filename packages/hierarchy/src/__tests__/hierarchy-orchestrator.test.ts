@@ -13,8 +13,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { AgentExecutionResult, AgentExecutorFn, SupervisorFn } from '../hierarchy-orchestrator.js';
-import { HierarchyOrchestrator } from '../hierarchy-orchestrator.js';
+import type { AgentExecutionResult, AgentExecutorFn, SupervisorFn } from '../hierarchy-orchestrator';
+import { HierarchyOrchestrator } from '../hierarchy-orchestrator';
 
 // ─── Mock RunRepository ──────────────────────────────────────────────────────
 
@@ -35,7 +35,7 @@ const mockRepo = {
 };
 
 // Patch constructor to inject mockRepo instead of real PrismaClient
-vi.mock('../../run-engine/src/run-repository.js', () => ({
+vi.mock('../../run-engine/src/run-repository', () => ({
   RunRepository: vi.fn().mockImplementation(() => mockRepo),
 }));
 

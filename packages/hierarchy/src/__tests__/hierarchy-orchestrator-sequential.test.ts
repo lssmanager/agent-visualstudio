@@ -15,8 +15,8 @@
  *  6. routeTask / delegateTask / getStepStatus are NOT available (removed by PR).
  */
 
-import type { AgentExecutionResult, AgentExecutorFn } from '../hierarchy-orchestrator.js';
-import { HierarchyOrchestrator } from '../hierarchy-orchestrator.js';
+import type { AgentExecutionResult, AgentExecutorFn } from '../hierarchy-orchestrator';
+import { HierarchyOrchestrator } from '../hierarchy-orchestrator';
 
 // ─── Mock RunRepository ───────────────────────────────────────────────────────
 
@@ -38,7 +38,7 @@ const mockRepo = {
   waitForApproval:  jest.fn().mockResolvedValue('approved'),
 };
 
-jest.mock('../../../run-engine/src/run-repository.js', () => ({
+jest.mock('../../../run-engine/src/run-repository', () => ({
   RunRepository: jest.fn().mockImplementation(() => mockRepo),
 }));
 
