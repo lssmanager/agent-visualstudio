@@ -1,138 +1,59 @@
 /**
- * WorkspaceRepository — Prisma implementation
- *
- * Workspace es el nivel 3 de la jerarquía: Agency → Department → Workspace.
- * Nota C-20: solo UN Workspace por Department puede tener isLevelOrchestrator = true
- * (garantizado por partial unique index en la migración init).
- *
- * Convenciones:
- *   - Clase stateless; PrismaClient inyectado en constructor.
- *   - softDelete: marca deletedAt.
- *   - Finders activos filtran `deletedAt: null`.
+ * workspace.repository.ts — Prisma-backed workspace persistence
+ * NOTE: 'timezone' field was removed — it does not exist in the Prisma schema.
  */
+import type { PrismaClient } from '@prisma/client';
 
-import type { PrismaClient } from '@prisma/client'
-
-// ── DTOs ───────────────────────────────────────────────────────────────────
-
-export interface CreateWorkspaceInput {
-  departmentId:         string
-  name:                 string
-  slug:                 string
-  isLevelOrchestrator?: boolean
-  timezone?:            string
-  metadata?:            Record<string, unknown>
+export interface WorkspaceCreateInput {
+  id?: string;
+  name: string;
+  slug?: string;
+  agencyId?: string | null;
+  departmentId?: string | null;
+  metadata?: Record<string, unknown>;
 }
-
-export interface UpdateWorkspaceInput {
-  name?:                string
-  slug?:                string
-  isLevelOrchestrator?: boolean
-  timezone?:            string
-  metadata?:            Record<string, unknown>
-}
-
-export interface FindWorkspacesOptions {
-  limit?:  number
-  offset?: number
-}
-
-// ── Repository ──────────────────────────────────────────────────────────────────
 
 export class WorkspaceRepository {
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(private readonly db: PrismaClient) {}
 
-  // ── Write ───────────────────────────────────────────────────────────────
-
-  async create(input: CreateWorkspaceInput) {
-    return this.prisma.workspace.create({
+  async create(input: WorkspaceCreateInput) {
+    return this.db.workspace.create({
       data: {
-        departmentId:        input.departmentId,
-        name:                input.name,
-        slug:                input.slug,
-        isLevelOrchestrator: input.isLevelOrchestrator ?? false,
-        timezone:            input.timezone,
-        metadata:            (input.metadata ?? {}) as never,
+        name:         input.name,
+        slug:         input.slug ?? input.name.toLowerCase().replace(/\s+/g, '-'),
+        agencyId:     input.agencyId     ?? null,
+        departmentId: input.departmentId ?? null,
+        metadata:     (input.metadata ?? {}) as unknown as import('@prisma/client').Prisma.InputJsonValue,
       },
-    })
+    });
   }
-
-  async update(id: string, data: UpdateWorkspaceInput) {
-    return this.prisma.workspace.update({
-      where: { id },
-      data:  {
-        ...(data.name                !== undefined && { name:                data.name }),
-        ...(data.slug                !== undefined && { slug:                data.slug }),
-        ...(data.isLevelOrchestrator !== undefined && { isLevelOrchestrator: data.isLevelOrchestrator }),
-        ...(data.timezone            !== undefined && { timezone:            data.timezone }),
-        ...(data.metadata            !== undefined && { metadata:            data.metadata as never }),
-      },
-    })
-  }
-
-  async softDelete(id: string) {
-    return this.prisma.workspace.update({
-      where: { id },
-      data:  { deletedAt: new Date() },
-    })
-  }
-
-  // ── Read ─────────────────────────────────────────────────────────────────
 
   async findById(id: string) {
-    return this.prisma.workspace.findFirst({
-      where: { id, deletedAt: null },
-    })
+    return this.db.workspace.findUnique({ where: { id } });
   }
 
-  async findBySlug(departmentId: string, slug: string) {
-    return this.prisma.workspace.findFirst({
-      where: { departmentId, slug, deletedAt: null },
-    })
+  async findBySlug(slug: string) {
+    return this.db.workspace.findFirst({ where: { slug } });
   }
 
-  async findByDepartment(departmentId: string, opts: FindWorkspacesOptions = {}) {
-    return this.prisma.workspace.findMany({
-      where:   { departmentId, deletedAt: null },
-      orderBy: { createdAt: 'asc' },
-      take:    opts.limit  ?? 50,
-      skip:    opts.offset ?? 0,
-    })
+  async listByAgency(agencyId: string) {
+    return this.db.workspace.findMany({ where: { agencyId } });
   }
 
-  /**
-   * Retorna el Workspace orquestador de nivel 3 de un Department.
-   * Solo puede existir uno (C-20: partial unique index).
-   */
-  async findOrchestrator(departmentId: string) {
-    return this.prisma.workspace.findFirst({
-      where: { departmentId, isLevelOrchestrator: true, deletedAt: null },
-    })
+  async update(id: string, data: Partial<WorkspaceCreateInput>) {
+    return this.db.workspace.update({
+      where: { id },
+      data: {
+        ...(data.name         && { name:         data.name }),
+        ...(data.slug         && { slug:         data.slug }),
+        ...(data.agencyId     !== undefined && { agencyId:     data.agencyId }),
+        ...(data.departmentId !== undefined && { departmentId: data.departmentId }),
+        ...(data.metadata     && { metadata:     data.metadata as unknown as import('@prisma/client').Prisma.InputJsonValue }),
+      },
+    });
   }
 
-  /**
-   * [F2b-02] Retorna el Agent con isLevelOrchestrator = true
-   * dentro del Workspace dado.
-   *
-   * Es la hoja final de la cadena de navegación jerárquica:
-   *   Agency → Department → Workspace → Agent (este método)
-   *
-   * Devuelve null si el workspace no tiene ningún agente orquestador activo.
-   * Nunca usa findMany — el partial unique index C-20 garantiza unicidad.
-   */
-  async findOrchestratorAgent(workspaceId: string) {
-    const workspace = await this.prisma.workspace.findFirst({
-      where:  { id: workspaceId, deletedAt: null },
-      select: { id: true },
-    })
-    if (!workspace) return null
-
-    return this.prisma.agent.findFirst({
-      where: { workspaceId, isLevelOrchestrator: true, deletedAt: null },
-    })
-  }
-
-  async count(departmentId: string) {
-    return this.prisma.workspace.count({ where: { departmentId, deletedAt: null } })
+  async delete(id: string) {
+    return this.db.workspace.delete({ where: { id } });
   }
 }

@@ -5,20 +5,6 @@
  * context by walking the hierarchy from most-specific to least-specific:
  *
  *   agent → workspace → department → agency
- *
- * The first non-null policy found at any level wins. Both policies are
- * resolved independently, so a run can inherit its budget from the
- * workspace and its model config from the department.
- *
- * ## Exported API
- *
- * ### Class (for DI / testing)
- *   const resolver = new PolicyResolver(prisma);
- *   const policy   = await resolver.resolve({ agentId, workspaceId, departmentId, agencyId });
- *
- * ### Standalone helpers (for llm-step-executor and other callers)
- *   const model  = await resolveModelPolicy(prisma, ctx);   // ModelPolicySpec | null
- *   const budget = await resolveBudgetPolicy(prisma, ctx);  // BudgetPolicySpec | null
  */
 
 import type { PrismaClient } from '@prisma/client';
@@ -28,8 +14,6 @@ import type {
   EffectivePolicy,
 } from '@agent-vs/core-types';
 
-// ─── Context ─────────────────────────────────────────────────────────────────
-
 export interface PolicyResolverContext {
   agentId:      string;
   workspaceId:  string;
@@ -37,15 +21,9 @@ export interface PolicyResolverContext {
   agencyId:     string;
 }
 
-// ─── PolicyResolver class ─────────────────────────────────────────────────────
-
 export class PolicyResolver {
   constructor(private readonly db: PrismaClient) {}
 
-  /**
-   * Resolve both BudgetPolicy and ModelPolicy in parallel.
-   * Each is resolved independently — they can come from different hierarchy levels.
-   */
   async resolve(ctx: PolicyResolverContext): Promise<EffectivePolicy> {
     const [budget, model] = await Promise.all([
       this.resolveBudget(ctx),
@@ -60,61 +38,43 @@ export class PolicyResolver {
     };
   }
 
-  // ─── ModelPolicy cascade ──────────────────────────────────────────────────
-
   async resolveModel(
     ctx: PolicyResolverContext,
   ): Promise<{ policy: ModelPolicySpec; level: EffectivePolicy['modelResolvedFrom'] } | null> {
-    const agent = await this.db.modelPolicy.findUnique({ where: { agentId: ctx.agentId } });
+    const agent = await this.db.modelPolicy.findFirst({ where: { agentId: ctx.agentId } });
     if (agent) return { policy: toModelSpec(agent), level: 'agent' };
 
-    const ws = await this.db.modelPolicy.findUnique({ where: { workspaceId: ctx.workspaceId } });
+    const ws = await this.db.modelPolicy.findFirst({ where: { workspaceId: ctx.workspaceId } });
     if (ws) return { policy: toModelSpec(ws), level: 'workspace' };
 
-    const dept = await this.db.modelPolicy.findUnique({ where: { departmentId: ctx.departmentId } });
+    const dept = await this.db.modelPolicy.findFirst({ where: { departmentId: ctx.departmentId } });
     if (dept) return { policy: toModelSpec(dept), level: 'department' };
 
-    const agency = await this.db.modelPolicy.findUnique({ where: { agencyId: ctx.agencyId } });
+    const agency = await this.db.modelPolicy.findFirst({ where: { agencyId: ctx.agencyId } });
     if (agency) return { policy: toModelSpec(agency), level: 'agency' };
 
     return null;
   }
 
-  // ─── BudgetPolicy cascade ─────────────────────────────────────────────────
-
   async resolveBudget(
     ctx: PolicyResolverContext,
   ): Promise<{ policy: BudgetPolicySpec; level: EffectivePolicy['budgetResolvedFrom'] } | null> {
-    const agent = await this.db.budgetPolicy.findUnique({ where: { agentId: ctx.agentId } });
+    const agent = await this.db.budgetPolicy.findFirst({ where: { agentId: ctx.agentId } });
     if (agent) return { policy: toBudgetSpec(agent), level: 'agent' };
 
-    const ws = await this.db.budgetPolicy.findUnique({ where: { workspaceId: ctx.workspaceId } });
+    const ws = await this.db.budgetPolicy.findFirst({ where: { workspaceId: ctx.workspaceId } });
     if (ws) return { policy: toBudgetSpec(ws), level: 'workspace' };
 
-    const dept = await this.db.budgetPolicy.findUnique({ where: { departmentId: ctx.departmentId } });
+    const dept = await this.db.budgetPolicy.findFirst({ where: { departmentId: ctx.departmentId } });
     if (dept) return { policy: toBudgetSpec(dept), level: 'department' };
 
-    const agency = await this.db.budgetPolicy.findUnique({ where: { agencyId: ctx.agencyId } });
+    const agency = await this.db.budgetPolicy.findFirst({ where: { agencyId: ctx.agencyId } });
     if (agency) return { policy: toBudgetSpec(agency), level: 'agency' };
 
     return null;
   }
 }
 
-// ─── Standalone helpers (used by llm-step-executor and other callers) ─────────
-
-/**
- * Resolve the effective ModelPolicy for an agent run context.
- * Returns null if no policy is configured at any hierarchy level.
- *
- * Cascade order: agent → workspace → department → agency
- *
- * @example
- *   const modelPolicy = await resolveModelPolicy(prisma, {
- *     agentId, workspaceId, departmentId, agencyId,
- *   });
- *   const primaryModel = modelPolicy?.primaryModel ?? DEFAULT_MODEL;
- */
 export async function resolveModelPolicy(
   db: PrismaClient,
   ctx: PolicyResolverContext,
@@ -124,12 +84,6 @@ export async function resolveModelPolicy(
   return result?.policy ?? null;
 }
 
-/**
- * Resolve the effective BudgetPolicy for an agent run context.
- * Returns null if no policy is configured at any hierarchy level.
- *
- * Cascade order: agent → workspace → department → agency
- */
 export async function resolveBudgetPolicy(
   db: PrismaClient,
   ctx: PolicyResolverContext,
@@ -140,40 +94,49 @@ export async function resolveBudgetPolicy(
 }
 
 // ─── Prisma row → Spec mappers ────────────────────────────────────────────────
+// Prisma returns Decimal for numeric fields — we convert with Number()
 
 type BudgetPolicyRow = {
   id: string;
-  limitUsd: number;
-  periodDays: number;
-  alertAt: number;
+  limitUsd: { toNumber(): number } | number | null;
+  periodDays: { toNumber(): number } | number;
+  alertAt: { toNumber(): number } | number;
   agencyId: string | null;
   departmentId: string | null;
   workspaceId: string | null;
   agentId: string | null;
   createdAt: Date;
   updatedAt: Date;
+  [key: string]: unknown;
 };
 
 type ModelPolicyRow = {
   id: string;
   primaryModel: string;
   fallbackChain: string[];
-  temperature: number | null;
-  maxTokens: number | null;
+  temperature: { toNumber(): number } | number | null;
+  maxTokens: { toNumber(): number } | number | null;
   agencyId: string | null;
   departmentId: string | null;
   workspaceId: string | null;
   agentId: string | null;
   createdAt: Date;
   updatedAt: Date;
+  [key: string]: unknown;
 };
+
+function toNum(v: { toNumber(): number } | number | null | undefined): number | null {
+  if (v == null) return null;
+  if (typeof v === 'number') return v;
+  return v.toNumber();
+}
 
 export function toBudgetSpec(row: BudgetPolicyRow): BudgetPolicySpec {
   return {
     id:           row.id,
-    limitUsd:     row.limitUsd,
-    periodDays:   row.periodDays,
-    alertAt:      row.alertAt,
+    limitUsd:     Number(toNum(row.limitUsd) ?? 0),
+    periodDays:   Number(toNum(row.periodDays) ?? 30),
+    alertAt:      Number(toNum(row.alertAt) ?? 0.8),
     agencyId:     row.agencyId,
     departmentId: row.departmentId,
     workspaceId:  row.workspaceId,
@@ -188,8 +151,8 @@ export function toModelSpec(row: ModelPolicyRow): ModelPolicySpec {
     id:            row.id,
     primaryModel:  row.primaryModel,
     fallbackChain: row.fallbackChain,
-    temperature:   row.temperature,
-    maxTokens:     row.maxTokens,
+    temperature:   toNum(row.temperature),
+    maxTokens:     toNum(row.maxTokens) !== null ? Math.round(toNum(row.maxTokens)!) : null,
     agencyId:      row.agencyId,
     departmentId:  row.departmentId,
     workspaceId:   row.workspaceId,
