@@ -9,13 +9,11 @@
 
 import type { RunSpec, RunStep } from '../../../../../packages/core-types/src';
 import { prisma } from '../core/db/prisma.service';
-// import type { Prisma } from '../../../../../../../../packages/db/generated/client';
-// Commented out: Path does not exist. Using type-only import from @prisma/client instead.
 import type { Prisma } from '@prisma/client';
 
 const db = prisma as any;
 
-// ── Helpers ───────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function stepPrismaToSpec(
   row: any,
@@ -30,9 +28,14 @@ function stepPrismaToSpec(
     input:       (row.input as any) ?? undefined,
     output:      (row.output as any) ?? undefined,
     error:       row.error ?? undefined,
-    retryCount:  row.retryCount,
-    tokenUsage:  { input: row.tokenInput, output: row.tokenOutput },
-    costUsd:     row.costUsd,
+    retryCount:  row.retryCount ?? 0,
+    // tokenInput/tokenOutput pueden ser null si el step no ha ejecutado aún
+    tokenUsage:  {
+      input:  row.tokenInput  ?? 0,
+      output: row.tokenOutput ?? 0,
+    },
+    // Prisma retorna Decimal para costUsd; convertir explícitamente a number
+    costUsd:     Number(row.costUsd ?? 0),
     startedAt:   row.startedAt?.toISOString(),
     completedAt: row.completedAt?.toISOString(),
   };
@@ -47,18 +50,19 @@ function runPrismaToSpec(
     flowId:      row.flowId,
     status:      row.status as RunSpec['status'],
     trigger:     (row.trigger as any) ?? { type: 'manual' },
-    steps:       row.steps.map(stepPrismaToSpec),
+    steps:       (row.steps ?? []).map(stepPrismaToSpec),
     error:       row.error ?? undefined,
     metadata:    (row.metadata as any) ?? undefined,
-    startedAt:   row.startedAt.toISOString(),
+    // startedAt puede ser null si el Run está en estado 'pending'
+    startedAt:   row.startedAt?.toISOString() ?? new Date().toISOString(),
     completedAt: row.completedAt?.toISOString(),
   };
 }
 
-// ── Repository ────────────────────────────────────────────────────────────
+// ── Repository ────────────────────────────────────────────────────────────────
 
 export class RunRepository {
-  // ── Runs ────────────────────────────────────────────────
+  // ── Runs ─────────────────────────────────────────────────
 
   async create(run: RunSpec): Promise<RunSpec> {
     const row = await db.run.create({
@@ -98,7 +102,7 @@ export class RunRepository {
       where:   { workspaceId },
       include: { steps: true },
       orderBy: { startedAt: 'desc' },
-      take:    100, // paginación básica
+      take:    100,
     });
     return rows.map(runPrismaToSpec);
   }
@@ -118,7 +122,7 @@ export class RunRepository {
     });
   }
 
-  // ── RunSteps ─────────────────────────────────────────────
+  // ── RunSteps ───────────────────────────────────────────────
 
   async createStep(
     step: RunStep & {
@@ -141,9 +145,10 @@ export class RunRepository {
         output:          (step.output as any) ?? {},
         error:           step.error ?? null,
         retryCount:      step.retryCount ?? 0,
-        tokenInput:      step.tokenUsage?.input ?? 0,
+        tokenInput:      step.tokenUsage?.input  ?? 0,
         tokenOutput:     step.tokenUsage?.output ?? 0,
-        costUsd:         step.costUsd ?? 0,
+        // Number() asegura que Prisma recibe un primitivo float, no un Decimal
+        costUsd:         Number(step.costUsd ?? 0),
         startedAt:       step.startedAt ? new Date(step.startedAt) : null,
         completedAt:     step.completedAt ? new Date(step.completedAt) : null,
         // Durable execution
@@ -167,7 +172,6 @@ export class RunRepository {
       tokenUsage: { input: number; output: number };
       costUsd: number;
       retryCount: number;
-      // Durable execution
       checkpointData: unknown;
       checkpointSeq: number;
       interruptReason: string;
@@ -186,9 +190,9 @@ export class RunRepository {
           tokenInput:  patch.tokenUsage.input,
           tokenOutput: patch.tokenUsage.output,
         }),
-        ...(patch.costUsd      !== undefined && { costUsd:         patch.costUsd }),
+        // Number() para asegurar primitivo al actualizar costUsd
+        ...(patch.costUsd      !== undefined && { costUsd:         Number(patch.costUsd) }),
         ...(patch.retryCount   !== undefined && { retryCount:      patch.retryCount }),
-        // Durable
         ...(patch.checkpointData  !== undefined && { checkpointData:  patch.checkpointData as any }),
         ...(patch.checkpointSeq   !== undefined && { checkpointSeq:   patch.checkpointSeq }),
         ...(patch.interruptReason !== undefined && { interruptReason: patch.interruptReason }),
