@@ -1,29 +1,20 @@
 // ============================================================
 // schema.prisma — Agent Visual Studio
-// Multi-tenant: Agency → Department → Workspace → Agent
-// Durable execution: Run → RunStep con checkpointData
-// Credenciales de modelos y canales: cifradas en DB (NO en .env)
+// SCHEMA CANÓNICO v12 — fix P1012 relación duplicada
 //
-// v5 — Gaps cerrados:
-//   + ActivityLog: +resourceType +resourceId +diff +ipAddress
-//     (alineación con Plan Maestro OV-06 Audit Trail)
-//   + llm-step-executor: HierarchyOrchestrator wired (ver packages/run-engine)
-//   + ProfilePropagatorService: llamado desde agent.hooks.ts
-// v6 — ModelPolicy:
-//   ~ fallbackModel String? → fallbackChain String[]
-//     Lista ordenada de fallbacks; índice 0 = primer fallback.
-//     Migración: UPDATE model_policies SET fallback_chain = ARRAY[fallback_model]
-//                WHERE fallback_model IS NOT NULL;
-// v7 — LlmProvider (OAuth + API key):
-//   + LlmProviderCatalog: catálogo de providers soportados
-//   + OAuthToken: tokens OAuth por LlmProvider (refresco automático)
-//   + LlmProvider: registro workspace-scoped de un provider (apiKeyEnc o OAuth)
-//   ~ CostEvent: completTokens → completionTokens; +workspaceId; +metadata
+// Arquitectura: Agency → Department → Workspace → Agent
+//
+// v11   — Campos faltantes en múltiples modelos
+// v12   — Fix Prisma P1012: ModelCatalogEntry tenía dos @relation
+//          apuntando al mismo campo FK (providerId) generando el mismo
+//          constraint name. Solución: una sola relación llamada
+//          'catalogEntries' en ambos lados (ProviderCredential y
+//          ModelCatalogEntry). El campo se llama 'provider' en
+//          ModelCatalogEntry para mantener el acceso existente.
 // ============================================================
 
 generator client {
   provider = "prisma-client-js"
-  output   = "../generated/client"
 }
 
 datasource db {
@@ -32,71 +23,222 @@ datasource db {
 }
 
 // ────────────────────────────────────────────────────────────
+// ENUMS
+// ────────────────────────────────────────────────────────────
+
+enum ChannelKind {
+  telegram
+  whatsapp
+  discord
+  webchat
+  slack
+  teams
+  webhook
+}
+
+// Alias backward-compat para código que aún importa ChannelType
+enum ChannelType {
+  telegram
+  whatsapp
+  discord
+  webchat
+  slack
+  teams
+  webhook
+}
+
+enum ChannelStatus {
+  provisioned
+  bound
+  error
+  offline
+}
+
+enum BotStatus {
+  draft
+  configured
+  provisioning
+  needsauth
+  starting
+  online
+  degraded
+  offline
+  deprovisioned
+  initializing
+  running
+  stopped
+  error
+}
+
+enum RunStatus {
+  pending
+  running
+  paused
+  completed
+  failed
+  cancelled
+}
+
+enum RunStepStatus {
+  pending
+  running
+  completed
+  failed
+  skipped
+}
+
+enum MessageRole {
+  user
+  assistant
+  system
+  tool
+}
+
+enum BudgetScope {
+  workspace
+  agent
+  model
+}
+
+enum BudgetPeriod {
+  daily
+  weekly
+  monthly
+  total
+}
+
+enum IncidentKind {
+  alert
+  exceeded
+  reset
+}
+
+enum ModelPolicyScope {
+  workspace
+  agent
+  flow_node
+}
+
+enum ApprovalStatus {
+  pending
+  approved
+  rejected
+  expired
+}
+
+enum ActivityResource {
+  workspace
+  agent
+  flow
+  skill
+  policy
+  channel
+  run
+  budget
+  model_policy
+  approval
+}
+
+enum ProviderAuthType {
+  api_key
+  oauth
+  aws_credentials
+  azure_api_key
+  none
+}
+
+// ────────────────────────────────────────────────────────────
 // MULTI-TENANT HIERARCHY
 // ────────────────────────────────────────────────────────────
 
 model Agency {
-  id          String       @id @default(cuid())
-  name        String
-  slug        String       @unique
-  plan        String       @default("free") // free | pro | enterprise
-  metadata    Json?        @default("{}")
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id           String    @id @default(cuid())
+  name         String
+  slug         String    @unique
+  plan         String    @default("free")
+  metadata     Json?     @default("{}")
+  systemPrompt String?   @db.Text
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   departments  Department[]
-  budgetPolicy BudgetPolicy[]
-  modelPolicy  ModelPolicy[]
-  activityLogs ActivityLog[]
+  budgetPolicy BudgetPolicy[] @relation("BudgetPolicyScopeAgency")
+  modelPolicy  ModelPolicy[]  @relation("ModelPolicyScopeAgency")
+  activityLogs ActivityLog[]  @relation("ActivityLogScopeAgency")
 
   @@map("agencies")
 }
 
 model Department {
-  id         String      @id @default(cuid())
-  agencyId   String
-  name       String
-  slug       String
-  metadata   Json?       @default("{}")
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
+  id           String    @id @default(cuid())
+  agencyId     String
+  name         String
+  slug         String
+  metadata     Json?     @default("{}")
+  systemPrompt String?   @db.Text
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   agency       Agency        @relation(fields: [agencyId], references: [id], onDelete: Cascade)
   workspaces   Workspace[]
-  budgetPolicy BudgetPolicy[]
-  modelPolicy  ModelPolicy[]
-  activityLogs ActivityLog[]
+  budgetPolicy BudgetPolicy[] @relation("BudgetPolicyScopeDepartment")
+  modelPolicy  ModelPolicy[]  @relation("ModelPolicyScopeDepartment")
+  activityLogs ActivityLog[]  @relation("ActivityLogScopeDepartment")
 
   @@unique([agencyId, slug])
   @@map("departments")
 }
 
 model Workspace {
-  id           String    @id @default(cuid())
-  departmentId String
-  name         String
-  slug         String
-  // Cache de la ModelPolicy efectiva calculada (resolución jerárquica).
-  // Se actualiza cuando cambia ModelPolicy en cualquier nivel superior.
-  // NO es la fuente de verdad — eso es la tabla ModelPolicy.
-  modelPolicy  Json?     @default("{}")
-  metadata     Json?     @default("{}")
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id                  String    @id @default(cuid())
+  departmentId        String?
+  name                String
+  slug                String    @default("")
+  description         String?
+  config              Json      @default("{}")
+  modelPolicy         Json?     @default("{}")
+  metadata            Json?     @default("{}")
+  systemPrompt        String?   @db.Text
+  isLevelOrchestrator Boolean   @default(false)
+  deletedAt           DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
-  department     Department       @relation(fields: [departmentId], references: [id], onDelete: Cascade)
-  agents         Agent[]
-  flows          Flow[]
-  runs           Run[]
-  channelConfigs ChannelConfig[]
-  budgetPolicy   BudgetPolicy[]
-  modelPolicies  ModelPolicy[]
-  routines       Routine[]
-  activityLogs   ActivityLog[]
-  llmProviders   LlmProvider[]
+  department          Department?          @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  agents              Agent[]
+  flows               Flow[]
+  skills              Skill[]
+  policies            Policy[]
+  hooks               Hook[]
+  channels            Channel[]
+  llmProviders        LlmProvider[]
+  runs                Run[]
+  channelConfigs      ChannelConfig[]
+  budgetPolicies      BudgetPolicy[]       @relation("BudgetPolicyScopeWorkspace")
+  modelPolicies       ModelPolicy[]        @relation("ModelPolicyScopeWorkspace")
+  routines            Routine[]
+  activityLogs        ActivityLog[]        @relation("ActivityLogScopeWorkspace")
+  approvals           Approval[]
+  providerCredentials ProviderCredential[]
 
   @@unique([departmentId, slug])
   @@map("workspaces")
+}
+
+// ────────────────────────────────────────────────────────────
+// SYSTEM CONFIG
+// ────────────────────────────────────────────────────────────
+
+model SystemConfig {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Json     @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("system_configs")
 }
 
 // ────────────────────────────────────────────────────────────
@@ -104,58 +246,60 @@ model Workspace {
 // ────────────────────────────────────────────────────────────
 
 model Agent {
-  id              String   @id @default(cuid())
-  workspaceId     String
-  name            String
-  role            String
-  description     String   @default("")
-  instructions    String   @default("")
-
-  // v3 (ProfilePropagatorService)
-  goal            String?  @default("")
-  backstory       String?  @default("")
-
-  model           String   @default("gpt-4o-mini")
-  tags            String[] @default([])
-  visibility      String   @default("private")   // private | workspace | public
-  executionMode   String   @default("direct")    // direct | orchestrated | handoff
-  kind            String   @default("agent")     // agent | subagent | orchestrator
-  parentAgentId   String?
-  context         String[] @default([])
-  triggers        Json?    @default("[]")
-  permissions     Json?    @default("{}")
-  handoffRules    Json?    @default("[]")
-  channelBindings Json?    @default("[]")
-  policyBindings  Json?    @default("[]")
-  isEnabled       Boolean  @default(true)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                  String    @id @default(cuid())
+  workspaceId         String
+  name                String
+  role                String    @default("")
+  description         String    @default("")
+  instructions        String    @default("")
+  goal                String?   @default("")
+  backstory           String?   @default("")
+  model               String    @default("gpt-4o-mini")
+  tools               Json      @default("[]")
+  tags                String[]  @default([])
+  visibility          String    @default("private")
+  executionMode       String    @default("direct")
+  kind                String    @default("agent")
+  parentAgentId       String?
+  context             String[]  @default([])
+  triggers            Json?     @default("[]")
+  permissions         Json?     @default("{}")
+  handoffRules        Json?     @default("[]")
+  channelBindings     Json?     @default("[]")
+  policyBindings      Json?     @default("[]")
+  config              Json      @default("{}")
+  isEnabled           Boolean   @default(true)
+  slug                String?
+  isLevelOrchestrator Boolean   @default(false)
+  systemPrompt        String?   @db.Text
+  deletedAt           DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   workspace             Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   parent                Agent?                @relation("AgentHierarchy", fields: [parentAgentId], references: [id])
   subagents             Agent[]               @relation("AgentHierarchy")
   skillLinks            AgentSkill[]
+  runs                  Run[]
   runSteps              RunStep[]
   channelBindingRecords ChannelBinding[]
   gatewaySessions       GatewaySession[]
   wakeupRequests        AgentWakeupRequest[]
-  budgetPolicy          BudgetPolicy[]
-  modelPolicy           ModelPolicy[]
-  activityLogs          ActivityLog[]
+  budgetPolicy          BudgetPolicy[]        @relation("BudgetPolicyScopeAgent")
+  modelPolicy           ModelPolicy[]         @relation("ModelPolicyScopeAgent")
+  activityLogs          ActivityLog[]         @relation("ActivityLogScopeAgent")
   agentProfile          AgentProfile?
+  approvals             Approval[]
+  boundChannels         Channel[]             @relation("ChannelAgent")
 
   @@index([workspaceId])
+  @@index([workspaceId, slug])
   @@map("agents")
 }
-
-// ────────────────────────────────────────────────────────────
-// AGENT PROFILE — v3 (ProfilePropagatorService)
-// ────────────────────────────────────────────────────────────
 
 model AgentProfile {
   id              String   @id @default(cuid())
   agentId         String   @unique
-
   systemPrompt    String?  @db.Text
   persona         Json     @default("{}")
   knowledgeBase   Json     @default("[]")
@@ -165,7 +309,6 @@ model AgentProfile {
   memoryConfig    Json     @default("{}")
   version         Int      @default(1)
   propagatedAt    DateTime @default(now())
-
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -176,162 +319,91 @@ model AgentProfile {
 }
 
 // ────────────────────────────────────────────────────────────
-// MODEL POLICY — tabla propia (v6)
-// ────────────────────────────────────────────────────────────
-
-model ModelPolicy {
-  id            String   @id @default(cuid())
-  scopeType     String   // agency | department | workspace | agent
-  scopeId       String
-
-  primaryModel  String
-  /// Lista ordenada de modelos fallback.
-  /// Índice 0 = primer intento tras fallo del primary.
-  /// Ejemplo: ["anthropic/claude-3-haiku", "qwen/qwen-plus", "openai/gpt-4o-mini"]
-  /// Migración desde fallbackModel: ver comentario v6 en cabecera del archivo.
-  fallbackChain String[] @default([])
-  temperature   Float    @default(0.7)
-  maxTokens     Int      @default(4096)
-  isOverride    Boolean  @default(false)
-  inheritedFrom String?
-
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  agency     Agency?     @relation(fields: [scopeId], references: [id])
-  department Department? @relation(fields: [scopeId], references: [id])
-  workspace  Workspace?  @relation(fields: [scopeId], references: [id])
-  agent      Agent?      @relation(fields: [scopeId], references: [id])
-
-  @@unique([scopeType, scopeId])
-  @@index([scopeId])
-  @@map("model_policies")
-}
-
-// ────────────────────────────────────────────────────────────
-// LLM PROVIDERS — v7
-// ────────────────────────────────────────────────────────────
-
-/// Catálogo global de providers de LLM soportados.
-/// Define el slug del provider, su authType y la URL base por defecto.
-/// No tiene datos de credenciales — eso va en LlmProvider.
-model LlmProviderCatalog {
-  id             String   @id @default(cuid())
-  /// Slug único del provider. Debe coincidir con el slug usado en ModelPolicy.primaryModel
-  /// y en los mapas de providers del LLMStepExecutor.
-  /// Ejemplos: "openai", "anthropic", "qwen", "deepseek", "mistral"
-  slug           String   @unique
-  displayName    String
-  /// Tipo de autenticación soportado por este provider en el catálogo.
-  /// api_key = clave de API estática (cifrada en LlmProvider.apiKeyEnc)
-  /// oauth    = flujo OAuth 2.0 (tokens en OAuthToken)
-  authType       String   @default("api_key") // api_key | oauth
-  defaultBaseUrl String?
-  isActive       Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  providers LlmProvider[]
-
-  @@map("llm_provider_catalog")
-}
-
-/// Token OAuth asociado a un LlmProvider con authType = 'oauth'.
-/// Almacena el access token y refresh token cifrados.
-/// OAuthService.getAccessToken() lee este registro y lo refresca si ha expirado.
-model OAuthToken {
-  id              String    @id @default(cuid())
-  llmProviderId   String    @unique
-  /// Access token cifrado (AES-256-GCM, mismo formato que apiKeyEnc: iv:tag:data)
-  accessTokenEnc  String    @db.Text
-  /// Refresh token cifrado (AES-256-GCM)
-  refreshTokenEnc String?   @db.Text
-  /// Fecha de expiración del access token. NULL = no expira.
-  expiresAt       DateTime?
-  scope           String?
-  tokenType       String    @default("Bearer")
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-
-  llmProvider LlmProvider @relation(fields: [llmProviderId], references: [id], onDelete: Cascade)
-
-  @@map("oauth_tokens")
-}
-
-/// Registro workspace-scoped de un proveedor de LLM configurado.
-/// Contiene las credenciales (API key cifrada o referencia a OAuthToken).
-/// LLMStepExecutor.resolveProvider() consulta este modelo para construir
-/// el ILLMProvider correcto en runtime.
-model LlmProvider {
-  id          String   @id @default(cuid())
-  workspaceId String
-  catalogId   String
-  /// Slug del provider — denormalizado desde catalog para queries directas.
-  /// Debe coincidir con LlmProviderCatalog.slug.
-  provider    String
-  displayName String?
-  /// API key cifrada (AES-256-GCM): "iv:authTag:ciphertext".
-  /// NULL cuando authType = 'oauth' (en ese caso se usa OAuthToken).
-  apiKeyEnc   String?  @db.Text
-  /// URL base personalizada. NULL = usa LlmProviderCatalog.defaultBaseUrl.
-  baseUrl     String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  workspace  Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  catalog    LlmProviderCatalog @relation(fields: [catalogId], references: [id])
-  oauthToken OAuthToken?
-
-  @@unique([workspaceId, provider])
-  @@index([workspaceId])
-  @@map("llm_providers")
-}
-
-// ────────────────────────────────────────────────────────────
 // SKILLS
 // ────────────────────────────────────────────────────────────
 
 model Skill {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
+  workspaceId  String?
   name         String
-  description  String   @default("")
-  version      String   @default("1.0.0")
-  // mcp | openapi | n8n_webhook | builtin | function | plugin
-  type         String   @default("builtin")
-  category     String   @default("general")
-  permissions  String[] @default([])
-  functions    Json?    @default("[]")
+  description  String    @default("")
+  version      String    @default("1.0.0")
+  type         String    @default("builtin")
+  category     String    @default("general")
+  permissions  String[]  @default([])
+  functions    Json?     @default("[]")
   plugin       Json?
   openapiSpec  Json?
   mcpConfig    Json?
-  // Para type=n8n_webhook: { workflowId, webhookUrl, method, auth? }
   n8nConfig    Json?
-  files        String[] @default([])
-  dependencies String[] @default([])
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  config       Json      @default("{}")
+  files        String[]  @default([])
+  dependencies String[]  @default([])
+  isActive     Boolean   @default(true)
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
+  workspace  Workspace?   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   agentLinks AgentSkill[]
 
+  @@index([workspaceId])
   @@map("skills")
 }
 
 model AgentSkill {
-  agentId   String
-  skillId   String
-  addedAt   DateTime @default(now())
+  id             String   @id @default(cuid())
+  agentId        String
+  skillId        String
+  configOverride Json     @default("{}")
+  addedAt        DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
   skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
 
-  @@id([agentId, skillId])
+  @@unique([agentId, skillId])
+  @@index([agentId])
+  @@index([skillId])
   @@map("agent_skills")
 }
 
 // ────────────────────────────────────────────────────────────
-// N8N INTEGRATION — v4
+// POLICY & HOOK
+// ────────────────────────────────────────────────────────────
+
+model Policy {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  rules       Json      @default("[]")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([workspaceId])
+  @@map("policies")
+}
+
+model Hook {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  event       String
+  action      Json      @default("{}")
+  enabled     Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([workspaceId])
+  @@map("hooks")
+}
+
+// ────────────────────────────────────────────────────────────
+// N8N INTEGRATION
 // ────────────────────────────────────────────────────────────
 
 model N8nConnection {
@@ -349,24 +421,126 @@ model N8nConnection {
 }
 
 model N8nWorkflow {
-  id             String        @id @default(cuid())
-  connectionId   String
-  n8nWorkflowId  String
-  name           String
-  description    String?       @default("")
-  webhookUrl     String?
-  webhookMethod  String        @default("POST")
-  inputSchema    Json?         @default("{}")
-  outputSchema   Json?         @default("{}")
-  isActive       Boolean       @default(true)
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  id            String   @id @default(cuid())
+  connectionId  String
+  n8nWorkflowId String
+  name          String
+  description   String?  @default("")
+  webhookUrl    String?
+  webhookMethod String   @default("POST")
+  inputSchema   Json?    @default("{}")
+  outputSchema  Json?    @default("{}")
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   connection N8nConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
 
   @@unique([connectionId, n8nWorkflowId])
   @@index([connectionId])
   @@map("n8n_workflows")
+}
+
+// ────────────────────────────────────────────────────────────
+// PROVIDER CATALOG
+// ────────────────────────────────────────────────────────────
+
+model ProviderCatalog {
+  id             String           @id
+  displayName    String
+  description    String?
+  authType       ProviderAuthType @default(api_key)
+  capabilities   Json             @default("{}")
+  defaultModels  Json             @default("{}")
+  defaultBaseUrl String?
+  isLocalOnly    Boolean          @default(false)
+  isOpenAiCompat Boolean          @default(false)
+  isEnabled      Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  llmProviders LlmProvider[]
+
+  @@map("provider_catalog")
+}
+
+model LlmProvider {
+  id          String          @id @default(cuid())
+  workspaceId String
+  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  provider    String
+  catalog     ProviderCatalog @relation(fields: [provider], references: [id])
+  baseUrl     String?
+  apiKeyEnc   String?
+  isDefault   Boolean         @default(false)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  oauthToken OAuthToken?
+
+  @@unique([workspaceId, provider])
+  @@index([workspaceId])
+  @@index([provider])
+  @@map("llm_providers")
+}
+
+model OAuthToken {
+  id              String      @id @default(cuid())
+  llmProviderId   String      @unique
+  llmProvider     LlmProvider @relation(fields: [llmProviderId], references: [id], onDelete: Cascade)
+  accessTokenEnc  String      @db.Text
+  refreshTokenEnc String?     @db.Text
+  expiresAt       DateTime
+  accountId       String?
+  scopes          String?
+  meta            Json        @default("{}")
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([expiresAt])
+  @@map("oauth_tokens")
+}
+
+model ProviderCredential {
+  id              String    @id @default(cuid())
+  agencyId        String
+  agency          Workspace @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  name            String
+  type            String
+  baseUrl         String?
+  apiKeyEncrypted String
+  extraHeaders    Json?
+  isActive        Boolean   @default(true)
+  syncedAt        DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  catalogEntries ModelCatalogEntry[]
+
+  @@index([agencyId])
+  @@index([agencyId, isActive])
+  @@map("provider_credentials")
+}
+
+model ModelCatalogEntry {
+  id                     String             @id @default(cuid())
+  providerId             String
+  provider               ProviderCredential @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  modelId                String
+  displayName            String
+  families               String[]
+  contextK               Int                @default(0)
+  promptCostPer1kUsd     Decimal?           @db.Decimal(12, 8)
+  completionCostPer1kUsd Decimal?           @db.Decimal(12, 8)
+  isActive               Boolean            @default(true)
+  raw                    Json               @default("{}")
+  updatedAt              DateTime           @updatedAt
+
+  @@unique([providerId, modelId])
+  @@index([providerId])
+  @@index([providerId, isActive])
+  @@index([modelId])
+  @@map("model_catalog_entries")
 }
 
 // ────────────────────────────────────────────────────────────
@@ -382,6 +556,8 @@ model Flow {
   trigger     String   @default("manual")
   nodes       Json?    @default("[]")
   edges       Json?    @default("[]")
+  spec        Json?    @default("{}")
+  config      Json     @default("{}")
   tags        String[] @default([])
   isEnabled   Boolean  @default(true)
   createdAt   DateTime @default(now())
@@ -395,24 +571,31 @@ model Flow {
 }
 
 // ────────────────────────────────────────────────────────────
-// RUNS — durable execution
+// RUNS
 // ────────────────────────────────────────────────────────────
 
 model Run {
-  id          String   @id @default(cuid())
-  workspaceId String
-  flowId      String
-  status      String   @default("queued")
-  trigger     Json     @default("{}")
-  error       String?
-  metadata    Json?    @default("{}")
-  startedAt   DateTime @default(now())
-  completedAt DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String       @id @default(cuid())
+  workspaceId  String
+  flowId       String?
+  agentId      String?
+  sessionId    String?
+  channelKind  ChannelKind?
+  totalCostUsd Decimal?     @db.Decimal(10, 4)
+  status       RunStatus    @default(pending)
+  trigger      Json         @default("{}")
+  inputData    Json         @default("{}")
+  outputData   Json?
+  error        String?
+  metadata     Json?        @default("{}")
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 
   workspace      Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  flow           Flow                 @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  flow           Flow?                @relation(fields: [flowId], references: [id])
+  agent          Agent?               @relation(fields: [agentId], references: [id])
   steps          RunStep[]
   approvals      Approval[]
   wakeupRequests AgentWakeupRequest[]
@@ -420,59 +603,98 @@ model Run {
 
   @@index([workspaceId, status])
   @@index([flowId])
+  @@index([agentId])
+  @@index([status])
+  @@index([createdAt])
   @@map("runs")
 }
 
+// ────────────────────────────────────────────────────────────
+// RUN STEPS
+// ────────────────────────────────────────────────────────────
+
 model RunStep {
-  id          String   @id @default(cuid())
-  runId       String
-  nodeId      String
-  nodeType    String
-  status      String   @default("queued")
-  agentId     String?
-  input       Json?    @default("{}")
-  output      Json?    @default("{}")
-  error       String?
-  retryCount  Int      @default(0)
-  tokenInput  Int      @default(0)
-  tokenOutput Int      @default(0)
-  costUsd     Float    @default(0)
-  startedAt   DateTime?
-  completedAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id               String        @id @default(cuid())
+  runId            String
+  nodeId           String
+  nodeType         String
+  index            Int           @default(0)
+  status           RunStepStatus @default(pending)
+  agentId          String?
+  input            Json?         @default("{}")
+  output           Json?
+  error            String?
+  retryCount       Int           @default(0)
+  model            String?
+  provider         String?
+  tokenInput       Int           @default(0)
+  tokenOutput      Int           @default(0)
+  promptTokens     Int?
+  completionTokens Int?
+  totalTokens      Int?
+  tokenUsage       Int           @default(0)
+  costUsd          Decimal?      @db.Decimal(12, 8)
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
 
-  checkpointData   Json?    // messages[], tool_calls[], observations[]
-  checkpointSeq    Int      @default(0)
-  interruptReason  String?  // human_approval | budget_exceeded | tool_error | max_iter
-  resumePayload    Json?
-  durableState     String   @default("none") // none | paused | resuming | replaying
+  checkpointData  Json?
+  checkpointSeq   Int      @default(0)
+  interruptReason String?
+  resumePayload   Json?
+  durableState    String   @default("none")
 
-  run        Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
-  agent      Agent?    @relation(fields: [agentId], references: [id])
-  approvals  Approval[]
-  costEvents CostEvent[]
+  run            Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  agent          Agent?    @relation(fields: [agentId], references: [id])
+  approvals      Approval[]
+  costEvents     CostEvent[]
   wakeupRequests AgentWakeupRequest[]
 
   @@index([runId])
+  @@index([runId, index])
   @@index([agentId])
   @@map("run_steps")
 }
 
 // ────────────────────────────────────────────────────────────
-// CHANNELS — gateway multi-canal
+// CHANNELS
 // ────────────────────────────────────────────────────────────
 
+model Channel {
+  id           String        @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  kind         ChannelKind
+  status       ChannelStatus @default(provisioned)
+  botStatus    BotStatus     @default(draft)
+  tokenEnc     String
+  meta         Json          @default("{}")
+  boundAgentId String?
+  boundAgent   Agent?        @relation("ChannelAgent", fields: [boundAgentId], references: [id])
+  messages     ConversationMessage[] @relation("ChannelMessages")
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([workspaceId])
+  @@index([boundAgentId])
+  @@map("channels")
+}
+
 model ChannelConfig {
-  id          String   @id @default(cuid())
-  workspaceId String
-  channel     String   // whatsapp | telegram | slack | email | web | custom
-  displayName String
-  credentials Json     @default("{}")
-  settings    Json?    @default("{}")
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id              String    @id @default(cuid())
+  workspaceId     String
+  channel         String
+  displayName     String
+  credentials     Json      @default("{}")
+  settings        Json?     @default("{}")
+  isActive        Boolean   @default(true)
+  statusDetail    String?
+  statusUpdatedAt DateTime?
+  type            String?   @default("")
+  name            String?   @default("")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   bindings  ChannelBinding[]
@@ -483,12 +705,14 @@ model ChannelConfig {
 }
 
 model ChannelBinding {
-  id              String   @id @default(cuid())
-  channelConfigId String
-  agentId         String
-  route           String
-  isEnabled       Boolean  @default(true)
-  createdAt       DateTime @default(now())
+  id                String   @id @default(cuid())
+  channelConfigId   String
+  agentId           String
+  route             String
+  isEnabled         Boolean  @default(true)
+  externalChannelId String?
+  externalGuildId   String?
+  createdAt         DateTime @default(now())
 
   channelConfig ChannelConfig @relation(fields: [channelConfigId], references: [id], onDelete: Cascade)
   agent         Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
@@ -497,25 +721,21 @@ model ChannelBinding {
   @@map("channel_bindings")
 }
 
-// ────────────────────────────────────────────────────────────
-// GATEWAY SESSION + CONVERSATION MESSAGES
-// ────────────────────────────────────────────────────────────
-
 model GatewaySession {
-  id              String   @id @default(cuid())
-  channelConfigId String
-  externalId      String
-  agentId         String
-  activeContextJson Json?  @default("[]")
-  state          String   @default("active")
-  lastActivityAt DateTime @default(now())
-  metadata       Json?    @default("{}")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                String   @id @default(cuid())
+  channelConfigId   String
+  externalId        String
+  agentId           String
+  activeContextJson Json?    @default("[]")
+  state             String   @default("active")
+  lastActivityAt    DateTime @default(now())
+  metadata          Json?    @default("{}")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   channelConfig ChannelConfig        @relation(fields: [channelConfigId], references: [id], onDelete: Cascade)
   agent         Agent                @relation(fields: [agentId], references: [id])
-  messages      ConversationMessage[]
+  messages      ConversationMessage[] @relation("SessionMessages")
 
   @@unique([channelConfigId, externalId])
   @@index([agentId])
@@ -523,23 +743,27 @@ model GatewaySession {
 }
 
 model ConversationMessage {
-  id               String   @id @default(cuid())
-  sessionId        String
-  role             String   // user | assistant | system | tool
-  contentText      String?  @db.Text
-  contentJson      Json
+  id               String      @id @default(cuid())
+  sessionId        String?
+  channelId        String?
+  role             MessageRole
+  content          String?     @db.Text
+  contentText      String?     @db.Text
+  contentJson      Json?
   channelMessageId String?
   toolCallId       String?
   toolName         String?
   scopeType        String?
   scopeId          String?
   tokenCount       Int?
-  createdAt        DateTime @default(now())
+  metadata         Json        @default("{}")
+  createdAt        DateTime    @default(now())
 
-  session GatewaySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  session GatewaySession? @relation("SessionMessages", fields: [sessionId], references: [id], onDelete: Cascade)
+  channel Channel?        @relation("ChannelMessages", fields: [channelId], references: [id], onDelete: Cascade)
 
   @@index([sessionId, createdAt])
-  @@index([sessionId, role])
+  @@index([channelId, createdAt])
   @@index([scopeId, createdAt])
   @@map("conversation_messages")
 }
@@ -549,89 +773,152 @@ model ConversationMessage {
 // ────────────────────────────────────────────────────────────
 
 model BudgetPolicy {
-  id                  String   @id @default(cuid())
-  scopeType           String
-  scopeId             String
-  window              String   @default("monthly")
+  id                  String       @id @default(cuid())
+  scopeType           String       @default("workspace")
+  scopeId             String       @default("")
+  agencyId            String?
+  departmentId        String?
+  agentId             String?
+  workspaceId         String?
+  name                String       @default("")
+  scope               BudgetScope  @default(workspace)
+  targetId            String?
+  limitUsd            Decimal?     @db.Decimal(10, 4)
+  period              BudgetPeriod @default(monthly)
+  periodDays          Int?
+  alertPct            Int          @default(80)
+  alertAt             DateTime?
+  enabled             Boolean      @default(true)
+  window              String       @default("monthly")
   softCapUsd          Float?
   hardCapUsd          Float?
-  requireApproval     Boolean  @default(false)
+  requireApproval     Boolean      @default(false)
   approvalThreshold   Float?
   replayBudgetUsd     Float?
   escalationThreshold Float?
-  perModelCaps        Json?    @default("{}")
+  perModelCaps        Json?        @default("{}")
   inheritedFrom       String?
   effectiveValue      Json?
-  isOverride          Boolean  @default(false)
-  isActive            Boolean  @default(true)
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  isOverride          Boolean      @default(false)
+  isActive            Boolean      @default(true)
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
 
-  agency     Agency?     @relation(fields: [scopeId], references: [id])
-  department Department? @relation(fields: [scopeId], references: [id])
-  workspace  Workspace?  @relation(fields: [scopeId], references: [id])
-  agent      Agent?      @relation(fields: [scopeId], references: [id])
+  workspace  Workspace?  @relation("BudgetPolicyScopeWorkspace",  fields: [scopeId], references: [id], map: "budget_policies_scope_workspace_fkey")
+  agency     Agency?     @relation("BudgetPolicyScopeAgency",     fields: [scopeId], references: [id], map: "budget_policies_scope_agency_fkey")
+  department Department? @relation("BudgetPolicyScopeDepartment", fields: [scopeId], references: [id], map: "budget_policies_scope_department_fkey")
+  agent      Agent?      @relation("BudgetPolicyScopeAgent",      fields: [scopeId], references: [id], map: "budget_policies_scope_agent_fkey")
   incidents  BudgetIncident[]
+  costEvents CostEvent[]
 
-  @@unique([scopeType, scopeId, window])
   @@index([scopeId])
+  @@index([workspaceId])
+  @@index([agencyId])
+  @@index([departmentId])
+  @@index([agentId])
   @@map("budget_policies")
 }
 
 model BudgetIncident {
-  id           String   @id @default(cuid())
-  policyId     String
-  scopeType    String
-  scopeId      String
-  incidentType String
-  triggeredAt  DateTime @default(now())
-  resolvedAt   DateTime?
-  runId        String?
-  runStepId    String?
-  amountUsd    Float
-  metadata     Json?    @default("{}")
+  id             String        @id @default(cuid())
+  budgetPolicyId String?
+  budgetPolicy   BudgetPolicy? @relation(fields: [budgetPolicyId], references: [id], onDelete: Cascade)
+  kind           IncidentKind  @default(alert)
+  usageUsd       Decimal?      @db.Decimal(10, 4)
+  policyId       String        @default("")
+  scopeType      String        @default("")
+  scopeId        String        @default("")
+  incidentType   String        @default("")
+  triggeredAt    DateTime      @default(now())
+  resolvedAt     DateTime?
+  runId          String?
+  runStepId      String?
+  amountUsd      Float         @default(0)
+  pct            Int           @default(0)
+  detail         Json          @default("{}")
+  metadata       Json?         @default("{}")
+  occurredAt     DateTime      @default(now())
 
-  policy BudgetPolicy @relation(fields: [policyId], references: [id])
-
+  @@index([budgetPolicyId])
   @@index([scopeId, triggeredAt])
-  @@index([policyId])
+  @@index([occurredAt])
   @@map("budget_incidents")
 }
-
-// ────────────────────────────────────────────────────────────
-// COST EVENTS — v7: +workspaceId +metadata; completTokens→completionTokens
-// ────────────────────────────────────────────────────────────
 
 model CostEvent {
   id               String   @id @default(cuid())
   runStepId        String?
   runId            String?
   agentId          String?
-  workspaceId      String
-  scopeType        String
-  scopeId          String
+  budgetPolicyId   String?
+  scopeType        String   @default("")
+  scopeId          String   @default("")
+  workspaceId      String?
   model            String
   provider         String   @default("openai")
   promptTokens     Int      @default(0)
-  /// Renamed from completTokens (v7) to align with llm-step-executor.ts usage.
   completionTokens Int      @default(0)
   totalTokens      Int      @default(0)
-  costUsd          Float    @default(0)
+  costUsd          Decimal? @db.Decimal(12, 8)
   latencyMs        Int?
   role             String?
-  /// Metadata extra: e.g. { resolvedByPolicy: "<policyId>" }
-  metadata         Json?    @default("{}")
+  metadata         Json     @default("{}")
   timestamp        DateTime @default(now())
+  createdAt        DateTime @default(now())
 
-  run     Run?     @relation(fields: [runId], references: [id])
-  runStep RunStep? @relation(fields: [runStepId], references: [id])
+  run          Run?          @relation(fields: [runId], references: [id])
+  runStep      RunStep?      @relation(fields: [runStepId], references: [id])
+  budgetPolicy BudgetPolicy? @relation(fields: [budgetPolicyId], references: [id])
 
   @@index([scopeId, timestamp])
   @@index([model, timestamp])
   @@index([runId])
   @@index([agentId, timestamp])
-  @@index([workspaceId, timestamp])
+  @@index([workspaceId, createdAt])
   @@map("cost_events")
+}
+
+// ────────────────────────────────────────────────────────────
+// MODEL POLICY
+// ────────────────────────────────────────────────────────────
+
+model ModelPolicy {
+  id            String           @id @default(cuid())
+  scopeType     String           @default("workspace")
+  scopeId       String           @default("")
+  workspaceId   String?
+  agencyId      String?
+  departmentId  String?
+  agentId       String?
+  scope         ModelPolicyScope @default(workspace)
+  targetId      String?
+  provider      String           @default("openai")
+  model         String           @default("gpt-4o-mini")
+  primaryModel  String           @default("gpt-4o-mini")
+  fallbackModel String?
+  fallbackChain String[]         @default([])
+  temperature   Decimal          @default(0.7) @db.Decimal(3, 2)
+  maxTokens     Int              @default(4096)
+  topP          Decimal          @default(1.0) @db.Decimal(3, 2)
+  config        Json             @default("{}")
+  isOverride    Boolean          @default(false)
+  inheritedFrom String?
+  isActive      Boolean          @default(true)
+  enabled       Boolean          @default(true)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  agency     Agency?     @relation("ModelPolicyScopeAgency",     fields: [scopeId], references: [id], map: "model_policies_scope_agency_fkey")
+  department Department? @relation("ModelPolicyScopeDepartment", fields: [scopeId], references: [id], map: "model_policies_scope_department_fkey")
+  workspace  Workspace?  @relation("ModelPolicyScopeWorkspace",  fields: [scopeId], references: [id], map: "model_policies_scope_workspace_fkey")
+  agent      Agent?      @relation("ModelPolicyScopeAgent",      fields: [scopeId], references: [id], map: "model_policies_scope_agent_fkey")
+
+  @@index([scopeId])
+  @@index([workspaceId])
+  @@index([agencyId])
+  @@index([departmentId])
+  @@index([agentId])
+  @@map("model_policies")
 }
 
 // ────────────────────────────────────────────────────────────
@@ -639,23 +926,38 @@ model CostEvent {
 // ────────────────────────────────────────────────────────────
 
 model Approval {
-  id          String    @id @default(cuid())
-  runId       String
+  id          String         @id @default(cuid())
+  workspaceId String?
+  agentId     String?
+  runId       String?
   runStepId   String?
-  scopeType   String
-  scopeId     String
-  status      String    @default("pending")
-  requestedAt DateTime  @default(now())
+  stepId      String?
+  status      ApprovalStatus @default(pending)
+  title       String         @default("")
+  description String?        @db.Text
+  payload     Json           @default("{}")
+  reviewedBy  String?
+  reviewNote  String?        @db.Text
+  expiresAt   DateTime?
+  decidedAt   DateTime?
+  scopeType   String         @default("")
+  scopeId     String         @default("")
+  requestedAt DateTime       @default(now())
   resolvedAt  DateTime?
   resolvedBy  String?
   reason      String?
-  context     Json?     @default("{}")
-  metadata    Json?     @default("{}")
+  context     Json?          @default("{}")
+  metadata    Json?          @default("{}")
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
-  run     Run      @relation(fields: [runId], references: [id])
-  runStep RunStep? @relation(fields: [runStepId], references: [id])
-  comments ApprovalComment[]
+  workspace Workspace? @relation(fields: [workspaceId], references: [id])
+  agent     Agent?     @relation(fields: [agentId], references: [id])
+  run       Run?       @relation(fields: [runId], references: [id])
+  runStep   RunStep?   @relation(fields: [runStepId], references: [id])
+  comments  ApprovalComment[]
 
+  @@index([workspaceId, status])
   @@index([scopeId, status])
   @@index([runId])
   @@map("approvals")
@@ -676,24 +978,24 @@ model ApprovalComment {
 }
 
 // ────────────────────────────────────────────────────────────
-// ROUTINES
+// ROUTINES & WAKEUP
 // ────────────────────────────────────────────────────────────
 
 model Routine {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   workspaceId String
   agentId     String?
   flowId      String?
   name        String
-  description String?  @default("")
+  description String?   @default("")
   schedule    String
-  payload     Json?    @default("{}")
-  isEnabled   Boolean  @default(true)
+  payload     Json?     @default("{}")
+  isEnabled   Boolean   @default(true)
   lastRunAt   DateTime?
   nextRunAt   DateTime?
   lastRunId   String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
@@ -701,49 +1003,6 @@ model Routine {
   @@index([nextRunAt])
   @@map("routines")
 }
-
-// ────────────────────────────────────────────────────────────
-// ACTIVITY LOG — v5: alineado con Plan Maestro OV-06 Audit Trail
-//
-// Campos nuevos (opcionales, no rompen datos existentes):
-//   resourceType  — tipo del recurso afectado (agent | flow | skill | policy...)
-//   resourceId    — ID del recurso afectado
-//   diff          — JSON diff antes/después del cambio (para auditoría granular)
-//   ipAddress     — IP del actor (requerido por OV-06 para trazabilidad)
-// ────────────────────────────────────────────────────────────
-
-model ActivityLog {
-  id           String   @id @default(cuid())
-  scopeType    String
-  scopeId      String
-  actorType    String
-  actorId      String?
-  action       String
-  payload      Json?    @default("{}")
-
-  // v5: campos OV-06 Audit Trail
-  resourceType String?  // agent | flow | skill | policy | workspace | channel...
-  resourceId   String?  // ID del recurso afectado (distinto de scopeId cuando aplica)
-  diff         Json?    // { before: {...}, after: {...} } — diff del estado del recurso
-  ipAddress    String?  // IPv4 o IPv6 del actor
-
-  createdAt    DateTime @default(now())
-
-  agency     Agency?     @relation(fields: [scopeId], references: [id])
-  department Department? @relation(fields: [scopeId], references: [id])
-  workspace  Workspace?  @relation(fields: [scopeId], references: [id])
-  agent      Agent?      @relation(fields: [scopeId], references: [id])
-
-  @@index([scopeId, createdAt])
-  @@index([action, createdAt])
-  @@index([actorId, createdAt])
-  @@index([resourceId, createdAt])
-  @@map("activity_logs")
-}
-
-// ────────────────────────────────────────────────────────────
-// AGENT WAKEUP REQUESTS
-// ────────────────────────────────────────────────────────────
 
 model AgentWakeupRequest {
   id          String    @id @default(cuid())
@@ -765,4 +1024,56 @@ model AgentWakeupRequest {
   @@index([runId])
   @@index([scheduledAt])
   @@map("agent_wakeup_requests")
+}
+
+// ────────────────────────────────────────────────────────────
+// ACTIVITY LOG
+// ────────────────────────────────────────────────────────────
+
+model ActivityLog {
+  id           String           @id @default(cuid())
+  scopeType    String           @default("")
+  scopeId      String           @default("")
+  workspaceId  String?
+  resource     ActivityResource @default(workspace)
+  resourceType String?
+  resourceId   String?
+  actorType    String           @default("user")
+  actorId      String?
+  action       String
+  payload      Json?            @default("{}")
+  detail       String           @db.Text @default("")
+  userId       String?
+  diff         Json?
+  ipAddress    String?
+  metadata     Json             @default("{}")
+  createdAt    DateTime         @default(now())
+
+  agency     Agency?     @relation("ActivityLogScopeAgency",     fields: [scopeId], references: [id], map: "activity_logs_scope_agency_fkey")
+  department Department? @relation("ActivityLogScopeDepartment", fields: [scopeId], references: [id], map: "activity_logs_scope_department_fkey")
+  workspace  Workspace?  @relation("ActivityLogScopeWorkspace",  fields: [scopeId], references: [id], map: "activity_logs_scope_workspace_fkey")
+  agent      Agent?      @relation("ActivityLogScopeAgent",      fields: [scopeId], references: [id], map: "activity_logs_scope_agent_fkey")
+
+  @@index([scopeId, createdAt])
+  @@index([workspaceId, createdAt])
+  @@index([action, createdAt])
+  @@index([actorId, createdAt])
+  @@index([resourceId, createdAt])
+  @@map("activity_logs")
+}
+
+// ────────────────────────────────────────────────────────────
+// AUTH — LOCAL USERS
+// ────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  passwordHash String?
+  role         String   @default("member")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("users")
 }
