@@ -10,6 +10,8 @@
  *   - resolveProviderConfig  — extract ProviderConfig from a "provider/model" id
  *   - resolveProvider        — backward-compat alias (returns LLMProvider)
  *   - buildLLMClient         — factory that returns the correct ProviderAdapter
+ *   - LlmResponse            — alias of ChatCompletionResult (for llm-step-executor)
+ *   - ToolCallRequest        — alias of ToolCall (for tool-call routing)
  *
  * Model ID format:  "<provider>/<model>"
  *   openai/gpt-4.1
@@ -135,6 +137,8 @@ export interface ChatMessage {
   content: string
   tool_call_id?: string
   name?:         string
+  /** Present on assistant messages that contain tool invocations */
+  tool_calls?:   ToolCall[]
 }
 
 export interface ToolDefinition {
@@ -170,6 +174,20 @@ export interface ChatCompletionResult {
   }
   model: string
 }
+
+/**
+ * LlmResponse — semantic alias of ChatCompletionResult.
+ * Used by llm-step-executor and agent-executor to type
+ * the raw response before post-processing.
+ */
+export type LlmResponse = ChatCompletionResult
+
+/**
+ * ToolCallRequest — semantic alias of ToolCall.
+ * Represents a single tool invocation requested by the LLM,
+ * used in the tool-call routing layer of llm-step-executor.
+ */
+export type ToolCallRequest = ToolCall
 
 export interface ProviderAdapter {
   chat(
