@@ -10,45 +10,17 @@
 // Policies:     BudgetPolicy, ModelPolicy  (scope-inherited, exactly-one-FK)
 // Audit:        AuditEvent
 // Settings:     SystemConfig  (single-tenant admin keys — plaintext, same trust as .env)
+// Auth:         User
 //
-// ── D-15 ───────────────────────────────────────────────────────────────────────────────
-// GatewaySession.messageHistory ELIMINADO.
-// Reemplazado por activeContextJson Json? (contexto activo de la sesión)
-// + modelo ConversationMessage (historial append-only, indexado).
-//
-// ── D-24d ──────────────────────────────────────────────────────────────────────────
-// isLevelOrchestrator Boolean @default(false) en Agent, Workspace, Department.
-// Solo UN agente/workspace/department por scope puede tener isLevelOrchestrator=true.
-// Prisma no puede expresar "​​@@unique donde el valor sea true";
-// por eso el partial unique index se aplica vía SQL raw en la migración:
-//   CREATE UNIQUE INDEX "agent_one_orchestrator_per_workspace"
-//     ON "Agent" ("workspaceId") WHERE "isLevelOrchestrator" = true;
-//   (ídem para Workspace y Department — ver C-20 en Plan Maestro)
-//
-// ── D-07 ─────────────────────────────────────────────────────────────────────────────────
-// Flow.agentId: el ownership real es Flow → Agent → Workspace → Department → Agency.
-//
-// ── Exactly-one-FK invariant on Policy tables ────────────────────────────────────────
-// BudgetPolicy and ModelPolicy each belong to exactly ONE scope level.
-// Enforced at two layers:
-//   1. DB layer — raw CHECK constraint added via a manual migration.
-//   2. App layer — PolicyScopeGuard in apps/api validates before upsert.
-//
-// ── AUDIT-23 ─────────────────────────────────────────────────────────────────────────
-// enum ChannelType ya es el nombre canónico (no ChannelKind).
+// ── AUDIT-23 (REVISADO) ─────────────────────────────────────────────────────────
+// enum ChannelKind es el nombre canónico (antes ChannelType — renombrado para
+// alinear con el import en agent-runner.ts y todos los DTOs).
 // Valores exactos: telegram, whatsapp, webchat, discord, teams, slack, webhook.
 //
-// ── AUDIT-24 ─────────────────────────────────────────────────────────────────────────
-// ChannelConfig.secretsEncrypted es String? (nullable).
-// AES-256-GCM se aplica en F3b-05; hasta entonces puede estar vacío.
-// Los adapters deben leer secretsEncrypted (NO tokenEnc ni credentials).
-//
-// ── AUDIT-25 (REVISADO) ────────────────────────────────────────────────────────────────
-// ChannelConfig.botStatus BotStatus @default(draft) es la fuente de verdad
-// runtime del estado de canal. isActive Boolean es un campo DERIVADO (deprecated)
-// que ChannelLifecycleService mantiene sincronizado como:
-//   isActive = botStatus IN (online, degraded)
-// No usar isActive para lógica nueva. Se eliminará en migración futura.
+// ── Run — campos extendidos ──────────────────────────────────────────────────────
+// Run.flowId es opcional (runs directos sin Flow).
+// Run.workspaceId, agentId, sessionId, channelKind, inputData, outputData agregados
+// para AgentRunner (flow-engine).
 // ─────────────────────────────────────────────────────────────────────────────────
 
 generator client {
@@ -60,7 +32,20 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ─── Hierarchy ──────────────────────────────────────────────────────────────────────────────
+// ─── Auth ────────────────────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String?
+  /// bcrypt hash
+  password  String
+  role      String   @default("admin")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Hierarchy ──────────────────────────────────────────────────────────────────
 
 model Agency {
   id           String       @id @default(uuid())
@@ -113,15 +98,15 @@ model Workspace {
   model        String     @default("openai/gpt-4o")
   profileJson  Json?
   /// true = este Workspace es el orquestador de nivel 3 de su Department.
-  /// Solo uno por Department. Enforced por partial unique index en migración (C-20).
   isLevelOrchestrator Boolean  @default(false)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
-  agents       Agent[]
+  agents         Agent[]
   channelConfigs ChannelConfig[]
-  budgetPolicy BudgetPolicy? @relation("WorkspaceBudget")
-  modelPolicy  ModelPolicy?  @relation("WorkspaceModel")
+  budgetPolicy   BudgetPolicy? @relation("WorkspaceBudget")
+  modelPolicy    ModelPolicy?  @relation("WorkspaceModel")
+  runs           Run[]
 
   @@unique([departmentId, slug])
 }
@@ -134,9 +119,6 @@ model Agent {
   slug         String
   /// 'orchestrator' | 'specialist' | 'subagent'
   role         String    @default("specialist")
-  /// true = este Agent es el orquestador de nivel 4 de su Workspace.
-  /// Solo uno por Workspace. Enforced por partial unique index en migración (C-20).
-  /// El ProfilePropagatorService actualiza SOLO el agente con isLevelOrchestrator=true (D-24f).
   isLevelOrchestrator Boolean  @default(false)
   systemPrompt String?   @db.Text
   model        String    @default("openai/gpt-4o")
@@ -149,6 +131,7 @@ model Agent {
   flows           Flow[]
   subagents       Subagent[]
   runSteps        RunStep[]
+  runs            Run[]
   budgetPolicy    BudgetPolicy? @relation("AgentBudget")
   modelPolicy     ModelPolicy?  @relation("AgentModel")
 
@@ -172,7 +155,7 @@ model Subagent {
   @@unique([agentId, slug])
 }
 
-// ─── Skills / Tools ──────────────────────────────────────────────────────────────────────
+// ─── Skills / Tools ──────────────────────────────────────────────────────────────
 
 model Skill {
   id          String   @id @default(uuid())
@@ -180,13 +163,10 @@ model Skill {
   description String?  @db.Text
   /// 'mcp' | 'builtin' | 'n8n_webhook' | 'openapi' | 'function'
   type        String
-  /// For mcp:         { command, args, env }
-  /// For n8n_webhook: { webhookUrl, method }
-  /// For openapi:     { specUrl, operationId }
-  /// For function:    { handler (serialized) }
   config      Json
-  /// JSON Schema of expected input
   schema      Json?
+  isActive    Boolean  @default(true)
+  workspaceId String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -212,17 +192,19 @@ model SubagentSkill {
   @@id([subagentId, skillId])
 }
 
-// ─── Flows ───────────────────────────────────────────────────────────────────────────────
+// ─── Flows ───────────────────────────────────────────────────────────────────────
 
 model Flow {
   id          String   @id @default(uuid())
-  /// Ownership real: Flow → Agent → Workspace → Department → Agency (D-07)
   agentId     String
   agent       Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
   name        String
   description String?
   /// Serialized FlowSpec — { nodes: FlowNode[], edges: FlowEdge[] }
   spec        Json
+  /// Raw nodes array (React Flow canvas state) — redundante con spec.nodes,
+  /// mantenido para queries rápidas desde el canvas.
+  nodes       Json     @default("[]")
   version     Int      @default(1)
   isActive    Boolean  @default(false)
   createdAt   DateTime @default(now())
@@ -231,24 +213,37 @@ model Flow {
   runs Run[]
 }
 
-// ─── Runs ──────────────────────────────────────────────────────────────────────────────
+// ─── Runs ─────────────────────────────────────────────────────────────────────────
 
 model Run {
   id           String    @id @default(uuid())
-  flowId       String
-  flow         Flow      @relation(fields: [flowId], references: [id])
+  /// flowId es opcional: runs directos sin Flow (AgentRunner modo conversación)
+  flowId       String?
+  flow         Flow?     @relation(fields: [flowId], references: [id])
+  /// workspaceId — scope de auditoría y billing
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id])
+  /// agentId — agente directo (cuando no hay flow)
+  agentId      String?
+  agent        Agent?    @relation(fields: [agentId], references: [id])
+  /// sessionId — sesión de canal (GatewaySession.id)
+  sessionId    String?
+  /// Canal de entrada: telegram, discord, webchat, etc.
+  channelKind  ChannelKind?
   /// Solo referencia para queries de dashboard.
-  /// El ownership real es el path Flow → Agent → Workspace → Department → Agency (D-07).
   agencyId     String?
   agency       Agency?   @relation(fields: [agencyId], references: [id])
-  /// 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'waiting_approval'
-  status       String    @default("queued")
+  /// 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+  status       String    @default("pending")
+  /// Datos de entrada del run
+  inputData    Json      @default("{}")
+  /// Datos de salida del run
+  outputData   Json?
   /// { type: 'manual' | 'channel' | 'schedule' | 'replay:<runId>', payload? }
-  trigger      Json
+  trigger      Json      @default("{}")
   error        String?   @db.Text
   startedAt    DateTime  @default(now())
   completedAt  DateTime?
-  /// Accumulated cost for the whole run (sum of RunStep.costUsd)
   totalCostUsd Float     @default(0)
   metadata     Json?
   createdAt    DateTime  @default(now())
@@ -256,40 +251,45 @@ model Run {
   steps RunStep[]
 
   @@index([flowId, status])
-  /// D-10: índice corregido — agrega status al compuesto
+  @@index([workspaceId, status, createdAt])
   @@index([agencyId, status, createdAt])
 }
 
 model RunStep {
-  id          String    @id @default(uuid())
-  runId       String
-  run         Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
-  /// Matches FlowNode.id in the flow spec
-  nodeId      String
-  /// 'agent' | 'tool' | 'condition' | 'loop' | 'approval' | 'input' | 'output'
-  nodeType    String
-  agentId     String?
-  agent       Agent?    @relation(fields: [agentId], references: [id])
-  /// 'queued' | 'running' | 'completed' | 'failed' | 'skipped' | 'waiting_approval'
-  status      String    @default("queued")
-  input       Json?
-  output      Json?
-  error       String?   @db.Text
-  /// { input: number, output: number }
-  tokenUsage  Json?
-  costUsd     Float     @default(0)
-  retryCount  Int       @default(0)
-  startedAt   DateTime  @default(now())
-  completedAt DateTime?
+  id               String    @id @default(uuid())
+  runId            String
+  run              Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  nodeId           String
+  nodeType         String
+  agentId          String?
+  agent            Agent?    @relation(fields: [agentId], references: [id])
+  /// 'queued' | 'running' | 'completed' | 'failed' | 'skipped'
+  status           String    @default("queued")
+  /// Step index within the run (0-based)
+  index            Int       @default(0)
+  input            Json?
+  output           Json?
+  error            String?   @db.Text
+  model            String?
+  provider         String?
+  tokenUsage       Json?
+  promptTokens     Int?
+  completionTokens Int?
+  totalTokens      Int?
+  costUsd          Float?
+  retryCount       Int       @default(0)
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime  @default(now())
 
-  /// D-10: índices de performance obligatorios
   @@index([runId, status])
-  @@index([agentId, startedAt])
+  @@index([agentId, createdAt])
 }
 
-/// AUDIT-23: enum canónico — nombre ChannelType (NO ChannelKind).
+/// AUDIT-23 (REVISADO): enum ChannelKind — nombre canónico.
+/// Renombrado de ChannelType para alinear con agent-runner.ts y todos los DTOs.
 /// Valores exactos (7): telegram, whatsapp, webchat, discord, teams, slack, webhook.
-enum ChannelType {
+enum ChannelKind {
   telegram
   whatsapp
   webchat
@@ -300,78 +300,32 @@ enum ChannelType {
 }
 
 /// Estado operacional del canal — fuente de verdad runtime (AUDIT-25).
-///
-/// CICLO DE VIDA:
-///   draft → configured → provisioning → needsauth? → starting → online
-///                                                              ↘ error
-///                                              ↘ offline ← online/degraded
-///   online ↔ degraded
-///   offline/error → starting | provisioning | deprovisioned
-///   deprovisioned = TERMINAL (no hay transición de salida)
-///
-/// REMAPEO desde valores legacy (aplicar en migración SQL antes de ALTER TYPE):
-///   initializing  → starting    (semánticamente lo más cercano)
-///   rate_limited  → degraded    (degradación parcial de servicio)
-///   webhook_error → error       (error crítico de conectividad)
-///   online/offline/error        → sin cambio
-///
-/// isActive (deprecated) = botStatus IN (online, degraded)
-/// Solo ChannelLifecycleService escribe botStatus e isActive.
 enum BotStatus {
-  /// Canal recién creado, sin configuración completa.
   draft
-  /// Configuración guardada, pendiente de provisionar.
   configured
-  /// Provisionando recursos externos (webhook, bot token, etc.).
   provisioning
-  /// Esperando acción de autenticación del usuario (ej: QR de WhatsApp).
   needsauth
-  /// Iniciando conexión — webhook registrado o bot conectándose.
   starting
-  /// Conectado y procesando mensajes normalmente.
   online
-  /// Conectado pero con degradación parcial (rate limit, latencia alta).
   degraded
-  /// Desconectado limpiamente — puede reiniciarse.
   offline
-  /// Error no recuperable — requiere intervención manual.
   error
-  /// Dado de baja permanentemente. ESTADO TERMINAL.
-  /// Para reprovisionar: crear un nuevo ChannelConfig.
   deprovisioned
 }
 
-// ─── Gateway / Channels ─────────────────────────────────────────────────────────────────
+// ─── Gateway / Channels ──────────────────────────────────────────────────────────
 
-/// AUDIT-25 (REVISADO): botStatus BotStatus @default(draft) es la fuente de verdad
-/// runtime del estado de canal. isActive Boolean @default(false) es DERIVADO (deprecated):
-///   isActive = botStatus IN (online, degraded)
-/// ChannelLifecycleService es el ÚNICO escritor de botStatus e isActive.
-/// No usar isActive para lógica nueva — se eliminará en migración futura.
-///
-/// AUDIT-24: secretsEncrypted es String? (nullable) — AES-256-GCM se aplica en F3b-05.
-/// Los adapters leen secretsEncrypted (NO tokenEnc ni credentials).
 model ChannelConfig {
   id               String      @id @default(uuid())
-  type             ChannelType
+  type             ChannelKind
   name             String
-  /// FIX #173 (Opción A): workspaceId — requerido por GatewayService.dispatch()
   workspaceId      String
   workspace        Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  /// AUDIT-24: nullable — AES-256-GCM encrypted secrets (GATEWAY_ENCRYPTION_KEY env key).
-  /// Vacío hasta que F3b-05 esté completo. Adapters leen este campo, NO 'credentials'.
   secretsEncrypted String?     @db.Text
-  /// Non-sensitive config: { webhookPath, parseMode, allowedOrigins, ... }
   config           Json
-  /// AUDIT-25 (deprecated): campo derivado. isActive = botStatus IN (online, degraded).
-  /// Mantenido por ChannelLifecycleService. No usar para lógica nueva.
   isActive         Boolean     @default(false)
-  /// AUDIT-25: SSoT runtime. Solo ChannelLifecycleService escribe este campo.
-  /// Ver enum BotStatus para el ciclo de vida completo y VALID_TRANSITIONS.
   botStatus        BotStatus   @default(draft)
-  /// Detalle del último error o aviso (stack trace, mensaje de API, etc.)
   statusDetail     String?     @db.Text
-  /// Timestamp del último cambio de botStatus.
   statusUpdatedAt  DateTime?
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
@@ -385,20 +339,17 @@ model ChannelConfig {
 }
 
 model ChannelBinding {
-  id              String        @id @default(uuid())
-  channelConfigId String
-  channelConfig   ChannelConfig @relation(fields: [channelConfigId], references: [id], onDelete: Cascade)
-  agentId         String
-  agent           Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  /// Level that owns this binding: 'agency' | 'department' | 'workspace' | 'agent'
-  scopeLevel      String        @default("agent")
-  /// ID of the scope entity (agencyId, departmentId, etc.)
-  scopeId         String
-  /// FIX: campos reales usados por makeBindingResolver en discord.commands.ts
+  id                String        @id @default(uuid())
+  channelConfigId   String
+  channelConfig     ChannelConfig @relation(fields: [channelConfigId], references: [id], onDelete: Cascade)
+  agentId           String
+  agent             Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  scopeLevel        String        @default("agent")
+  scopeId           String        @default("")
   externalChannelId String?
   externalGuildId   String?
-  isDefault       Boolean       @default(false)
-  createdAt       DateTime      @default(now())
+  isDefault         Boolean       @default(false)
+  createdAt         DateTime      @default(now())
 
   @@unique([channelConfigId, agentId])
 }
@@ -407,14 +358,9 @@ model GatewaySession {
   id              String        @id @default(uuid())
   channelConfigId String
   channelConfig   ChannelConfig @relation(fields: [channelConfigId], references: [id])
-  /// External user ID in the channel (Telegram chat_id, WhatsApp phone, etc.)
   externalUserId  String
   agentId         String
-  /// D-15: messageHistory ELIMINADO.
-  /// Contexto activo de la sesión (ventana de tokens para el LLM).
-  /// El historial completo vive en ConversationMessage (append-only).
   activeContextJson Json?
-  /// 'active' | 'paused' | 'closed'
   state           String        @default("active")
   metadata        Json?
   createdAt       DateTime      @default(now())
@@ -426,25 +372,16 @@ model GatewaySession {
   @@index([agentId, state])
 }
 
-/// D-11: Historial append-only de mensajes por sesión.
-/// La transformación al formato del proveedor LLM ocurre en runtime, no en almacenamiento.
 model ConversationMessage {
   id               String         @id @default(uuid())
   sessionId        String
   session          GatewaySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  /// 'user' | 'assistant' | 'tool' | 'system'
   role             String
-  /// Texto plano del mensaje (null si es tool call o contenido binario)
   contentText      String?        @db.Text
-  /// Contenido estructurado completo (siempre presente)
   contentJson      Json
-  /// ID del mensaje en el canal externo (Telegram message_id, etc.)
   channelMessageId String?
-  /// Para mensajes de tipo tool: ID de la llamada
   toolCallId       String?
-  /// Para mensajes de tipo tool: nombre del skill invocado
   toolName         String?
-  /// Scope que generó este mensaje (para queries de dashboard)
   scopeType        String?
   scopeId          String?
   tokenCount       Int?
@@ -455,12 +392,11 @@ model ConversationMessage {
   @@index([scopeId, createdAt])
 }
 
-// ─── n8n Integration ─────────────────────────────────────────────────────────────────────
+// ─── n8n Integration ─────────────────────────────────────────────────────────────
 
 model N8nConnection {
   id              String   @id @default(uuid())
   name            String   @default("default")
-  /// Base URL of the n8n instance, e.g. https://n8n.example.com
   baseUrl         String
   apiKeyEncrypted String   @db.Text
   isActive        Boolean  @default(true)
@@ -474,11 +410,9 @@ model N8nWorkflow {
   id            String        @id @default(uuid())
   connectionId  String
   connection    N8nConnection @relation(fields: [connectionId], references: [id])
-  /// Workflow ID as it exists inside n8n
   n8nWorkflowId String
   name          String
   description   String?
-  /// JSON Schema of parameters exposed to skills
   inputSchema   Json?
   webhookUrl    String?
   isActive      Boolean  @default(true)
@@ -488,7 +422,7 @@ model N8nWorkflow {
   @@unique([connectionId, n8nWorkflowId])
 }
 
-// ─── Provider Credentials ──────────────────────────────────────────────────────────────
+// ─── Provider Credentials ─────────────────────────────────────────────────────────
 
 model ProviderCredential {
   id               String    @id @default(uuid())
@@ -510,7 +444,7 @@ model ProviderCredential {
   @@index([agencyId, type, isActive])
 }
 
-// ─── Model Catalog ──────────────────────────────────────────────────────────────────────
+// ─── Model Catalog ────────────────────────────────────────────────────────────────
 
 model ModelCatalogEntry {
   id           String             @id @default(uuid())
@@ -530,7 +464,7 @@ model ModelCatalogEntry {
   @@index([modelId])
 }
 
-// ─── Budget / Model Policies ─────────────────────────────────────────────────────────────
+// ─── Budget / Model Policies ──────────────────────────────────────────────────────
 
 model BudgetPolicy {
   id         String   @id @default(uuid())
@@ -571,7 +505,7 @@ model ModelPolicy {
   agent      Agent?      @relation("AgentModel",      fields: [agentId],      references: [id], onDelete: Cascade)
 }
 
-// ─── Audit ────────────────────────────────────────────────────────────────────────────────
+// ─── Audit ───────────────────────────────────────────────────────────────────────
 
 model AuditEvent {
   id        String   @id @default(uuid())
@@ -587,17 +521,10 @@ model AuditEvent {
   @@index([userId, createdAt])
 }
 
-// ─── System Config (single-tenant settings) ──────────────────────────────────────────────
-//
-// Almacena API keys y URLs configuradas desde Settings UI.
-// Sin cifrado — mismo nivel de confianza que process.env / .env en disco.
-// El admin es el único usuario del sistema (single-tenant).
-// resolveApiKey() en llm-client.ts prioriza estos valores sobre process.env.
+// ─── System Config ────────────────────────────────────────────────────────────────
 
 model SystemConfig {
-  /// Nombre de la variable de entorno, ej: 'OPENAI_API_KEY', 'N8N_BASE_URL'
   key       String   @id
-  /// Valor plaintext — misma confianza que .env
   value     String
   updatedAt DateTime @updatedAt
 }

@@ -1,11 +1,7 @@
 /**
  * DTO para PATCH /channels/:id — actualización parcial.
  *
- * Regla: si se envía credentials, DEBE ser completo para ese canal.
- * No se permiten patches parciales de credentials (seguridad: evitar
- * reemplazar solo el botToken dejando el webhookSecret del canal anterior).
- *
- * Si credentials no se envía, secretsEncrypted no se toca.
+ * ChannelKind es el enum canónico del schema Prisma (antes ChannelType).
  */
 
 import { z }            from 'zod'
@@ -24,10 +20,6 @@ export const UpdateChannelConfigSchema = z.object({
   name:     z.string().min(1).max(128).optional(),
   isActive: z.boolean().optional(),
   config:   z.record(z.unknown()).optional(),
-  /**
-   * Para actualizar credenciales: enviar el tipo explícito + credentials completas.
-   * Si credentials se envía, type es obligatorio para saber qué schema usar.
-   */
   credentials: z.union([
     z.object({ type: z.literal(ChannelKind.telegram), data: TelegramCredentialsSchema }),
     z.object({ type: z.literal(ChannelKind.whatsapp), data: WhatsAppCredentialsSchema }),

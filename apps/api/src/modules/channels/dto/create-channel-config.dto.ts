@@ -1,12 +1,8 @@
 /**
  * DTO para POST /channels — crea un nuevo ChannelConfig.
  *
- * Flujo en el handler:
- *   1. Zod valida el body completo (type + credentials + config)
- *   2. parseCredentials(type, credentials) valida estructura por canal
- *   3. encryptSecrets(credentials) → secretsEncrypted
- *   4. prisma.channelConfig.create({ data: { type, name, config, secretsEncrypted, ... } })
- *   5. La respuesta NUNCA incluye credentials ni secretsEncrypted
+ * ChannelKind es el enum canónico del schema Prisma (antes ChannelType).
+ * Los valores son los mismos 7: telegram, whatsapp, webchat, discord, teams, slack, webhook.
  */
 
 import { z }            from 'zod'
@@ -21,7 +17,7 @@ import {
   WebchatCredentialsSchema,
 } from '@lss/crypto'
 
-// ── Schemas de config (no-sensible) por canal ──────────────────────────
+// ── Schemas de config (no-sensible) por canal ───────────────────────────────────
 
 const TelegramConfigSchema = z.object({
   parseMode:        z.enum(['Markdown', 'HTML', 'MarkdownV2']).default('Markdown'),
@@ -58,7 +54,7 @@ const WebchatConfigSchema = z.object({
   sessionTimeoutMs: z.number().int().positive().default(1_800_000),
 }).default({})
 
-// ── Discriminated union completa ────────────────────────────────────────
+// ── Discriminated union ──────────────────────────────────────────────────────────
 
 export const CreateChannelConfigSchema = z.discriminatedUnion('type', [
   z.object({
