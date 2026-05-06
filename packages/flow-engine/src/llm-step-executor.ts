@@ -5,7 +5,7 @@
  * Cambios respecto a la versión anterior:
  *   - Integra ModelPolicyResolver para resolver modelo con jerarquía
  *     flow_node > agent > workspace > fallback
- *   - Soporta providers OAuth via OAuthService.getAccessToken()
+ *   - Soporta providers OAuth via IOAuthService.getAccessToken()
  *   - Escribe CostEvent en DB al finalizar el step (async, no bloquea)
  *   - Mantiene backwards-compat: si no se inyecta prisma, funciona igual
  *     que antes (resolución por nodeConfig solamente)
@@ -21,7 +21,18 @@ import type { SkillSpec } from '../../core-types/src/skill-spec.js'
 import { ModelPolicyResolver } from './model-policy-resolver.js'
 import type { ResolvedModel } from './model-policy-resolver.js'
 import type { PrismaClient } from '@prisma/client'
-import type { OAuthService } from '../../apps/api/src/services/oauth.service.js'
+
+// ── Contrato mínimo de OAuthService ─────────────────────────────────────
+// No importamos desde apps/api para no cruzar el monorepo-graph.
+// El servicio real (apps/api/src/services/oauth.service.ts) implementa
+// esta interfaz. Se inyecta en runtime desde la app.
+// Patrón idéntico al usado en agent-runner.ts → IOAuthService.
+
+/** Contrato mínimo de OAuthService usado por LLMStepExecutor.
+ *  El servicio real (apps/api) lo implementa. Se inyecta en runtime. */
+export interface IOAuthService {
+  getAccessToken(llmProviderId: string): Promise<string>
+}
 
 // ── Config ──────────────────────────────────────────────────────────────
 
@@ -51,8 +62,9 @@ export interface LLMStepExecutorConfig {
   /**
    * OAuthService para obtener access tokens de providers OAuth.
    * Solo necesario si algún provider usa authType = 'oauth'.
+   * Tipado como IOAuthService local para evitar import cross-package.
    */
-  oauthService?: OAuthService
+  oauthService?: IOAuthService
 
   /**
    * Cost estimator — solo usado en modo "sin DB" (sin CostEvent).
