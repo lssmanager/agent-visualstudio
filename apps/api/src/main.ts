@@ -1,3 +1,4 @@
+import 'reflect-metadata';
 import { createServer } from './server';
 import { studioConfig } from './config';
 import { startCatalogSyncScheduler } from './services/catalog-sync.scheduler.js';
