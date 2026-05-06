@@ -14,7 +14,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { AgentTemplate } from './types.js';
+import type { AgentTemplate } from './types';
 
 /** Matches YAML frontmatter between --- delimiters. */
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;

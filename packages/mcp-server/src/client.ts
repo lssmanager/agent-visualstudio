@@ -2,7 +2,7 @@
  * LSS API client for the MCP server.
  * Adapted from lssmanager/paperclip — PaperclipApiClient → LssApiClient.
  */
-import type { McpServerConfig } from './config.js';
+import type { McpServerConfig } from './config';
 
 export class LssApiError extends Error {
   readonly status: number;

@@ -9,8 +9,8 @@
  *   server.addTools(tools);
  */
 import { z } from 'zod';
-import type { McpToolDefinition } from './tools.js';
-import { formatErrorResponse, formatTextResponse } from './format.js';
+import type { McpToolDefinition } from './tools';
+import { formatErrorResponse, formatTextResponse } from './format';
 
 /** Minimal SkillSpec shape needed by the bridge — avoids circular dep */
 export interface BridgedSkillSpec {
