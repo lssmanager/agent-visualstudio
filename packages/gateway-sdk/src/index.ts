@@ -1,15 +1,13 @@
-/**
- * gateway-sdk/src/index.ts — public API
- *
- * Fix: Removed .js extensions from relative imports.
- * CommonJS + moduleResolution:node10 with ts-node --transpile-only does NOT
- * remap .js → .ts, so bare relative imports are required.
- */
-export { SessionManager } from './session-manager';
-export type { SessionHistoryEntry, ActiveSession } from './session-manager';
+// packages/gateway-sdk/src/index.ts
+// @lss/gateway-sdk — public API
 
-export { TelegramAdapter } from './adapters/telegram';
-
-export type { ChannelMessage, ChannelAdapter, ChannelAdapterFactory } from './types';
-export { gatewayMethods } from './types';
-export type { GatewayMethod, GatewayRpcEnvelope, GatewayHealthPayload } from './types';
+export { SessionManager } from './session-manager'
+export { TelegramAdapter } from './adapters/telegram'
+export type { GatewaySession, SessionEvent } from './types'
+export type { ChannelAdapter, AdapterConfig } from './channel-adapter'
+export { GatewayClient } from './client'
+export type { GatewayClientOptions } from './client'
+export * from './protocol'
+export * from './methods'
+export * from './events'
+export * from './auth'

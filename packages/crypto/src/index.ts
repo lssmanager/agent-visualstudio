@@ -4,12 +4,8 @@
 export {
   encryptSecrets,
   decryptSecrets,
-  // Fix typo: los exports de channel-secrets.ts son PLURAL (encryptSecrets/decryptSecrets)
-  // Los singulares (encryptSecret/decryptSecret) no existen en el módulo fuente.
-} from './channel-secrets.js'
+} from './channel-secrets'
 
-// Fix 9: exportar Zod schemas CON sufijo Schema (los DTOs los importan así)
-// Los types (sin sufijo) también se exportan para backward compat.
 export {
   TelegramCredentialsSchema,
   WhatsAppCredentialsSchema,
@@ -21,7 +17,7 @@ export {
   CREDENTIALS_SCHEMA_BY_TYPE,
   parseCredentials,
   safeParseCredentials,
-} from './credentials-schema.js'
+} from './credentials-schema'
 
 export type {
   TelegramCredentials,
@@ -32,8 +28,6 @@ export type {
   WebhookCredentials,
   WebchatCredentials,
   CredentialsByType,
-} from './credentials-schema.js'
+} from './credentials-schema'
 
-// [F3b-05] API de bajo nivel AES-256-GCM con SECRETS_ENCRYPTION_KEY (hex 64 chars).
-// Formato: <iv_b64url>.<tag_b64url>.<ct_b64url> — distinto del formato binario de channel-secrets.
-export { encrypt, decrypt, encryptObject, decryptObject } from './aes.js'
+export { encrypt, decrypt, encryptObject, decryptObject } from './aes'
