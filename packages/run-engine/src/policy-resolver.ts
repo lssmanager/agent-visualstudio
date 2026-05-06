@@ -61,40 +61,47 @@ export class PolicyResolver {
   }
 
   // ─── ModelPolicy cascade ──────────────────────────────────────────────────
+  //
+  // IMPORTANT: agentId / departmentId / agencyId are NOT @unique in the schema
+  // (only workspaceId is). Use findFirst() for those levels; findUnique() only
+  // for workspaceId where the unique constraint exists.
 
   async resolveModel(
     ctx: PolicyResolverContext,
   ): Promise<{ policy: ModelPolicySpec; level: EffectivePolicy['modelResolvedFrom'] } | null> {
-    const agent = await this.db.modelPolicy.findUnique({ where: { agentId: ctx.agentId } });
+    const agent = await this.db.modelPolicy.findFirst({ where: { agentId: ctx.agentId } });
     if (agent) return { policy: toModelSpec(agent), level: 'agent' };
 
     const ws = await this.db.modelPolicy.findUnique({ where: { workspaceId: ctx.workspaceId } });
     if (ws) return { policy: toModelSpec(ws), level: 'workspace' };
 
-    const dept = await this.db.modelPolicy.findUnique({ where: { departmentId: ctx.departmentId } });
+    const dept = await this.db.modelPolicy.findFirst({ where: { departmentId: ctx.departmentId } });
     if (dept) return { policy: toModelSpec(dept), level: 'department' };
 
-    const agency = await this.db.modelPolicy.findUnique({ where: { agencyId: ctx.agencyId } });
+    const agency = await this.db.modelPolicy.findFirst({ where: { agencyId: ctx.agencyId } });
     if (agency) return { policy: toModelSpec(agency), level: 'agency' };
 
     return null;
   }
 
   // ─── BudgetPolicy cascade ─────────────────────────────────────────────────
+  //
+  // Same rule: agentId / departmentId / agencyId → findFirst.
+  // workspaceId is @unique → findUnique is valid.
 
   async resolveBudget(
     ctx: PolicyResolverContext,
   ): Promise<{ policy: BudgetPolicySpec; level: EffectivePolicy['budgetResolvedFrom'] } | null> {
-    const agent = await this.db.budgetPolicy.findUnique({ where: { agentId: ctx.agentId } });
+    const agent = await this.db.budgetPolicy.findFirst({ where: { agentId: ctx.agentId } });
     if (agent) return { policy: toBudgetSpec(agent), level: 'agent' };
 
     const ws = await this.db.budgetPolicy.findUnique({ where: { workspaceId: ctx.workspaceId } });
     if (ws) return { policy: toBudgetSpec(ws), level: 'workspace' };
 
-    const dept = await this.db.budgetPolicy.findUnique({ where: { departmentId: ctx.departmentId } });
+    const dept = await this.db.budgetPolicy.findFirst({ where: { departmentId: ctx.departmentId } });
     if (dept) return { policy: toBudgetSpec(dept), level: 'department' };
 
-    const agency = await this.db.budgetPolicy.findUnique({ where: { agencyId: ctx.agencyId } });
+    const agency = await this.db.budgetPolicy.findFirst({ where: { agencyId: ctx.agencyId } });
     if (agency) return { policy: toBudgetSpec(agency), level: 'agency' };
 
     return null;
@@ -157,6 +164,7 @@ type BudgetPolicyRow = {
 type ModelPolicyRow = {
   id: string;
   primaryModel: string;
+  fallbackModel: string | null;  // added schema v12 — single fallback slot
   fallbackChain: string[];
   temperature: number | null;
   maxTokens: number | null;
@@ -187,6 +195,7 @@ export function toModelSpec(row: ModelPolicyRow): ModelPolicySpec {
   return {
     id:            row.id,
     primaryModel:  row.primaryModel,
+    fallbackModel: row.fallbackModel ?? null,
     fallbackChain: row.fallbackChain,
     temperature:   row.temperature,
     maxTokens:     row.maxTokens,
