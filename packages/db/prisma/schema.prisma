@@ -1,14 +1,12 @@
 // ============================================================
 // schema.prisma — Agent Visual Studio
-// SCHEMA CANÓNICO v10.1 — FIXES DE TIPOS + BotStatus expandido
+// SCHEMA CANÓNICO v10.2 — agregar modelo User
 //
 // Arquitectura: Agency → Department → Workspace → Agent
 //
 // v10   — Fixes de tipos (para desbloquear tsc)
-// v10.1 — BotStatus expandido con los 9 estados reales que usa
-//         channel-lifecycle.service.ts:
-//         draft|configured|provisioning|needsauth|starting|
-//         online|degraded|offline|deprovisioned
+// v10.1 — BotStatus expandido con los 9 estados reales
+// v10.2 — Modelo User agregado (requerido por auth.service.ts)
 // ============================================================
 
 generator client {
@@ -1039,4 +1037,21 @@ model ActivityLog {
   @@index([actorId, createdAt])
   @@index([resourceId, createdAt])
   @@map("activity_logs")
+}
+
+// ────────────────────────────────────────────────────────────
+// AUTH — LOCAL USERS
+// v10.2: Modelo User agregado para auth.service.ts (login/register local)
+// ────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  passwordHash String?
+  role         String   @default("member")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("users")
 }

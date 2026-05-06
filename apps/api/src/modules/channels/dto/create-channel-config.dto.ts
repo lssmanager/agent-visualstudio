@@ -9,8 +9,8 @@
  *   5. La respuesta NUNCA incluye credentials ni secretsEncrypted
  */
 
-import { z }           from 'zod'
-import { ChannelType } from '@prisma/client'
+import { z }            from 'zod'
+import { ChannelKind }  from '@prisma/client'
 import {
   TelegramCredentialsSchema,
   WhatsAppCredentialsSchema,
@@ -62,43 +62,43 @@ const WebchatConfigSchema = z.object({
 
 export const CreateChannelConfigSchema = z.discriminatedUnion('type', [
   z.object({
-    type:        z.literal(ChannelType.telegram),
+    type:        z.literal(ChannelKind.telegram),
     name:        z.string().min(1).max(128),
     credentials: TelegramCredentialsSchema,
     config:      TelegramConfigSchema,
   }),
   z.object({
-    type:        z.literal(ChannelType.whatsapp),
+    type:        z.literal(ChannelKind.whatsapp),
     name:        z.string().min(1).max(128),
     credentials: WhatsAppCredentialsSchema,
     config:      WhatsAppConfigSchema,
   }),
   z.object({
-    type:        z.literal(ChannelType.discord),
+    type:        z.literal(ChannelKind.discord),
     name:        z.string().min(1).max(128),
     credentials: DiscordCredentialsSchema,
     config:      DiscordConfigSchema,
   }),
   z.object({
-    type:        z.literal(ChannelType.teams),
+    type:        z.literal(ChannelKind.teams),
     name:        z.string().min(1).max(128),
     credentials: TeamsCredentialsSchema,
     config:      TeamsConfigSchema,
   }),
   z.object({
-    type:        z.literal(ChannelType.slack),
+    type:        z.literal(ChannelKind.slack),
     name:        z.string().min(1).max(128),
     credentials: SlackCredentialsSchema,
     config:      SlackConfigSchema,
   }),
   z.object({
-    type:        z.literal(ChannelType.webhook),
+    type:        z.literal(ChannelKind.webhook),
     name:        z.string().min(1).max(128),
     credentials: WebhookCredentialsSchema,
     config:      WebhookConfigSchema,
   }),
   z.object({
-    type:        z.literal(ChannelType.webchat),
+    type:        z.literal(ChannelKind.webchat),
     name:        z.string().min(1).max(128),
     credentials: WebchatCredentialsSchema,
     config:      WebchatConfigSchema,
