@@ -1,14 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common'
-import { PrismaService } from '../../lib/prisma.service.js'
-import { GatewayService } from '../gateway/gateway.service.js'
-import { AgentResolverService } from '../gateway/agent-resolver.service.js'
+import { PrismaService } from '../../lib/prisma.service'
+import { GatewayService } from '../gateway/gateway.service'
+import { AgentResolverService } from '../gateway/agent-resolver.service'
 import {
   ChannelNotFoundError,
   InvalidTransitionError,
   ChannelAlreadyInStateError,
   WebhookRegistrationError,
-} from './channel-lifecycle.errors.js'
-import type { ProvisionChannelDto, ChannelStatusDto } from './dto/provision-channel.dto.js'
+} from './channel-lifecycle.errors'
+import type { ProvisionChannelDto, ChannelStatusDto } from './dto/provision-channel.dto'
 import { createCipheriv, randomBytes } from 'crypto'
 
 /**

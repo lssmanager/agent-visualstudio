@@ -3,17 +3,17 @@ import {
   Body, HttpCode, HttpStatus, HttpException,
 } from '@nestjs/common'
 import { Router } from 'express'
-import { PrismaService } from '../../lib/prisma.service.js'
-import { ChannelLifecycleService } from './channel-lifecycle.service.js'
-import { GatewayService } from '../gateway/gateway.service.js'
-import { AgentResolverService } from '../gateway/agent-resolver.service.js'
-import { ProvisionChannelDto }     from './dto/provision-channel.dto.js'
+import { PrismaService } from '../../lib/prisma.service'
+import { ChannelLifecycleService } from './channel-lifecycle.service'
+import { GatewayService } from '../gateway/gateway.service'
+import { AgentResolverService } from '../gateway/agent-resolver.service'
+import { ProvisionChannelDto }     from './dto/provision-channel.dto'
 import {
   ChannelNotFoundError,
   InvalidTransitionError,
   ChannelAlreadyInStateError,
   WebhookRegistrationError,
-} from './channel-lifecycle.errors.js'
+} from './channel-lifecycle.errors'
 
 @Controller('channels')
 export class ChannelsController {
