@@ -8,8 +8,8 @@
  * Si credentials no se envía, secretsEncrypted no se toca.
  */
 
-import { z }           from 'zod'
-import { ChannelType } from '@prisma/client'
+import { z }            from 'zod'
+import { ChannelKind }  from '@prisma/client'
 import {
   TelegramCredentialsSchema,
   WhatsAppCredentialsSchema,
@@ -29,13 +29,13 @@ export const UpdateChannelConfigSchema = z.object({
    * Si credentials se envía, type es obligatorio para saber qué schema usar.
    */
   credentials: z.union([
-    z.object({ type: z.literal(ChannelType.telegram), data: TelegramCredentialsSchema }),
-    z.object({ type: z.literal(ChannelType.whatsapp), data: WhatsAppCredentialsSchema }),
-    z.object({ type: z.literal(ChannelType.discord),  data: DiscordCredentialsSchema }),
-    z.object({ type: z.literal(ChannelType.teams),    data: TeamsCredentialsSchema }),
-    z.object({ type: z.literal(ChannelType.slack),    data: SlackCredentialsSchema }),
-    z.object({ type: z.literal(ChannelType.webhook),  data: WebhookCredentialsSchema }),
-    z.object({ type: z.literal(ChannelType.webchat),  data: WebchatCredentialsSchema }),
+    z.object({ type: z.literal(ChannelKind.telegram), data: TelegramCredentialsSchema }),
+    z.object({ type: z.literal(ChannelKind.whatsapp), data: WhatsAppCredentialsSchema }),
+    z.object({ type: z.literal(ChannelKind.discord),  data: DiscordCredentialsSchema }),
+    z.object({ type: z.literal(ChannelKind.teams),    data: TeamsCredentialsSchema }),
+    z.object({ type: z.literal(ChannelKind.slack),    data: SlackCredentialsSchema }),
+    z.object({ type: z.literal(ChannelKind.webhook),  data: WebhookCredentialsSchema }),
+    z.object({ type: z.literal(ChannelKind.webchat),  data: WebchatCredentialsSchema }),
   ]).optional(),
 })
 

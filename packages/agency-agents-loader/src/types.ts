@@ -42,6 +42,16 @@ export interface DepartmentWorkspace {
   /** Emoji representing the department */
   emoji: string;
   agents: AgentTemplate[];
+  /**
+   * Convenience alias: display label derived from id.
+   * Computed by mapper.ts — equals `name` in most cases.
+   */
+  label?: string;
+  /**
+   * Convenience counter: equals agents.length.
+   * Provided for backward compatibility with older consumers.
+   */
+  agentCount?: number;
 }
 
 export interface Agency {
