@@ -7,12 +7,12 @@
  * gateway no-op when methods absent, and provision() secretsEncrypted=null.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { ChannelLifecycleService } from '../channel-lifecycle.service.js'
+import { ChannelLifecycleService } from '../channel-lifecycle.service'
 import {
   ChannelNotFoundError,
   InvalidTransitionError,
   ChannelAlreadyInStateError,
-} from '../channel-lifecycle.errors.js'
+} from '../channel-lifecycle.errors'
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 

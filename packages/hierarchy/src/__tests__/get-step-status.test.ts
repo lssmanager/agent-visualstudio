@@ -11,7 +11,7 @@ import {
   type HierarchyNode,
   type AgentExecutorFn,
   type StepStatusResult,
-} from '../hierarchy-orchestrator.js'
+} from '../hierarchy-orchestrator'
 
 // ── Helpers de setup ───────────────────────────────────────────────────────────
 

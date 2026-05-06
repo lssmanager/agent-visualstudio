@@ -27,7 +27,7 @@ const prismaMock = {
 
 // ── Import del adapter bajo test ───────────────────────────────────────
 
-const { SlackAdapter } = await import('../slack.adapter.js')
+const { SlackAdapter } = await import('../slack.adapter')
 
 // ── Helper: construir firma Slack válida ────────────────────────────────
 

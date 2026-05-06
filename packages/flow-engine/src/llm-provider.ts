@@ -4,7 +4,7 @@
  * Decouples FlowExecutor / LLMStepExecutor from any specific SDK.
  * Implementations: OpenAILLMProvider (this file), future: AnthropicLLMProvider, etc.
  */
-import type { McpToolDefinition } from '../../mcp-server/src/tools.js';
+import type { McpToolDefinition } from '../../mcp-server/src/tools';
 
 // ── Shared message types ────────────────────────────────────────────────
 

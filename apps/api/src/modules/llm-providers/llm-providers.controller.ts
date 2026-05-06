@@ -20,9 +20,9 @@
  */
 
 import type { Router, Request, Response } from 'express'
-import { getPrisma } from '../../lib/prisma.js'
-import { OAuthService } from '../../services/oauth.service.js'
-import { LlmProvidersService } from './llm-providers.service.js'
+import { getPrisma } from '../../lib/prisma'
+import { OAuthService } from '../../services/oauth.service'
+import { LlmProvidersService } from './llm-providers.service'
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 

@@ -48,7 +48,7 @@ const prismaMock = {
   },
 };
 
-jest.mock('../../../prisma/prisma.service.js', () => ({
+jest.mock('../../../prisma/prisma.service', () => ({
   PrismaService: jest.fn().mockImplementation(() => prismaMock),
 }));
 
@@ -67,7 +67,7 @@ function emitBaileysEvent(event: string, payload: unknown): void {
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 describe('WhatsAppBaileysAdapter', () => {
-  let adapter: import('../whatsapp-baileys.adapter.js').WhatsAppBaileysAdapter;
+  let adapter: import('../whatsapp-baileys.adapter').WhatsAppBaileysAdapter;
   let dispatchMock: jest.Mock;
 
   beforeEach(async () => {
@@ -75,7 +75,7 @@ describe('WhatsAppBaileysAdapter', () => {
     Object.keys(mockEvHandlers).forEach(k => delete mockEvHandlers[k]);
     jest.clearAllMocks();
 
-    const mod = await import('../whatsapp-baileys.adapter.js');
+    const mod = await import('../whatsapp-baileys.adapter');
     adapter = new mod.WhatsAppBaileysAdapter();
     await adapter.setup({ sessionsDir: '/tmp/wa-test' }, {});
     await adapter.initialize('ch-test-1');

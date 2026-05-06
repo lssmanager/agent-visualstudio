@@ -31,7 +31,7 @@ import type {
   SessionTurn,
   IncomingMessage,
   OutboundMessage,
-} from './types.js'
+} from './types'
 
 // ── Constantes ──────────────────────────────────────────────────────
 

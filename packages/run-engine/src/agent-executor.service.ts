@@ -9,7 +9,7 @@ import { executeCondition } from './execute-condition';
 import {
   RunStepEventEmitter,
   buildStatusChangeEvent,
-} from './events/index.js';
+} from './events/index';
 
 export interface LLMStepExecutor {
   executeStep(runStep: RunStep): Promise<StepExecutionResult>;

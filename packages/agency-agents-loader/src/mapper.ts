@@ -9,6 +9,6 @@ export {
   getAllAgents,
   findAgentBySlug,
   invalidateCache,
-} from './loader.js'
+} from './loader'
 
-export type { Agency, AgentTemplate, DepartmentWorkspace } from './types.js'
+export type { Agency, AgentTemplate, DepartmentWorkspace } from './types'

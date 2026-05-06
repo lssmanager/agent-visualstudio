@@ -20,7 +20,7 @@
  */
 
 import { Router } from 'express'
-import { getPrisma } from '../../lib/prisma.js'
+import { getPrisma } from '../../lib/prisma'
 import { SettingsService } from './settings.service'
 
 function makeService(): SettingsService {

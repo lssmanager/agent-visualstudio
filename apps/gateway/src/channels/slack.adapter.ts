@@ -16,8 +16,8 @@
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto'
-import type { IncomingMessage, OutgoingMessage } from './channel-adapter.interface.js'
-import { BaseChannelAdapter }                    from './channel-adapter.interface.js'
+import type { IncomingMessage, OutgoingMessage } from './channel-adapter.interface'
+import { BaseChannelAdapter }                    from './channel-adapter.interface'
 
 // ── PrismaService type (importado como tipo para evitar import circular) ──
 

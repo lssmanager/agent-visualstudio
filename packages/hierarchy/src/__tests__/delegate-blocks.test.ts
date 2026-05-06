@@ -11,9 +11,9 @@
  */
 
 import { describe, expect, it, jest } from '@jest/globals'
-import { parseDelegateBlocks } from '../hierarchy-orchestrator.js'
-import { HierarchyOrchestrator } from '../hierarchy-orchestrator.js'
-import type { HierarchyNode, AgentExecutorFn } from '../hierarchy-orchestrator.js'
+import { parseDelegateBlocks } from '../hierarchy-orchestrator'
+import { HierarchyOrchestrator } from '../hierarchy-orchestrator'
+import type { HierarchyNode, AgentExecutorFn } from '../hierarchy-orchestrator'
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 

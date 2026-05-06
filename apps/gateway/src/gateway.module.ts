@@ -18,14 +18,14 @@
  */
 
 import { Module, OnModuleInit }      from '@nestjs/common';
-import { GatewayService }            from './gateway.service.js';
-import { AgentResolverService }      from './agent-resolver.service.js';
-import { HealthController }          from './health/health.controller.js';
-import { PrismaModule }              from './prisma/prisma.module.js';
-import { PrismaService }             from './prisma/prisma.service.js';
-import { WhatsAppBaileysAdapter }    from './channels/whatsapp-baileys.adapter.js';
-import { SlackAdapter }              from './channels/slack.adapter.js';
-import { setGlobalWhatsAppSessionStorePrisma } from './whatsapp-session.store.js';
+import { GatewayService }            from './gateway.service';
+import { AgentResolverService }      from './agent-resolver.service';
+import { HealthController }          from './health/health.controller';
+import { PrismaModule }              from './prisma/prisma.module';
+import { PrismaService }             from './prisma/prisma.service';
+import { WhatsAppBaileysAdapter }    from './channels/whatsapp-baileys.adapter';
+import { SlackAdapter }              from './channels/slack.adapter';
+import { setGlobalWhatsAppSessionStorePrisma } from './whatsapp-session.store';
 
 @Module({
   imports:     [PrismaModule],

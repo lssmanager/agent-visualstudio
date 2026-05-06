@@ -24,7 +24,7 @@ import {
   TELEGRAM_BOT_TOKEN,
   WEBHOOK_SECRET,
   AGENT_ID,
-} from './telegram.fixtures.js'
+} from './telegram.fixtures'
 
 // Estado en memoria
 const sessions = new Map<string, Record<string, unknown>>()

@@ -4,7 +4,7 @@ import {
   InvalidTransitionError,
   ChannelAlreadyInStateError,
   WebhookRegistrationError,
-} from '../channel-lifecycle.errors.js'
+} from '../channel-lifecycle.errors'
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('ChannelNotFoundError', () => {

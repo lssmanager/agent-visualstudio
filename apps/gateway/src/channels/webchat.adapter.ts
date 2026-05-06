@@ -26,13 +26,13 @@
 import { WebSocketServer, WebSocket, type RawData } from 'ws'
 import type { IncomingMessage as HttpIncomingMessage, Server } from 'http'
 import type { PrismaClient } from '@prisma/client'
-import { PrismaService } from '../prisma/prisma.service.js'
+import { PrismaService } from '../prisma/prisma.service'
 import { decryptSecrets } from '@lss/crypto'
 import {
   BaseChannelAdapter,
   type IncomingMessage,
   type OutgoingMessage,
-} from './channel-adapter.interface.js'
+} from './channel-adapter.interface'
 
 // ── Tipos de frame ──────────────────────────────────────────────────────
 

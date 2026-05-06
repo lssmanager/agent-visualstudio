@@ -9,8 +9,8 @@ import {
   CREDENTIALS_SCHEMA_BY_TYPE,
   parseCredentials,
   safeParseCredentials,
-} from '../credentials-schema.js'
-import { CreateChannelConfigSchema } from '../../../apps/api/src/modules/channels/dto/create-channel-config.dto.js'
+} from '../credentials-schema'
+import { CreateChannelConfigSchema } from '../../../apps/api/src/modules/channels/dto/create-channel-config.dto'
 
 const VALID_TELEGRAM_TOKEN = '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij'
 

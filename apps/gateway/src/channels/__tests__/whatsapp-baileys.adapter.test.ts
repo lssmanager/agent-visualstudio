@@ -73,7 +73,7 @@ function buildMockBaileys() {
 vi.mock('@whiskeysockets/baileys', () => buildMockBaileys())
 
 // ── Importar el adapter DESPUÉS de los mocks ──────────────────────────────
-import { WhatsAppBaileysAdapter } from '../whatsapp-baileys.adapter.js'
+import { WhatsAppBaileysAdapter } from '../whatsapp-baileys.adapter'
 
 // ── Helper para emitir eventos del socket ─────────────────────────────────
 function emitConnectionUpdate(

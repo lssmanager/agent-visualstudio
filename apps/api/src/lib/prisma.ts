@@ -4,7 +4,7 @@
  * Singleton getPrisma() — Express-compatible (no NestJS DI).
  *
  * Todos los controllers/services que importan
- *   import { getPrisma } from '../../lib/prisma.js'
+ *   import { getPrisma } from '../../lib/prisma'
  * resuelven aquí.
  *
  * En tests: set process.env.DATABASE_URL antes de importar.

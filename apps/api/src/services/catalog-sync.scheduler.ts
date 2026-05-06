@@ -21,7 +21,7 @@
  */
 
 import cron from 'node-cron'
-import { getPrisma } from '../lib/prisma.js'
+import { getPrisma } from '../lib/prisma'
 import { ProviderCatalogService, ModelCatalogService } from '@agent-vs/profile-engine'
 
 const SCHEDULE = '0 */6 * * *'   // cada 6 horas en punto

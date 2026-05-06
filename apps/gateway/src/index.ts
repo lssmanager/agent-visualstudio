@@ -8,10 +8,10 @@
  * en apps/gateway/tsconfig.json.
  */
 
-export { SessionManager } from './session/index.js'
+export { SessionManager } from './session/index'
 export type {
   GatewaySessionDto,
   SessionTurn,
   IncomingMessage,
   OutboundMessage,
-} from './session/index.js'
+} from './session/index'

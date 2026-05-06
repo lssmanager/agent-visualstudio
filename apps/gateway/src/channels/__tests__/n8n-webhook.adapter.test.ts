@@ -12,8 +12,8 @@
  */
 
 import { createHmac } from 'node:crypto'
-import { N8nWebhookAdapter, N8nWebhookError } from '../n8n-webhook.adapter.js'
-import type { OutgoingMessage } from '../channel-adapter.interface.js'
+import { N8nWebhookAdapter, N8nWebhookError } from '../n8n-webhook.adapter'
+import type { OutgoingMessage } from '../channel-adapter.interface'
 
 // ── Mock PrismaService ────────────────────────────────────────────────────────
 
@@ -24,7 +24,7 @@ const mockChannelConfig = {
   secretsEncrypted: null,
 }
 
-jest.mock('../../../prisma/prisma.service.js', () => ({
+jest.mock('../../../prisma/prisma.service', () => ({
   PrismaService: jest.fn().mockImplementation(() => ({
     channelConfig: {
       findUnique: jest.fn().mockResolvedValue(mockChannelConfig),
@@ -59,7 +59,7 @@ describe('N8nWebhookAdapter', () => {
     })
 
     it('lanza N8nWebhookError CONFIG_NOT_FOUND si el channelConfig no existe', async () => {
-      const { PrismaService } = await import('../../../prisma/prisma.service.js')
+      const { PrismaService } = await import('../../../prisma/prisma.service')
       ;(PrismaService as jest.Mock).mockImplementationOnce(() => ({
         channelConfig: { findUnique: jest.fn().mockResolvedValue(null) },
       }))

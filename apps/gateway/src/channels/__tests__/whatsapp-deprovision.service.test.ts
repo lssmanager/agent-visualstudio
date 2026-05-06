@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import * as fs from 'node:fs'
-import { WhatsAppDeprovisionService } from '../whatsapp-deprovision.service.js'
+import { WhatsAppDeprovisionService } from '../whatsapp-deprovision.service'
 
 // ── Mocks de fs ──────────────────────────────────────────────────────────────
 vi.mock('node:fs', () => ({

@@ -18,7 +18,7 @@
  *   Idempotente: si recibe un JID ya formado, lo retorna tal cual.
  */
 
-import type { OutgoingMessage } from './channel-adapter.interface.js'
+import type { OutgoingMessage } from './channel-adapter.interface'
 
 // AnyMessageContent de Baileys es Record<string,unknown> en nuestra capa de tipos
 type BaileysContent = Record<string, unknown>

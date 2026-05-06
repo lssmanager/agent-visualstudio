@@ -14,7 +14,7 @@ export type {
   TeamsOutgoingPayload,
   TeamsSendResult,
   ITeamsModeStrategy,
-} from './teams-mode.strategy.js'
+} from './teams-mode.strategy'
 
 export {
   IncomingWebhookStrategy,
@@ -22,20 +22,20 @@ export {
   createTeamsModeStrategy,
   buildAdaptiveTextCard,
   buildAdaptiveRichCard,
-} from './teams-mode.strategy.js'
+} from './teams-mode.strategy'
 
 // Re-export del adapter bidireccional (F3a-32)
-export { TeamsAdapter } from './teams-bot.adapter.js'
-export type { TeamsAdapterConfig } from './teams-bot.adapter.js'
+export { TeamsAdapter } from './teams-bot.adapter'
+export type { TeamsAdapterConfig } from './teams-bot.adapter'
 
 // TeamsWebhookAdapter — solo-envío, notificaciones de sistema (F3a-33)
 export {
   TeamsWebhookAdapter,
   sendTeamsNotification,
-} from './teams-webhook.adapter.js'
+} from './teams-webhook.adapter'
 
 export type {
   TeamsWebhookConfig,
   TeamsWebhookSendResult,
   TeamsNotification,
-} from './teams-webhook.adapter.js'
+} from './teams-webhook.adapter'

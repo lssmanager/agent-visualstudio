@@ -13,7 +13,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import express from 'express';
 import type { Application } from 'express';
 import request from 'supertest';
-import { helmetMiddleware } from '../../middleware/security.middleware.js';
+import { helmetMiddleware } from '../../middleware/security.middleware';
 
 // ---------------------------------------------------------------------------
 // Helper: parsea el header CSP en un mapa directiva -> valor

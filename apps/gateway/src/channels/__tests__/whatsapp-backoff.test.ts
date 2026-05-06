@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { ExponentialBackoff } from '../whatsapp-backoff.js'
+import { ExponentialBackoff } from '../whatsapp-backoff'
 
 describe('ExponentialBackoff', () => {
   beforeEach(() => {

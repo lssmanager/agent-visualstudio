@@ -17,7 +17,7 @@ import {
   TeamsWebhookAdapter,
   sendTeamsNotification,
   type TeamsNotification,
-} from '../teams-webhook.adapter.js'
+} from '../teams-webhook.adapter'
 
 const FAKE_WEBHOOK = 'https://company.webhook.office.com/webhookb2/fake-id'
 

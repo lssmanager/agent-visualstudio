@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { jwtAuthMiddleware, applySecurityMiddleware } from '../../middleware/security.middleware.js';
+import { jwtAuthMiddleware, applySecurityMiddleware } from '../../middleware/security.middleware';
 
 // ---------------------------------------------------------------------------
 // Helpers

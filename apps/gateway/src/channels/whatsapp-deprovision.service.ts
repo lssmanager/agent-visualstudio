@@ -26,7 +26,7 @@
 import { existsSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import type { PrismaClient } from '@prisma/client'
-import type { WhatsAppSessionStore } from '../whatsapp-session.store.js'
+import type { WhatsAppSessionStore } from '../whatsapp-session.store'
 
 const WA_SESSIONS_DIR = process.env.WA_SESSIONS_DIR ?? './data/wa-sessions'
 
