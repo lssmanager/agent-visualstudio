@@ -50,15 +50,14 @@ export type { ModelCatalogEntryWithProvider } from './model-catalog.service.js'
 export { ModelCatalogService } from './model-catalog.service.js'
 
 // AgentBuilder — creación/eliminación de agentes con propagación de orchestrator prompts
+// FIX: OrchestratorModelResolver and OrchestratorPromptPropagator are interfaces — export as type
 export type {
   CreateAgentInput,
   UpdateAgentInput,
   BuiltAgent,
-  ModelResolution as OrchestratorModelResolution,
-} from './agent-builder.js'
-
-export {
-  AgentBuilder,
+  ModelResolution,
   OrchestratorModelResolver,
   OrchestratorPromptPropagator,
 } from './agent-builder.js'
+
+export { AgentBuilder } from './agent-builder.js'
