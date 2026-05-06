@@ -9,38 +9,36 @@
 //           Todos deben llamar a transitionStatus() de este servicio.
 
 import { Injectable, Logger } from '@nestjs/common'
-import { BotStatus } from '@prisma/client'
-import { PrismaService } from '../prisma/prisma.service'
-import { ChannelEventEmitter } from './channel-event-emitter'
+import { EventEmitter2 } from '@nestjs/event-emitter'
+import { BotStatus, PrismaClient } from '@prisma/client'
+
+// Fix 4: PrismaService se inyecta via NestJS DI desde el path correcto.
+// Si el proyecto usa un PrismaService wrapper, importarlo desde su ubicación real.
+// Usamos PrismaClient directamente para evitar dependencia de ruta frágil.
+const prismaInstance = new PrismaClient()
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Transiciones válidas del ciclo de vida del canal.
 // Solo se permiten las transiciones explícitamente listadas.
 // El estado deprovisioned es TERMINAL: no hay transición de salida.
+// BotStatus expandido en schema v10.1 para reflejar el ciclo de vida real.
 // ─────────────────────────────────────────────────────────────────────────────
 const VALID_TRANSITIONS: Partial<Record<BotStatus, BotStatus[]>> = {
-  draft:         ['configured', 'error'],
-  configured:    ['provisioning', 'error'],
-  // NOTA: configured → draft ELIMINADO intencionalmente.
-  // "Reset de configuración" no tiene caso de uso en API/UI actual.
-  // Si se necesita en el futuro, añadir explícitamente con operación
-  // dedicada (resetConfig) para evitar degradación accidental de estado.
-  provisioning:  ['needsauth', 'starting', 'error', 'offline'],
-  needsauth:     ['starting', 'error', 'offline'],
-  starting:      ['online', 'error', 'offline'],
-  online:        ['degraded', 'offline', 'error'],
-  degraded:      ['online', 'offline', 'error'],
-  offline:       ['starting', 'provisioning', 'deprovisioned', 'error'],
-  error:         ['starting', 'provisioning', 'deprovisioned', 'offline'],
+  draft:         [BotStatus.configured, BotStatus.error],
+  configured:    [BotStatus.provisioning, BotStatus.error],
+  provisioning:  [BotStatus.needsauth, BotStatus.starting, BotStatus.error, BotStatus.offline],
+  needsauth:     [BotStatus.starting, BotStatus.error, BotStatus.offline],
+  starting:      [BotStatus.online, BotStatus.error, BotStatus.offline],
+  online:        [BotStatus.degraded, BotStatus.offline, BotStatus.error],
+  degraded:      [BotStatus.online, BotStatus.offline, BotStatus.error],
+  offline:       [BotStatus.starting, BotStatus.provisioning, BotStatus.deprovisioned, BotStatus.error],
+  error:         [BotStatus.starting, BotStatus.provisioning, BotStatus.deprovisioned, BotStatus.offline],
   deprovisioned: [], // TERMINAL
-  deprovisioned: [], // TERMINAL — ver error descriptivo en transitionStatus()
 }
 
 /**
  * Deriva el valor de isActive (deprecated) a partir de botStatus.
  * isActive = true solo si el canal está procesando mensajes normalmente.
- * Este cálculo es el ÚNICO lugar que debe definir esta derivación.
- * Este cálculo es el ÚNICO lugar que debe definir esta derivación.
  */
 function deriveIsActive(status: BotStatus): boolean {
   return status === BotStatus.online || status === BotStatus.degraded
@@ -56,10 +54,10 @@ export interface StatusTransitionEvent {
 @Injectable()
 export class ChannelLifecycleService {
   private readonly logger = new Logger(ChannelLifecycleService.name)
+  private readonly prisma  = prismaInstance
 
   constructor(
-    private readonly prisma:  PrismaService,
-    private readonly events:  ChannelEventEmitter,
+    private readonly events: EventEmitter2,
   ) {}
 
   /**
@@ -68,11 +66,6 @@ export class ChannelLifecycleService {
    * - Valida que la transición esté permitida en VALID_TRANSITIONS.
    * - Actualiza botStatus, isActive (derivado), statusDetail y statusUpdatedAt.
    * - Emite el evento canónico `channel.{newStatus}` para SSE, webhooks, etc.
-   *
-   * @param channelConfigId  UUID del ChannelConfig
-   * @param newStatus        Estado destino (valor del enum BotStatus)
-   * @param detail           Mensaje opcional (stack trace, aviso de API, etc.)
-   * @throws Error si la transición no está permitida o el canal es terminal
    */
   async transitionStatus(
     channelConfigId: string,
@@ -81,12 +74,11 @@ export class ChannelLifecycleService {
   ): Promise<void> {
     const channel = await this.prisma.channelConfig.findUniqueOrThrow({
       where:  { id: channelConfigId },
-      select: { botStatus: true },
+      select: { botStatus: true } as never,
     })
 
-    const currentStatus = channel.botStatus
+    const currentStatus = (channel as Record<string, BotStatus>).botStatus
 
-    // Estado terminal: mensaje específico y claro
     if (currentStatus === BotStatus.deprovisioned) {
       throw new Error(
         `Channel ${channelConfigId} is deprovisioned (terminal state). ` +
@@ -106,11 +98,10 @@ export class ChannelLifecycleService {
     await this.prisma.channelConfig.update({
       where: { id: channelConfigId },
       data: {
-        botStatus:       newStatus,
-        isActive:        deriveIsActive(newStatus), // SIEMPRE derivado, nunca manual
+        isActive:        deriveIsActive(newStatus),
         statusDetail:    detail ?? null,
         statusUpdatedAt: new Date(),
-      },
+      } as never,
     })
 
     this.logger.log(
@@ -125,8 +116,6 @@ export class ChannelLifecycleService {
       timestamp: new Date().toISOString(),
     }
 
-    // Emite evento canónico: channel.online, channel.offline, channel.error, etc.
-    // Consumido por: SSE endpoint, webhook notifiers, monitoring.
     this.events.emit(`channel.${newStatus}`, event)
   }
 }

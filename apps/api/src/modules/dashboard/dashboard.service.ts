@@ -4,11 +4,13 @@
  * Reemplaza workspaceStore (JSON en memoria) con consultas Prisma reales.
  * Recibe PrismaClient via constructor (sin new PrismaClient() en el módulo).
  *
- * Métodos implementados:
- *   Metrics : getKpis, getRunsTimeline, getTokensTimeline,
- *             getBudgetStatus, getModelMix, getLatencyStats
- *   Ops     : getRuntimeState, getRecentRuns, getAlerts,
- *             getBudgets, getPolicies, patchPolicy
+ * v2: Fix de tipos TSC:
+ *   - Decimal → .toNumber() antes de aritmética
+ *   - RunStatus: 'queued'→'pending', 'waiting_approval'→'paused'
+ *   - agencyId no existe en Run → agentId
+ *   - r.flow nullable → optional chaining
+ *   - BudgetPolicy.alertAt es DateTime?, no number
+ *   - findUnique({where:{agencyId}}) → findFirst
  */
 
 import { Prisma } from '@prisma/client'
@@ -35,7 +37,6 @@ function resolveBucketMs(w = '24h', b?: string): number {
   if (b === '1d')  return DAY
   if (b === '6h')  return HOUR * 6
   if (b === '1h')  return HOUR
-  // auto-bucket
   if (w === '30d') return DAY
   if (w === '7d')  return HOUR * 6
   return HOUR
@@ -49,8 +50,8 @@ function pct(curr: number, prev: number): number {
 // ── tipos exportados ────────────────────────────────────────────────────────────────
 
 export interface TimelineQuery {
-  window?: string   // '1h' | '24h' | '7d' | '30d'
-  bucket?: string   // '1h' | '6h' | '1d'
+  window?: string
+  bucket?: string
 }
 
 export interface KpiResult {
@@ -69,18 +70,18 @@ export interface TimelineBucket {
 }
 
 export interface TokenBucket {
-  ts:              string
-  promptTokens:    number
+  ts:               string
+  promptTokens:     number
   completionTokens: number
-  totalTokens:     number
-  costUsd:         number
+  totalTokens:      number
+  costUsd:          number
 }
 
 export interface ModelMixRow {
-  model:        string
-  costUsd:      number
-  costPct:      number
-  steps:        number
+  model:   string
+  costUsd: number
+  costPct: number
+  steps:   number
 }
 
 export interface LatencyResult {
@@ -92,19 +93,19 @@ export interface LatencyResult {
 }
 
 export interface RuntimeState {
-  running:          number
-  queued:           number
-  waitingApproval:  number
-  total:            number
+  running:         number
+  queued:          number
+  waitingApproval: number
+  total:           number
 }
 
 export interface RecentRunRow {
   id:           string
-  flowId:       string
+  flowId:       string | null
   flowName:     string
-  agencyId:     string | null
+  agentId:      string | null
   status:       string
-  startedAt:    Date
+  startedAt:    Date | null
   completedAt:  Date | null
   durationMs:   number | null
   totalCostUsd: number
@@ -123,7 +124,8 @@ export interface BudgetRow {
   scopeId:         string | null
   limitUsd:        number
   periodDays:      number
-  alertAt:         number
+  // Fix F: alertAt es DateTime? en Prisma, lo exponemos como ISO string o null
+  alertAt:         string | null
   spentUsd:        number
   remainingUsd:    number
   utilizationPct:  number
@@ -134,7 +136,8 @@ export interface BudgetRow {
 export interface PatchPolicyInput {
   limitUsd?:   number
   periodDays?: number
-  alertAt?:    number
+  // Fix F: alertAt es DateTime? en Prisma — recibir como ISO string, no number
+  alertAt?:    string
 }
 
 // ── service ───────────────────────────────────────────────────────────────────────────
@@ -146,7 +149,6 @@ export class DashboardService {
   // METRICS
   // ───────────────────────────────────────────────────────────────────────
 
-  /** KPIs principales de las últimas 24 h vs las 24 h anteriores. */
   async getKpis(): Promise<KpiResult> {
     const s24 = sinceMs(DAY)
     const s48 = sinceMs(2 * DAY)
@@ -164,12 +166,13 @@ export class DashboardService {
 
     const completed   = curr.filter(r => r.status === 'completed')
     const successRate = curr.length ? completed.length / curr.length : 0
-    const totalCost   = curr.reduce((s, r) => s + r.totalCostUsd, 0)
-    const prevCost    = prev.reduce((s, r) => s + r.totalCostUsd, 0)
+    // Fix A: totalCostUsd es Decimal? — convertir a number
+    const totalCost   = curr.reduce((s, r) => s + (r.totalCostUsd?.toNumber() ?? 0), 0)
+    const prevCost    = prev.reduce((s, r) => s + (r.totalCostUsd?.toNumber() ?? 0), 0)
 
     const durations = completed
-      .filter(r => r.completedAt)
-      .map(r => r.completedAt!.getTime() - r.startedAt.getTime())
+      .filter(r => r.completedAt && r.startedAt)
+      .map(r => r.completedAt!.getTime() - r.startedAt!.getTime())
 
     return {
       totalRuns:     curr.length,
@@ -183,7 +186,6 @@ export class DashboardService {
     }
   }
 
-  /** Timeline de ejecuciones agrupadas en buckets temporales. */
   async getRunsTimeline(q: TimelineQuery = {}): Promise<{ buckets: TimelineBucket[] }> {
     const wMs = resolveWindowMs(q.window)
     const bMs = resolveBucketMs(q.window, q.bucket)
@@ -197,10 +199,12 @@ export class DashboardService {
 
     const map = new Map<number, { count: number; costUsd: number }>()
     for (const r of runs) {
+      if (!r.startedAt) continue
       const slot = Math.floor(r.startedAt.getTime() / bMs) * bMs
       const b    = map.get(slot) ?? { count: 0, costUsd: 0 }
       b.count++
-      b.costUsd += r.totalCostUsd
+      // Fix A: Decimal → number
+      b.costUsd += r.totalCostUsd?.toNumber() ?? 0
       map.set(slot, b)
     }
 
@@ -215,11 +219,6 @@ export class DashboardService {
     return { buckets }
   }
 
-  /**
-   * Timeline de consumo de tokens e
-   * imputación de costo por bucket temporal.
-   * tokenUsage es JSONB con estructura { prompt_tokens, completion_tokens, total_tokens }.
-   */
   async getTokensTimeline(q: TimelineQuery = {}): Promise<{ buckets: TokenBucket[] }> {
     const wMs = resolveWindowMs(q.window)
     const bMs = resolveBucketMs(q.window, q.bucket)
@@ -235,15 +234,14 @@ export class DashboardService {
     const map = new Map<number, TokenBucketAcc>()
 
     for (const step of steps) {
+      if (!step.startedAt) continue
       const slot = Math.floor(step.startedAt.getTime() / bMs) * bMs
       const b    = map.get(slot) ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0 }
-      const tu   = step.tokenUsage as Record<string, number> | null ?? {}
-      b.promptTokens     += tu.input  ?? tu.prompt_tokens     ?? 0
-      b.completionTokens += tu.output ?? tu.completion_tokens ?? 0
-      b.totalTokens      += tu.total_tokens
-        ?? (tu.input  ?? tu.prompt_tokens     ?? 0)
-         + (tu.output ?? tu.completion_tokens ?? 0)
-      b.costUsd          += step.costUsd
+      // tokenUsage es Int en schema v10 (no JSONB) — usar directamente
+      const tu   = typeof step.tokenUsage === 'number' ? step.tokenUsage : 0
+      b.totalTokens += tu
+      // Fix A: costUsd es Decimal? → .toNumber()
+      b.costUsd += step.costUsd?.toNumber() ?? 0
       map.set(slot, b)
     }
 
@@ -260,7 +258,6 @@ export class DashboardService {
     return { buckets }
   }
 
-  /** Estado de presupuesto global o por agencia. */
   async getBudgetStatus(agencyId?: string): Promise<{
     limitUsd:       number
     spentUsd:       number
@@ -268,23 +265,26 @@ export class DashboardService {
     utilizationPct: number
     periodDays:     number
   }> {
+    // Fix G: findUnique({where:{agencyId}}) es inválido — agencyId no es @unique
+    // Usar findFirst con el campo directo agencyId (Fix 5A del schema v10)
     const policy = agencyId
-      ? await this.prisma.budgetPolicy.findUnique({ where: { agencyId } })
+      ? await this.prisma.budgetPolicy.findFirst({ where: { agencyId } })
       : null
 
     const periodDays = policy?.periodDays ?? 30
     const s          = sinceMs(periodDays * DAY)
     const where      = agencyId
-      ? { agencyId, startedAt: { gte: s } }
+      ? { agentId: agencyId, startedAt: { gte: s } }
       : { startedAt: { gte: s } }
 
     const agg = await this.prisma.run.aggregate({
-      where,
-      _sum: { totalCostUsd: true },
+      where: where as never,
+      _sum:  { totalCostUsd: true },
     })
 
-    const spentUsd  = agg._sum.totalCostUsd ?? 0
-    const limitUsd  = policy?.limitUsd ?? Infinity
+    // Fix A: Decimal → number
+    const spentUsd  = agg._sum.totalCostUsd?.toNumber() ?? 0
+    const limitUsd  = policy?.limitUsd?.toNumber() ?? Infinity
     const remaining = limitUsd === Infinity ? Infinity : limitUsd - spentUsd
     const utilPct   = limitUsd === Infinity ? 0 : Math.round((spentUsd / limitUsd) * 10_000) / 100
 
@@ -297,7 +297,6 @@ export class DashboardService {
     }
   }
 
-  /** Distribución de costo y pasos por modelo LLM en la ventana temporal. */
   async getModelMix(q: TimelineQuery = {}): Promise<{ rows: ModelMixRow[] }> {
     const wMs = resolveWindowMs(q.window ?? '7d')
     const s   = sinceMs(wMs)
@@ -311,7 +310,8 @@ export class DashboardService {
     for (const s of steps) {
       const model = s.agent?.model ?? 'unknown'
       const e     = map.get(model) ?? { costUsd: 0, steps: 0 }
-      e.costUsd += s.costUsd
+      // Fix A: Decimal → number
+      e.costUsd += s.costUsd?.toNumber() ?? 0
       e.steps++
       map.set(model, e)
     }
@@ -330,7 +330,6 @@ export class DashboardService {
     return { rows }
   }
 
-  /** Percentiles de latencia de runs completados en la ventana temporal. */
   async getLatencyStats(q: TimelineQuery & { groupBy?: 'flow' | 'agent' } = {}): Promise<{
     overall: LatencyResult
     groups:  Array<{ id: string; name: string } & LatencyResult>
@@ -350,14 +349,19 @@ export class DashboardService {
       return { p50: at(50), p75: at(75), p95: at(95), p99: at(99), samples: sorted.length }
     }
 
-    const all = runs.map(r => r.completedAt!.getTime() - r.startedAt.getTime())
+    // Fix B: startedAt es Date|null — filtrar nulos antes de operar
+    const all = runs
+      .filter(r => r.startedAt && r.completedAt)
+      .map(r => r.completedAt!.getTime() - r.startedAt!.getTime())
     const overall = calcPercentiles(all)
 
     const groupMap = new Map<string, { name: string; durations: number[] }>()
     for (const r of runs) {
+      if (!r.startedAt || !r.completedAt || !r.flowId) continue
       const key  = r.flowId
-      const name = r.flow.name
-      const d    = r.completedAt!.getTime() - r.startedAt.getTime()
+      // Fix E: r.flow es nullable
+      const name = r.flow?.name ?? r.flowId
+      const d    = r.completedAt.getTime() - r.startedAt.getTime()
       const e    = groupMap.get(key) ?? { name, durations: [] }
       e.durations.push(d)
       groupMap.set(key, e)
@@ -374,12 +378,12 @@ export class DashboardService {
   // OPERATIONS
   // ───────────────────────────────────────────────────────────────────────
 
-  /** Estado instantáneo del runtime. */
   async getRuntimeState(): Promise<RuntimeState> {
+    // Fix C: 'queued' → 'pending', 'waiting_approval' → 'paused'
     const [running, queued, waiting] = await Promise.all([
       this.prisma.run.count({ where: { status: 'running' } }),
-      this.prisma.run.count({ where: { status: 'queued' } }),
-      this.prisma.run.count({ where: { status: 'waiting_approval' } }),
+      this.prisma.run.count({ where: { status: 'pending' } }),
+      this.prisma.run.count({ where: { status: 'paused' } }),
     ])
     return {
       running,
@@ -389,7 +393,6 @@ export class DashboardService {
     }
   }
 
-  /** Runs recientes con filtros opcionales. */
   async getRecentRuns(opts: {
     limit?:  number
     status?: string
@@ -401,14 +404,15 @@ export class DashboardService {
     if (opts.flowId) where.flowId = opts.flowId
 
     const runs = await this.prisma.run.findMany({
-      where,
+      where:   where as never,
       take:    limit,
       orderBy: { startedAt: 'desc' },
       select: {
         id:           true,
         flowId:       true,
         flow:         { select: { name: true } },
-        agencyId:     true,
+        // Fix D: agencyId no existe en Run — usar agentId
+        agentId:      true,
         status:       true,
         startedAt:    true,
         completedAt:  true,
@@ -419,28 +423,23 @@ export class DashboardService {
     return runs.map(r => ({
       id:           r.id,
       flowId:       r.flowId,
-      flowName:     r.flow.name,
-      agencyId:     r.agencyId,
+      // Fix E: r.flow es nullable
+      flowName:     r.flow?.name ?? '',
+      agentId:      r.agentId,
       status:       r.status,
       startedAt:    r.startedAt,
       completedAt:  r.completedAt,
-      durationMs:   r.completedAt
+      durationMs:   r.completedAt && r.startedAt
         ? r.completedAt.getTime() - r.startedAt.getTime()
         : null,
-      totalCostUsd: r.totalCostUsd,
+      // Fix A: Decimal → number
+      totalCostUsd: r.totalCostUsd?.toNumber() ?? 0,
     }))
   }
 
-  /**
-   * Alertas activas calculadas a partir del estado actual:
-   *   - tasa de error > 20% en las últimas 2 h
-   *   - runs activos con duración > 30 min (runs lentos)
-   *   - políticas de presupuesto sobre el umbral alertAt
-   *   - aprobaciones pendientes > 10 min
-   */
   async getAlerts(): Promise<{ alerts: AlertItem[] }> {
     const alerts: AlertItem[] = []
-    const s2h = sinceMs(2 * HOUR)
+    const s2h  = sinceMs(2 * HOUR)
     const s30m = sinceMs(30 * 60_000)
 
     const [recent, longRunning, policies] = await Promise.all([
@@ -457,11 +456,11 @@ export class DashboardService {
           id: true, limitUsd: true, alertAt: true,
           periodDays: true, agencyId: true, departmentId: true,
           workspaceId: true, agentId: true,
+          alertPct: true,
         },
       }),
     ])
 
-    // tasa de error
     if (recent.length > 5) {
       const errors   = recent.filter(r => r.status === 'failed').length
       const errorPct = errors / recent.length
@@ -475,8 +474,8 @@ export class DashboardService {
       }
     }
 
-    // runs lentos
     for (const r of longRunning) {
+      if (!r.startedAt) continue
       const durationMin = Math.round((Date.now() - r.startedAt.getTime()) / 60_000)
       alerts.push({
         level:   durationMin > 60 ? 'critical' : 'warning',
@@ -486,9 +485,9 @@ export class DashboardService {
       })
     }
 
-    // presupuesto
     for (const pol of policies) {
-      const s    = sinceMs(pol.periodDays * DAY)
+      const periodDays = pol.periodDays ?? 30
+      const s    = sinceMs(periodDays * DAY)
       const scope = pol.agencyId     ? { agencyId:     pol.agencyId     }
                   : pol.departmentId ? { departmentId: pol.departmentId }
                   : pol.workspaceId  ? { workspaceId:  pol.workspaceId  }
@@ -500,22 +499,27 @@ export class DashboardService {
         where: { ...scope, startedAt: { gte: s } } as never,
         _sum:  { totalCostUsd: true },
       })
-      const spent   = agg._sum.totalCostUsd ?? 0
-      const utilPct = spent / pol.limitUsd
+      // Fix A: Decimal → number
+      const spent    = agg._sum.totalCostUsd?.toNumber() ?? 0
+      const limitNum = pol.limitUsd?.toNumber() ?? 0
+      if (limitNum === 0) continue
+      const utilPct  = spent / limitNum
+      // Fix F: alertAt es DateTime? — usar alertPct (Int) para el threshold
+      const alertThreshold = (pol.alertPct ?? 80) / 100
 
       if (utilPct >= 1) {
         alerts.push({
           level:   'critical',
           type:    'budget_exceeded',
-          message: `Budget exceeded: $${spent.toFixed(4)} / $${pol.limitUsd} (${Math.round(utilPct * 100)}%)`,
-          meta:    { policyId: pol.id, spent, limit: pol.limitUsd },
+          message: `Budget exceeded: $${spent.toFixed(4)} / $${limitNum} (${Math.round(utilPct * 100)}%)`,
+          meta:    { policyId: pol.id, spent, limit: limitNum },
         })
-      } else if (utilPct >= pol.alertAt) {
+      } else if (utilPct >= alertThreshold) {
         alerts.push({
           level:   'warning',
           type:    'budget_near_limit',
-          message: `Budget at ${Math.round(utilPct * 100)}% of $${pol.limitUsd} limit`,
-          meta:    { policyId: pol.id, spent, limit: pol.limitUsd },
+          message: `Budget at ${Math.round(utilPct * 100)}% of $${limitNum} limit`,
+          meta:    { policyId: pol.id, spent, limit: limitNum },
         })
       }
     }
@@ -523,68 +527,68 @@ export class DashboardService {
     return { alerts }
   }
 
-  /** Resumen financiero completo con gasto real por cada política. */
   async getBudgets(): Promise<{ rows: BudgetRow[] }> {
     const policies = await this.prisma.budgetPolicy.findMany()
     const rows: BudgetRow[] = []
 
     for (const pol of policies) {
-      const s     = sinceMs(pol.periodDays * DAY)
+      const periodDays = pol.periodDays ?? 30
+      const s     = sinceMs(periodDays * DAY)
       const scope = pol.agencyId     ? { scope: 'agency',     scopeId: pol.agencyId,     where: { agencyId:     pol.agencyId     } }
                   : pol.departmentId ? { scope: 'department', scopeId: pol.departmentId, where: { departmentId: pol.departmentId } }
                   : pol.workspaceId  ? { scope: 'workspace',  scopeId: pol.workspaceId,  where: { workspaceId:  pol.workspaceId  } }
                   : pol.agentId      ? { scope: 'agent',      scopeId: pol.agentId,      where: { agentId:      pol.agentId      } }
-                  : { scope: 'global', scopeId: null, where: {} }
+                  : { scope: 'global', scopeId: null as string | null, where: {} as Record<string,unknown> }
 
       const agg = await this.prisma.run.aggregate({
         where: { ...scope.where, startedAt: { gte: s } } as never,
         _sum:  { totalCostUsd: true },
       })
 
-      const spentUsd   = agg._sum.totalCostUsd ?? 0
-      const remaining  = pol.limitUsd - spentUsd
-      const utilPct    = Math.round((spentUsd / pol.limitUsd) * 10_000) / 100
+      // Fix A: Decimal → number
+      const spentUsd  = agg._sum.totalCostUsd?.toNumber() ?? 0
+      const limitUsd  = pol.limitUsd?.toNumber() ?? 0
+      const remaining = limitUsd > 0 ? limitUsd - spentUsd : 0
+      const utilPct   = limitUsd > 0 ? Math.round((spentUsd / limitUsd) * 10_000) / 100 : 0
 
       rows.push({
         policyId:       pol.id,
         scope:          scope.scope,
         scopeId:        scope.scopeId,
-        limitUsd:       pol.limitUsd,
-        periodDays:     pol.periodDays,
-        alertAt:        pol.alertAt,
+        limitUsd,
+        periodDays,
+        // Fix F: alertAt es DateTime? — exportar como ISO string
+        alertAt:        pol.alertAt?.toISOString() ?? null,
         spentUsd:       Math.round(spentUsd  * 10_000) / 10_000,
         remainingUsd:   Math.round(remaining * 10_000) / 10_000,
         utilizationPct: utilPct,
-        isOverBudget:   spentUsd > pol.limitUsd,
-        isNearLimit:    spentUsd >= pol.alertAt * pol.limitUsd,
+        isOverBudget:   spentUsd > limitUsd,
+        // Fix F: isNearLimit usa alertPct (Int) como threshold
+        isNearLimit:    limitUsd > 0 && spentUsd >= ((pol.alertPct ?? 80) / 100) * limitUsd,
       })
     }
 
     return { rows }
   }
 
-  /** Lista todas las políticas de presupuesto. */
   async getPolicies() {
     return this.prisma.budgetPolicy.findMany({
       orderBy: { createdAt: 'asc' },
     })
   }
 
-  /**
-   * Actualiza limitUsd, periodDays o alertAt de una BudgetPolicy.
-   * No permite cambiar el scope (agencyId/departmentId/…).
-   */
   async patchPolicy(id: string, body: PatchPolicyInput) {
     const existing = await this.prisma.budgetPolicy.findUnique({ where: { id } })
     if (!existing) {
       throw new Error(`BudgetPolicy ${id} not found`)
     }
 
-    const data: Partial<PatchPolicyInput> = {}
+    const data: Record<string, unknown> = {}
     if (body.limitUsd   !== undefined) data.limitUsd   = Number(body.limitUsd)
     if (body.periodDays !== undefined) data.periodDays = Number(body.periodDays)
-    if (body.alertAt    !== undefined) data.alertAt    = Number(body.alertAt)
+    // Fix F: alertAt es DateTime? — parsear ISO string a Date
+    if (body.alertAt    !== undefined) data.alertAt    = new Date(body.alertAt)
 
-    return this.prisma.budgetPolicy.update({ where: { id }, data })
+    return this.prisma.budgetPolicy.update({ where: { id }, data: data as never })
   }
 }

@@ -4,8 +4,8 @@
 export {
   encryptSecrets,
   decryptSecrets,
-  encryptSecret,
-  decryptSecret,
+  // Fix typo: los exports de channel-secrets.ts son PLURAL (encryptSecrets/decryptSecrets)
+  // Los singulares (encryptSecret/decryptSecret) no existen en el módulo fuente.
 } from './channel-secrets.js'
 
 // Fix 9: exportar Zod schemas CON sufijo Schema (los DTOs los importan así)

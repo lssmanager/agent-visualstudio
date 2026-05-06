@@ -1,19 +1,14 @@
 // ============================================================
 // schema.prisma — Agent Visual Studio
-// SCHEMA CANÓNICO v10 — FIXES DE TIPOS
+// SCHEMA CANÓNICO v10.1 — FIXES DE TIPOS + BotStatus expandido
 //
 // Arquitectura: Agency → Department → Workspace → Agent
-// Fuentes fusionadas:
-//   - packages/db/prisma/schema.prisma (v9, multi-tenant fusionado)
 //
-// v10 — Fixes de tipos (para desbloquear tsc):
-//   + SystemConfig: modelo para settings.service.ts
-//   + BotStatus: enum para channel-lifecycle.service.ts
-//   + ChannelType: enum alias de ChannelKind (backward compat)
-//   + BudgetPolicy: alertAt, agencyId, departmentId, agentId
-//   + Run: totalCostUsd
-//   + RunStep: tokenUsage
-//   + Approval: decidedAt
+// v10   — Fixes de tipos (para desbloquear tsc)
+// v10.1 — BotStatus expandido con los 9 estados reales que usa
+//         channel-lifecycle.service.ts:
+//         draft|configured|provisioning|needsauth|starting|
+//         online|degraded|offline|deprovisioned
 // ============================================================
 
 generator client {
@@ -39,7 +34,7 @@ enum ChannelKind {
   webhook
 }
 
-// Alias backward-compat: el código en credentials-schema.ts importa ChannelType
+// Alias backward-compat para código que aún importa ChannelType
 enum ChannelType {
   telegram
   whatsapp
@@ -57,8 +52,20 @@ enum ChannelStatus {
   offline
 }
 
-// Fix 2: BotStatus para channel-lifecycle.service.ts
+// Fix 2 v10.1: Expandido con los 9 estados del lifecycle real.
+// NO reducir a 4 — el código de channel-lifecycle.service.ts
+// usa todas estas transiciones.
 enum BotStatus {
+  draft
+  configured
+  provisioning
+  needsauth
+  starting
+  online
+  degraded
+  offline
+  deprovisioned
+  // Estados de error/pausa genéricos (aliases semánticos)
   initializing
   running
   stopped
@@ -216,7 +223,7 @@ model Workspace {
 }
 
 // ────────────────────────────────────────────────────────────
-// SYSTEM CONFIG (Fix 1 — para settings.service.ts)
+// SYSTEM CONFIG (Fix 1)
 // ────────────────────────────────────────────────────────────
 
 model SystemConfig {
@@ -353,7 +360,7 @@ model AgentSkill {
 }
 
 // ────────────────────────────────────────────────────────────
-// POLICY & HOOK (workspace-level)
+// POLICY & HOOK
 // ────────────────────────────────────────────────────────────
 
 model Policy {
@@ -404,18 +411,18 @@ model N8nConnection {
 }
 
 model N8nWorkflow {
-  id            String        @id @default(cuid())
+  id            String   @id @default(cuid())
   connectionId  String
   n8nWorkflowId String
   name          String
-  description   String?       @default("")
+  description   String?  @default("")
   webhookUrl    String?
-  webhookMethod String        @default("POST")
-  inputSchema   Json?         @default("{}")
-  outputSchema  Json?         @default("{}")
-  isActive      Boolean       @default(true)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  webhookMethod String   @default("POST")
+  inputSchema   Json?    @default("{}")
+  outputSchema  Json?    @default("{}")
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   connection N8nConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
 
@@ -448,16 +455,16 @@ model ProviderCatalog {
 }
 
 model LlmProvider {
-  id          String    @id @default(cuid())
+  id          String          @id @default(cuid())
   workspaceId String
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   provider    String
   catalog     ProviderCatalog @relation(fields: [provider], references: [id])
   baseUrl     String?
   apiKeyEnc   String?
-  isDefault   Boolean   @default(false)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  isDefault   Boolean         @default(false)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
 
   oauthToken OAuthToken?
 
@@ -553,7 +560,7 @@ model Flow {
 }
 
 // ────────────────────────────────────────────────────────────
-// RUNS (Fix 6: totalCostUsd, agencyId)
+// RUNS (Fix 6: totalCostUsd)
 // ────────────────────────────────────────────────────────────
 
 model Run {
@@ -563,7 +570,6 @@ model Run {
   agentId      String?
   sessionId    String?
   channelKind  ChannelKind?
-  // Fix 6: campo que dashboard.service.ts selecciona
   totalCostUsd Decimal?    @db.Decimal(10, 4)
   status       RunStatus   @default(pending)
   trigger      Json        @default("{}")
@@ -615,7 +621,6 @@ model RunStep {
   promptTokens     Int?
   completionTokens Int?
   totalTokens      Int?
-  // Fix 7: alias para dashboard.service.ts que usa tokenUsage
   tokenUsage       Int           @default(0)
   costUsd          Decimal?      @db.Decimal(12, 8)
   startedAt        DateTime?
@@ -623,7 +628,6 @@ model RunStep {
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
-  // Durable execution fields
   checkpointData  Json?
   checkpointSeq   Int      @default(0)
   interruptReason String?
@@ -652,8 +656,7 @@ model Channel {
   workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   kind         ChannelKind
   status       ChannelStatus @default(provisioned)
-  // Fix 2: botStatus para channel-lifecycle.service.ts
-  botStatus    BotStatus     @default(initializing)
+  botStatus    BotStatus     @default(draft)
   tokenEnc     String
   meta         Json          @default("{}")
   boundAgentId String?
@@ -668,15 +671,17 @@ model Channel {
 }
 
 model ChannelConfig {
-  id          String   @id @default(cuid())
-  workspaceId String
-  channel     String
-  displayName String
-  credentials Json     @default("{}")
-  settings    Json?    @default("{}")
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id              String    @id @default(cuid())
+  workspaceId     String
+  channel         String
+  displayName     String
+  credentials     Json      @default("{}")
+  settings        Json?     @default("{}")
+  isActive        Boolean   @default(true)
+  statusDetail    String?
+  statusUpdatedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   bindings  ChannelBinding[]
@@ -754,10 +759,8 @@ model ConversationMessage {
 
 model BudgetPolicy {
   id                  String       @id @default(cuid())
-  // Polymorphic scope (del canónico v8)
   scopeType           String       @default("workspace")
   scopeId             String       @default("")
-  // Campos directos (Fix 5: Opción A — para dashboard.service.ts)
   agencyId            String?
   departmentId        String?
   agentId             String?
@@ -769,10 +772,8 @@ model BudgetPolicy {
   period              BudgetPeriod @default(monthly)
   periodDays          Int?
   alertPct            Int          @default(80)
-  // Fix 4: alertAt para dashboard.service.ts
   alertAt             DateTime?
   enabled             Boolean      @default(true)
-  // Del canónico v8
   window              String       @default("monthly")
   softCapUsd          Float?
   hardCapUsd          Float?
@@ -804,24 +805,24 @@ model BudgetPolicy {
 }
 
 model BudgetIncident {
-  id             String       @id @default(cuid())
+  id             String        @id @default(cuid())
   budgetPolicyId String?
   budgetPolicy   BudgetPolicy? @relation(fields: [budgetPolicyId], references: [id], onDelete: Cascade)
-  kind           IncidentKind @default(alert)
-  usageUsd       Decimal?     @db.Decimal(10, 4)
-  policyId       String       @default("")
-  scopeType      String       @default("")
-  scopeId        String       @default("")
-  incidentType   String       @default("")
-  triggeredAt    DateTime     @default(now())
+  kind           IncidentKind  @default(alert)
+  usageUsd       Decimal?      @db.Decimal(10, 4)
+  policyId       String        @default("")
+  scopeType      String        @default("")
+  scopeId        String        @default("")
+  incidentType   String        @default("")
+  triggeredAt    DateTime      @default(now())
   resolvedAt     DateTime?
   runId          String?
   runStepId      String?
-  amountUsd      Float        @default(0)
-  pct            Int          @default(0)
-  detail         Json         @default("{}")
-  metadata       Json?        @default("{}")
-  occurredAt     DateTime     @default(now())
+  amountUsd      Float         @default(0)
+  pct            Int           @default(0)
+  detail         Json          @default("{}")
+  metadata       Json?         @default("{}")
+  occurredAt     DateTime      @default(now())
 
   @@index([budgetPolicyId])
   @@index([scopeId, triggeredAt])
@@ -830,26 +831,26 @@ model BudgetIncident {
 }
 
 model CostEvent {
-  id               String        @id @default(cuid())
+  id               String   @id @default(cuid())
   runStepId        String?
   runId            String?
   agentId          String?
   budgetPolicyId   String?
-  scopeType        String        @default("")
-  scopeId          String        @default("")
+  scopeType        String   @default("")
+  scopeId          String   @default("")
   workspaceId      String?
   model            String
-  provider         String        @default("openai")
-  promptTokens     Int           @default(0)
-  completTokens    Int           @default(0)
-  completionTokens Int           @default(0)
-  totalTokens      Int           @default(0)
-  costUsd          Decimal?      @db.Decimal(12, 8)
+  provider         String   @default("openai")
+  promptTokens     Int      @default(0)
+  completTokens    Int      @default(0)
+  completionTokens Int      @default(0)
+  totalTokens      Int      @default(0)
+  costUsd          Decimal? @db.Decimal(12, 8)
   latencyMs        Int?
   role             String?
-  metadata         Json          @default("{}")
-  timestamp        DateTime      @default(now())
-  createdAt        DateTime      @default(now())
+  metadata         Json     @default("{}")
+  timestamp        DateTime @default(now())
+  createdAt        DateTime @default(now())
 
   run          Run?          @relation(fields: [runId], references: [id])
   runStep      RunStep?      @relation(fields: [runStepId], references: [id])
@@ -917,7 +918,6 @@ model Approval {
   reviewedBy  String?
   reviewNote  String?        @db.Text
   expiresAt   DateTime?
-  // Fix 8: decidedAt para runs.service.ts
   decidedAt   DateTime?
   scopeType   String         @default("")
   scopeId     String         @default("")
@@ -961,20 +961,20 @@ model ApprovalComment {
 // ────────────────────────────────────────────────────────────
 
 model Routine {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   workspaceId String
   agentId     String?
   flowId      String?
   name        String
-  description String?  @default("")
+  description String?   @default("")
   schedule    String
-  payload     Json?    @default("{}")
-  isEnabled   Boolean  @default(true)
+  payload     Json?     @default("{}")
+  isEnabled   Boolean   @default(true)
   lastRunAt   DateTime?
   nextRunAt   DateTime?
   lastRunId   String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
@@ -1010,23 +1010,23 @@ model AgentWakeupRequest {
 // ────────────────────────────────────────────────────────────
 
 model ActivityLog {
-  id           String            @id @default(cuid())
-  scopeType    String            @default("")
-  scopeId      String            @default("")
+  id           String           @id @default(cuid())
+  scopeType    String           @default("")
+  scopeId      String           @default("")
   workspaceId  String?
-  resource     ActivityResource  @default(workspace)
+  resource     ActivityResource @default(workspace)
   resourceType String?
   resourceId   String?
-  actorType    String            @default("user")
+  actorType    String           @default("user")
   actorId      String?
   action       String
-  payload      Json?             @default("{}")
-  detail       String            @db.Text @default("")
+  payload      Json?            @default("{}")
+  detail       String           @db.Text @default("")
   userId       String?
   diff         Json?
   ipAddress    String?
-  metadata     Json              @default("{}")
-  createdAt    DateTime          @default(now())
+  metadata     Json             @default("{}")
+  createdAt    DateTime         @default(now())
 
   agency     Agency?     @relation("ActivityLogScopeAgency",     fields: [scopeId], references: [id], map: "activity_logs_scope_agency_fkey")
   department Department? @relation("ActivityLogScopeDepartment", fields: [scopeId], references: [id], map: "activity_logs_scope_department_fkey")

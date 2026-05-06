@@ -4,7 +4,8 @@
 // AUDIT-25: botStatus es el campo principal de estado expuesto.
 //           isActive está OMITIDO en responses externas (campo deprecated).
 
-import { BotStatus, ChannelType } from '@prisma/client'
+// Fix 3: ChannelType no existe en @prisma/client — usar ChannelKind (nombre canónico v10)
+import { BotStatus, ChannelKind } from '@prisma/client'
 
 /**
  * Respuesta estándar de GET /api/channels y GET /api/channels/:id
@@ -13,7 +14,7 @@ import { BotStatus, ChannelType } from '@prisma/client'
 export interface ChannelResponse {
   id:               string
   name:             string
-  type:             ChannelType
+  type:             ChannelKind
   workspaceId:      string
   botStatus:        BotStatus
   statusDetail?:    string
