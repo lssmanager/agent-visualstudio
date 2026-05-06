@@ -37,7 +37,7 @@ import {
   IncomingMessage,
   OutgoingMessage,
   RichContent,
-} from '../channel-adapter.interface.js'
+} from '../channel-adapter.interface'
 import {
   ITeamsModeStrategy,
   TeamsActivity,
@@ -46,7 +46,7 @@ import {
   createTeamsModeStrategy,
   buildAdaptiveTextCard,
   buildAdaptiveRichCard,
-} from './index.js'
+} from './index'
 
 // ── Tipos de configuración ────────────────────────────────────────────────────
 

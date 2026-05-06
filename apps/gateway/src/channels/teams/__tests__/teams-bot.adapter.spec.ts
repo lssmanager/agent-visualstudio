@@ -4,8 +4,8 @@
  */
 
 import { Request, Response } from 'express'
-import { TeamsAdapter } from '../teams-bot.adapter.js'
-import type { TeamsActivity } from '../teams-mode.strategy.js'
+import { TeamsAdapter } from '../teams-bot.adapter'
+import type { TeamsActivity } from '../teams-mode.strategy'
 
 // ── Mock de la estrategia ────────────────────────────────────────────────────
 
@@ -20,8 +20,8 @@ const mockStrategy = {
   getBearerToken: jest.fn().mockResolvedValue('fake-token'),
 }
 
-jest.mock('../index.js', () => ({
-  ...jest.requireActual('../index.js'),
+jest.mock('../index', () => ({
+  ...jest.requireActual('../index'),
   createTeamsModeStrategy: jest.fn().mockReturnValue(mockStrategy),
 }))
 
@@ -307,7 +307,7 @@ describe('TeamsAdapter', () => {
   it('incoming_webhook: POST /messages devuelve 400 con mensaje explicativo', async () => {
     jest.resetAllMocks()
     const webhookStrategy = { ...mockStrategy, mode: 'incoming_webhook' as const }
-    const { createTeamsModeStrategy: mockFactory } = jest.requireMock('../index.js') as any
+    const { createTeamsModeStrategy: mockFactory } = jest.requireMock('../index') as any
     mockFactory.mockReturnValue(webhookStrategy)
 
     const wAdapter = new TeamsAdapter()

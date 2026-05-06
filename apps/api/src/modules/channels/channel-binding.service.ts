@@ -7,7 +7,7 @@
  * en los controllers Express (patrón del repo).
  */
 
-import { getPrisma } from '../../lib/prisma.js'
+import { getPrisma } from '../../lib/prisma'
 
 export interface CreateBindingDto {
   channelConfigId:    string

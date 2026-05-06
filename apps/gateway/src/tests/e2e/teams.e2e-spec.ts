@@ -20,14 +20,14 @@
 
 import express, { Application } from 'express'
 import request from 'supertest'
-import { TeamsAdapter } from '../../channels/teams/teams-bot.adapter.js'
+import { TeamsAdapter } from '../../channels/teams/teams-bot.adapter'
 import type {
   ITeamsModeStrategy,
   TeamsActivity,
   TeamsOutgoingPayload,
   TeamsSendResult,
-} from '../../channels/teams/teams-mode.strategy.js'
-import type { OutgoingMessage } from '../../channels/channel-adapter.interface.js'
+} from '../../channels/teams/teams-mode.strategy'
+import type { OutgoingMessage } from '../../channels/channel-adapter.interface'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

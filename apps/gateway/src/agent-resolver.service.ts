@@ -1,10 +1,10 @@
 import { Injectable }    from '@nestjs/common'
-import { PrismaService } from './prisma/prisma.service.js'
+import { PrismaService } from './prisma/prisma.service'
 import {
   ChannelBindingNotFoundError,
   ChannelConfigInactiveError,
   AmbiguousBindingError,
-} from './agent-resolver.errors.js'
+} from './agent-resolver.errors'
 
 // ── Constantes ───────────────────────────────────────────────────────────────
 

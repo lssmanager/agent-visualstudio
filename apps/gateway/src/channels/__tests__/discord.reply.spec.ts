@@ -13,7 +13,7 @@ import {
   sendEphemeralFollowup,
   MAX_CONTENT_LENGTH,
   type RichContent,
-} from '../discord.reply.js'
+} from '../discord.reply'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

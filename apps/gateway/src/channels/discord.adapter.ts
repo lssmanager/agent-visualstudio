@@ -13,14 +13,14 @@
  *   - decryptSecrets() dev mode hasta F3b-05
  */
 
-import type { IncomingMessage, OutgoingMessage } from './channel-adapter.interface.js'
-import { BaseChannelAdapter } from './channel-adapter.interface.js'
+import type { IncomingMessage, OutgoingMessage } from './channel-adapter.interface'
+import { BaseChannelAdapter } from './channel-adapter.interface'
 import {
   auditDiscordProvisioned,
   auditDiscordMessageInbound,
   auditDiscordMessageOutbound,
   auditDiscordError,
-} from './discord.adapter.audit.js'
+} from './discord.adapter.audit'
 
 // ── Tipos Discord ───────────────────────────────────────────────────────
 

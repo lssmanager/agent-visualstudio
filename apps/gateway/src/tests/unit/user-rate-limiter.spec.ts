@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import {
   checkUserRateLimit,
   clearUserBucket,
-} from '../../middleware/user-rate-limiter.js'
+} from '../../middleware/user-rate-limiter'
 
 const CHANNEL = 'channel-uuid-123'
 const USER_A = 'user-A'

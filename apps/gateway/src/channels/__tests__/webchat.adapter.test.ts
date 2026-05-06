@@ -5,7 +5,7 @@
 import { createServer, type Server } from 'http'
 import { WebSocket } from 'ws'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { WebChatAdapter } from '../webchat.adapter.js'
+import { WebChatAdapter } from '../webchat.adapter'
 
 const prismaMock = vi.hoisted(() => ({
   channelConfig: {
@@ -20,7 +20,7 @@ const prismaMock = vi.hoisted(() => ({
   },
 }))
 
-vi.mock('../../prisma/prisma.service.js', () => ({
+vi.mock('../../prisma/prisma.service', () => ({
   PrismaService: vi.fn().mockImplementation(() => prismaMock),
 }))
 
@@ -140,7 +140,7 @@ describe('WebChatAdapter - WebSocket protocol', () => {
     const ws = await connectWS(port, { sessionId: 'sess-msg', agentId: 'agent-1' })
     await waitForFrame(ws, (f) => f['type'] === 'connected')
 
-    let received: import('../channel-adapter.interface.js').IncomingMessage | null = null
+    let received: import('../channel-adapter.interface').IncomingMessage | null = null
     adapter.onMessage(async (msg) => {
       received = msg
     })

@@ -14,7 +14,7 @@
  */
 
 import { Router, type Request, type Response } from 'express';
-import { getPrisma } from '../../lib/prisma.js';
+import { getPrisma } from '../../lib/prisma';
 import {
   BaseChannelAdapter,
   type ChannelType,

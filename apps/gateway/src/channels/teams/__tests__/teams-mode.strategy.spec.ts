@@ -10,7 +10,7 @@ import {
   createTeamsModeStrategy,
   buildAdaptiveTextCard,
   buildAdaptiveRichCard,
-} from '../teams-mode.strategy.js'
+} from '../teams-mode.strategy'
 
 const FAKE_WEBHOOK_URL = 'https://company.webhook.office.com/webhookb2/fake'
 const FAKE_APP_ID      = 'fake-app-id-001'

@@ -11,7 +11,7 @@
  */
 
 import type { Response }  from 'express';
-import type { PrismaService } from './prisma/prisma.service.js';
+import type { PrismaService } from './prisma/prisma.service';
 
 export type WhatsAppSessionStatus =
   | 'connecting'

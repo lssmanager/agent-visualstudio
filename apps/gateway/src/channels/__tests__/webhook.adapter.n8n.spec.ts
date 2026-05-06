@@ -18,9 +18,9 @@ import {
   extractN8nBody,
   n8nBodyToTaskText,
   n8nBodyToExternalId,
-} from '../webhook.n8n-payload.js'
-import { WebhookAdapter }            from '../webhook.adapter.js'
-import type { IncomingMessage }      from '../channel-adapter.interface.js'
+} from '../webhook.n8n-payload'
+import { WebhookAdapter }            from '../webhook.adapter'
+import type { IncomingMessage }      from '../channel-adapter.interface'
 
 // ── Helpers de test ───────────────────────────────────────────────────────────
 
@@ -35,7 +35,7 @@ function signPayload(payload: unknown, secret: string): string {
 }
 
 // Mock de PrismaService inyectado por loadConfig()
-jest.mock('../../../prisma/prisma.service.js', () => ({
+jest.mock('../../../prisma/prisma.service', () => ({
   PrismaService: jest.fn().mockImplementation(() => ({
     channelConfig: {
       findUnique: jest.fn().mockResolvedValue({
@@ -200,7 +200,7 @@ describe('WebhookAdapter — verificación de firma n8n', () => {
   let captured: IncomingMessage | null
 
   beforeEach(async () => {
-    const { PrismaService } = await import('../../../prisma/prisma.service.js')
+    const { PrismaService } = await import('../../../prisma/prisma.service')
     ;(PrismaService as jest.Mock).mockImplementationOnce(() => ({
       channelConfig: {
         findUnique: jest.fn().mockResolvedValue({
@@ -260,7 +260,7 @@ describe('WebhookAdapter — send() con n8nCallbackField', () => {
   afterEach(() => fetchMock.mockRestore())
 
   it('usa "text" como campo por defecto en la respuesta', async () => {
-    const { PrismaService } = await import('../../../prisma/prisma.service.js')
+    const { PrismaService } = await import('../../../prisma/prisma.service')
     ;(PrismaService as jest.Mock).mockImplementationOnce(() => ({
       channelConfig: {
         findUnique: jest.fn().mockResolvedValue({
@@ -281,7 +281,7 @@ describe('WebhookAdapter — send() con n8nCallbackField', () => {
   })
 
   it('usa n8nCallbackField personalizado cuando está configurado', async () => {
-    const { PrismaService } = await import('../../../prisma/prisma.service.js')
+    const { PrismaService } = await import('../../../prisma/prisma.service')
     ;(PrismaService as jest.Mock).mockImplementationOnce(() => ({
       channelConfig: {
         findUnique: jest.fn().mockResolvedValue({
@@ -310,7 +310,7 @@ describe('WebhookAdapter — modo genérico (retrocompatibilidad)', () => {
   let captured: IncomingMessage | null
 
   beforeEach(async () => {
-    const { PrismaService } = await import('../../../prisma/prisma.service.js')
+    const { PrismaService } = await import('../../../prisma/prisma.service')
     ;(PrismaService as jest.Mock).mockImplementationOnce(() => ({
       channelConfig: {
         findUnique: jest.fn().mockResolvedValue({

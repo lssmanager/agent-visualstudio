@@ -33,8 +33,8 @@
 
 import { createHmac } from 'node:crypto'
 
-import type { IncomingMessage, OutgoingMessage } from './channel-adapter.interface.js'
-import { BaseChannelAdapter }                    from './channel-adapter.interface.js'
+import type { IncomingMessage, OutgoingMessage } from './channel-adapter.interface'
+import { BaseChannelAdapter }                    from './channel-adapter.interface'
 import {
   extractN8nBody,
   isN8nWebhookNodePayload,
@@ -42,7 +42,7 @@ import {
   n8nBodyToTaskText,
   type N8nWebhookNodePayload,
   type WebhookInboundPayload,
-} from './webhook.n8n-payload.js'
+} from './webhook.n8n-payload'
 
 // ── Configuración interna ─────────────────────────────────────────────────────
 
@@ -318,7 +318,7 @@ export class WebhookAdapter extends BaseChannelAdapter {
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   private async loadConfig(channelConfigId: string) {
-    const { PrismaService } = await import('../prisma/prisma.service.js')
+    const { PrismaService } = await import('../prisma/prisma.service')
     const db     = new PrismaService()
     const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } })
     if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`)

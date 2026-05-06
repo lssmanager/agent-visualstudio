@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { HttpException, HttpStatus } from '@nestjs/common'
-import { ChannelsController } from '../channels.controller.js'
+import { ChannelsController } from '../channels.controller'
 import {
   ChannelNotFoundError,
   InvalidTransitionError,
   ChannelAlreadyInStateError,
   WebhookRegistrationError,
-} from '../channel-lifecycle.errors.js'
+} from '../channel-lifecycle.errors'
 
 // ── Minimal ChannelStatusDto fixture ─────────────────────────────────────────
 

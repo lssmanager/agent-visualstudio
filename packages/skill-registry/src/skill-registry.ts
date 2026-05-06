@@ -9,8 +9,8 @@
  *
  * Remains backward-compatible with the original register/registerMany/list/get API.
  */
-import type { SkillSpec, SkillFunctionSpec } from '../../core-types/src/index.js';
-import { skillSpecSchema } from '../../schemas/src/index.js';
+import type { SkillSpec, SkillFunctionSpec } from '../../core-types/src/index';
+import { skillSpecSchema } from '../../schemas/src/index';
 
 export class SkillRegistry {
   private readonly byId = new Map<string, SkillSpec>();

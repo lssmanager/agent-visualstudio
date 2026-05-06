@@ -74,7 +74,7 @@ async function propagateProfile(
 ): Promise<void> {
   // Lazy require para no crear dependencia circular en el grafo de módulos
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { ProfilePropagatorService } = require('../../../../packages/profile-engine/src/index.js') as {
+  const { ProfilePropagatorService } = require('../../../../packages/profile-engine/src/index') as {
     ProfilePropagatorService: new (prisma: PrismaClient) => {
       propagate(
         agentId: string,

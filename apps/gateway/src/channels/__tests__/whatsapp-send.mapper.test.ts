@@ -5,8 +5,8 @@
  */
 
 import { describe, it, expect, vi } from 'vitest'
-import { outgoingToBaileys, phoneToJid } from '../whatsapp-send.mapper.js'
-import type { OutgoingMessage } from '../channel-adapter.interface.js'
+import { outgoingToBaileys, phoneToJid } from '../whatsapp-send.mapper'
+import type { OutgoingMessage } from '../channel-adapter.interface'
 
 function makeMsg(overrides: Partial<OutgoingMessage>): OutgoingMessage {
   return {

@@ -9,13 +9,13 @@
  *   - Audit hooks conectados
  */
 
-import { DiscordAdapter } from '../discord.adapter.js'
+import { DiscordAdapter } from '../discord.adapter'
 
 // ── Mocks ───────────────────────────────────────────────────────────────
 
 global.fetch = jest.fn()
 
-jest.mock('../discord.adapter.audit.js', () => ({
+jest.mock('../discord.adapter.audit', () => ({
   auditDiscordProvisioned:     jest.fn(),
   auditDiscordMessageInbound:  jest.fn(),
   auditDiscordMessageOutbound: jest.fn(),
@@ -25,7 +25,7 @@ jest.mock('../discord.adapter.audit.js', () => ({
 import {
   auditDiscordMessageInbound,
   auditDiscordMessageOutbound,
-} from '../discord.adapter.audit.js'
+} from '../discord.adapter.audit'
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 

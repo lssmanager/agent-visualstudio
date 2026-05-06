@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { ChannelLifecycleService } from '../channel-lifecycle.service.js'
+import { ChannelLifecycleService } from '../channel-lifecycle.service'
 import {
   ChannelNotFoundError,
   InvalidTransitionError,
   ChannelAlreadyInStateError,
   WebhookRegistrationError,
-} from '../channel-lifecycle.errors.js'
+} from '../channel-lifecycle.errors'
 
 function makeChannel(status: string, id = 'ch-001') {
   return {

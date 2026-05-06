@@ -7,7 +7,7 @@
  */
 
 import { Module }               from '@nestjs/common'
-import { StatusStreamGateway }  from './status-stream.gateway.js'
+import { StatusStreamGateway }  from './status-stream.gateway'
 
 @Module({
   providers: [StatusStreamGateway],

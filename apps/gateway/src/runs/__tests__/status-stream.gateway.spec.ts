@@ -5,7 +5,7 @@
  * Uses jest mocks — no real Socket.IO server needed.
  */
 
-import { StatusStreamGateway, StatusChangeEvent } from '../status-stream.gateway.js'
+import { StatusStreamGateway, StatusChangeEvent } from '../status-stream.gateway'
 
 // ── Mock socket factory ───────────────────────────────────────────────────────
 

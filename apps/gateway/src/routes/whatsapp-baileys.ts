@@ -4,8 +4,8 @@
 
 import { Router, type Request, type Response } from 'express'
 import type { PrismaClient } from '@prisma/client'
-import { whatsappSessionStore } from '../whatsapp-session.store.js'
-import { WhatsAppDeprovisionService } from '../channels/whatsapp-deprovision.service.js'
+import { whatsappSessionStore } from '../whatsapp-session.store'
+import { WhatsAppDeprovisionService } from '../channels/whatsapp-deprovision.service'
 
 interface BaileysAdapterConstructable {
   new (configId: string): {
@@ -64,7 +64,7 @@ export function whatsappBaileysRouter(db: PrismaClient): Router {
     try {
       let AdapterClass: BaileysAdapterConstructable
       try {
-        const mod = await import('../channels/whatsapp.adapter.js')
+        const mod = await import('../channels/whatsapp.adapter')
         AdapterClass = (mod.WhatsAppBaileysAdapter ?? mod.default) as BaileysAdapterConstructable
       } catch {
         res.status(503).json({ ok: false, error: 'WhatsAppBaileysAdapter not available — install @whiskeysockets/baileys' })

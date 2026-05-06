@@ -5,8 +5,8 @@
  * Requiere: PHONE_NUMBER_ID y token en secretsEncrypted.
  */
 
-import type { IncomingMessage, OutgoingMessage } from './channel-adapter.interface.js'
-import { BaseChannelAdapter } from './channel-adapter.interface.js'
+import type { IncomingMessage, OutgoingMessage } from './channel-adapter.interface'
+import { BaseChannelAdapter } from './channel-adapter.interface'
 
 // ── Tipos WhatsApp ────────────────────────────────────────────────────
 
@@ -141,7 +141,7 @@ export class WhatsAppAdapter extends BaseChannelAdapter {
   }
 
   private async loadConfig(channelConfigId: string) {
-    const { PrismaService } = await import('../prisma/prisma.service.js')
+    const { PrismaService } = await import('../prisma/prisma.service')
     const db = new PrismaService()
     const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } })
     if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`)
