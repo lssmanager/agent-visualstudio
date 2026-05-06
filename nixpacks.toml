@@ -7,7 +7,7 @@ cmds = ['npm install --legacy-peer-deps --no-workspaces']
 [phases.build]
 cmds = [
   './node_modules/.bin/prisma generate --schema=./apps/api/prisma/schema.prisma',
-  'npm run build:api || ./node_modules/.bin/nest build --config apps/api/nest-cli.json || ./node_modules/.bin/tsc -p apps/api/tsconfig.build.json'
+  './node_modules/.bin/tsc -p tsconfig.json'
 ]
 
 [start]
