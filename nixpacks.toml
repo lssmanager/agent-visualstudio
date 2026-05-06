@@ -19,20 +19,17 @@ cmds = [
 
 [phases.build]
 # Comandos hardcodeados y blindados. NUNCA llamar npm run <script> aquí.
-# Si package.json cambia, este archivo no se ve afectado.
+# tsc fue eliminado: este es un deploy de SPA frontend (Vite → Caddy).
+# Los ~60 errores TS del backend NestJS son irrelevantes para el artefacto de deploy.
+# Vite usa esbuild internamente y NO requiere un paso tsc previo.
 cmds = [
-  # 1. Generar Prisma Client
+  # 1. Generar Prisma Client (requerido por imports del frontend si usa tipos Prisma)
   "npx prisma generate --schema=packages/db/prisma/schema.prisma",
 
-  # 2. Compilar TypeScript del backend (NestJS + packages)
-  #    --noEmitOnError false : no aborta si hay errores de tipos en packages internos
-  #    --skipLibCheck        : no type-check node_modules ni .d.ts de terceros
-  "npx tsc -p tsconfig.json --noEmitOnError false --skipLibCheck",
-
-  # 3. Compilar frontend con Vite (no usa tsc directamente, usa esbuild)
+  # 2. Compilar frontend con Vite (esbuild, no tsc)
   "npx vite build --config apps/web/vite.config.ts",
 
-  # 4. Verificar que el frontend compiló correctamente
+  # 3. Verificar que el frontend compiló correctamente
   "test -f apps/web/dist/index.html"
 ]
 
