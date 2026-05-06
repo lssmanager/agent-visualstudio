@@ -1,35 +1,19 @@
 // ============================================================
 // schema.prisma — Agent Visual Studio
-// SCHEMA CANÓNICO v9 — FUSIÓN COMPLETA
+// SCHEMA CANÓNICO v10 — FIXES DE TIPOS
 //
 // Arquitectura: Agency → Department → Workspace → Agent
 // Fuentes fusionadas:
-//   - packages/db/prisma/schema.prisma (v8, multi-tenant, durable execution)
-//   - apps/api/prisma/schema.prisma (ProviderCatalog, Channel enums, Policy/Hook)
+//   - packages/db/prisma/schema.prisma (v9, multi-tenant fusionado)
 //
-// v9 — Fusión:
-//   + ProviderCatalog, LlmProvider, OAuthToken, ProviderCredential, ModelCatalogEntry
-//   + Channel con ChannelKind/ChannelStatus enums
-//   + Policy, Hook (workspace-level)
-//   + Skill con workspaceId + deletedAt
-//   + AgentSkill con configOverride
-//   + Enums: ChannelKind, ChannelStatus, RunStatus, RunStepStatus,
-//            MessageRole, BudgetScope, BudgetPeriod, IncidentKind,
-//            ModelPolicyScope, ApprovalStatus, ActivityResource, ProviderAuthType
-//   + Run: agentId, sessionId, channelKind (ChannelKind), inputData, outputData
-//   + RunStep: index, model, provider, promptTokens/completionTokens Decimal
-//   + BudgetPolicy: conserva campos polimórficos + añade limitUsd/period/alertPct
-//   + Approval: workspaceId, title, description, expiresAt
-//   + ActivityLog: resource (ActivityResource enum)
-//   Conservados del canónico v8:
-//   + Agency, Department (jerarquía multi-tenant)
-//   + ChannelConfig, ChannelBinding, GatewaySession
-//   + ConversationMessage ligado a GatewaySession
-//   + Routine, AgentWakeupRequest
-//   + RunStep.checkpointData, durableState (durable execution)
-//   + BudgetPolicy polymorphic (scopeType/scopeId, 4 FKs)
-//   + ModelPolicy polymorphic (scopeType/scopeId, 4 FKs)
-//   + ApprovalComment, BudgetIncident polimórfico
+// v10 — Fixes de tipos (para desbloquear tsc):
+//   + SystemConfig: modelo para settings.service.ts
+//   + BotStatus: enum para channel-lifecycle.service.ts
+//   + ChannelType: enum alias de ChannelKind (backward compat)
+//   + BudgetPolicy: alertAt, agencyId, departmentId, agentId
+//   + Run: totalCostUsd
+//   + RunStep: tokenUsage
+//   + Approval: decidedAt
 // ============================================================
 
 generator client {
@@ -52,6 +36,18 @@ enum ChannelKind {
   webchat
   slack
   teams
+  webhook
+}
+
+// Alias backward-compat: el código en credentials-schema.ts importa ChannelType
+enum ChannelType {
+  telegram
+  whatsapp
+  discord
+  webchat
+  slack
+  teams
+  webhook
 }
 
 enum ChannelStatus {
@@ -59,6 +55,14 @@ enum ChannelStatus {
   bound
   error
   offline
+}
+
+// Fix 2: BotStatus para channel-lifecycle.service.ts
+enum BotStatus {
+  initializing
+  running
+  stopped
+  error
 }
 
 enum RunStatus {
@@ -212,6 +216,20 @@ model Workspace {
 }
 
 // ────────────────────────────────────────────────────────────
+// SYSTEM CONFIG (Fix 1 — para settings.service.ts)
+// ────────────────────────────────────────────────────────────
+
+model SystemConfig {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Json     @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("system_configs")
+}
+
+// ────────────────────────────────────────────────────────────
 // AGENTS
 // ────────────────────────────────────────────────────────────
 
@@ -335,7 +353,7 @@ model AgentSkill {
 }
 
 // ────────────────────────────────────────────────────────────
-// POLICY & HOOK (workspace-level, del schema apps/api)
+// POLICY & HOOK (workspace-level)
 // ────────────────────────────────────────────────────────────
 
 model Policy {
@@ -407,7 +425,7 @@ model N8nWorkflow {
 }
 
 // ────────────────────────────────────────────────────────────
-// PROVIDER CATALOG (del schema apps/api)
+// PROVIDER CATALOG
 // ────────────────────────────────────────────────────────────
 
 model ProviderCatalog {
@@ -535,26 +553,28 @@ model Flow {
 }
 
 // ────────────────────────────────────────────────────────────
-// RUNS
+// RUNS (Fix 6: totalCostUsd, agencyId)
 // ────────────────────────────────────────────────────────────
 
 model Run {
-  id          String     @id @default(cuid())
-  workspaceId String
-  flowId      String?
-  agentId     String?
-  sessionId   String?
-  channelKind ChannelKind?
-  status      RunStatus  @default(pending)
-  trigger     Json       @default("{}")
-  inputData   Json       @default("{}")
-  outputData  Json?
-  error       String?
-  metadata    Json?      @default("{}")
-  startedAt   DateTime?
-  completedAt DateTime?
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  id           String      @id @default(cuid())
+  workspaceId  String
+  flowId       String?
+  agentId      String?
+  sessionId    String?
+  channelKind  ChannelKind?
+  // Fix 6: campo que dashboard.service.ts selecciona
+  totalCostUsd Decimal?    @db.Decimal(10, 4)
+  status       RunStatus   @default(pending)
+  trigger      Json        @default("{}")
+  inputData    Json        @default("{}")
+  outputData   Json?
+  error        String?
+  metadata     Json?       @default("{}")
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
 
   workspace      Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   flow           Flow?                @relation(fields: [flowId], references: [id])
@@ -571,6 +591,10 @@ model Run {
   @@index([createdAt])
   @@map("runs")
 }
+
+// ────────────────────────────────────────────────────────────
+// RUN STEPS (Fix 7: tokenUsage)
+// ────────────────────────────────────────────────────────────
 
 model RunStep {
   id               String        @id @default(cuid())
@@ -591,13 +615,15 @@ model RunStep {
   promptTokens     Int?
   completionTokens Int?
   totalTokens      Int?
+  // Fix 7: alias para dashboard.service.ts que usa tokenUsage
+  tokenUsage       Int           @default(0)
   costUsd          Decimal?      @db.Decimal(12, 8)
   startedAt        DateTime?
   completedAt      DateTime?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
-  // Durable execution fields (del schema canónico v8)
+  // Durable execution fields
   checkpointData  Json?
   checkpointSeq   Int      @default(0)
   interruptReason String?
@@ -620,13 +646,14 @@ model RunStep {
 // CHANNELS
 // ────────────────────────────────────────────────────────────
 
-// Channel: modelo del schema apps/api (con ChannelKind enum, boundAgent)
 model Channel {
   id           String        @id @default(cuid())
   workspaceId  String
   workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   kind         ChannelKind
   status       ChannelStatus @default(provisioned)
+  // Fix 2: botStatus para channel-lifecycle.service.ts
+  botStatus    BotStatus     @default(initializing)
   tokenEnc     String
   meta         Json          @default("{}")
   boundAgentId String?
@@ -640,7 +667,6 @@ model Channel {
   @@map("channels")
 }
 
-// ChannelConfig + ChannelBinding + GatewaySession: del schema canónico v8 (gateway completo)
 model ChannelConfig {
   id          String   @id @default(cuid())
   workspaceId String
@@ -696,8 +722,6 @@ model GatewaySession {
   @@map("gateway_sessions")
 }
 
-// ConversationMessage: dual FK (sessionId → GatewaySession + channelId → Channel)
-// Ambos nullable para compatibilidad con los dos schemas
 model ConversationMessage {
   id               String      @id @default(cuid())
   sessionId        String?
@@ -725,15 +749,18 @@ model ConversationMessage {
 }
 
 // ────────────────────────────────────────────────────────────
-// BUDGET GOVERNANCE
+// BUDGET GOVERNANCE (Fix 4+5: alertAt, agencyId, departmentId, agentId)
 // ────────────────────────────────────────────────────────────
 
 model BudgetPolicy {
   id                  String       @id @default(cuid())
-  // Polymorphic scope (del schema canónico v8)
+  // Polymorphic scope (del canónico v8)
   scopeType           String       @default("workspace")
   scopeId             String       @default("")
-  // Campos del schema apps/api
+  // Campos directos (Fix 5: Opción A — para dashboard.service.ts)
+  agencyId            String?
+  departmentId        String?
+  agentId             String?
   workspaceId         String?
   name                String       @default("")
   scope               BudgetScope  @default(workspace)
@@ -742,8 +769,10 @@ model BudgetPolicy {
   period              BudgetPeriod @default(monthly)
   periodDays          Int?
   alertPct            Int          @default(80)
+  // Fix 4: alertAt para dashboard.service.ts
+  alertAt             DateTime?
   enabled             Boolean      @default(true)
-  // Campos del schema canónico v8
+  // Del canónico v8
   window              String       @default("monthly")
   softCapUsd          Float?
   hardCapUsd          Float?
@@ -768,17 +797,18 @@ model BudgetPolicy {
 
   @@index([scopeId])
   @@index([workspaceId])
+  @@index([agencyId])
+  @@index([departmentId])
+  @@index([agentId])
   @@map("budget_policies")
 }
 
 model BudgetIncident {
   id             String       @id @default(cuid())
-  // Del schema apps/api
   budgetPolicyId String?
   budgetPolicy   BudgetPolicy? @relation(fields: [budgetPolicyId], references: [id], onDelete: Cascade)
   kind           IncidentKind @default(alert)
   usageUsd       Decimal?     @db.Decimal(10, 4)
-  // Del schema canónico v8
   policyId       String       @default("")
   scopeType      String       @default("")
   scopeId        String       @default("")
@@ -839,16 +869,13 @@ model CostEvent {
 
 model ModelPolicy {
   id            String           @id @default(cuid())
-  // Polymorphic (del canónico v8)
   scopeType     String           @default("workspace")
   scopeId       String           @default("")
-  // Del schema apps/api
   workspaceId   String?
   scope         ModelPolicyScope @default(workspace)
   targetId      String?
   provider      String           @default("openai")
   model         String           @default("gpt-4o-mini")
-  // Del canónico v8
   primaryModel  String           @default("gpt-4o-mini")
   fallbackChain String[]         @default([])
   temperature   Decimal          @default(0.7) @db.Decimal(3, 2)
@@ -873,12 +900,11 @@ model ModelPolicy {
 }
 
 // ────────────────────────────────────────────────────────────
-// APPROVALS
+// APPROVALS (Fix 8: decidedAt)
 // ────────────────────────────────────────────────────────────
 
 model Approval {
   id          String         @id @default(cuid())
-  // Del schema apps/api
   workspaceId String?
   agentId     String?
   runId       String?
@@ -891,7 +917,8 @@ model Approval {
   reviewedBy  String?
   reviewNote  String?        @db.Text
   expiresAt   DateTime?
-  // Del canónico v8
+  // Fix 8: decidedAt para runs.service.ts
+  decidedAt   DateTime?
   scopeType   String         @default("")
   scopeId     String         @default("")
   requestedAt DateTime       @default(now())
