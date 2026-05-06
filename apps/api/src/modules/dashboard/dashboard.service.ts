@@ -46,6 +46,12 @@ function pct(curr: number, prev: number): number {
   return Math.round(((curr - prev) / prev) * 1000) / 10
 }
 
+/** Coerce a Prisma.Decimal (or number | null | undefined) to a JS number. */
+function toNum(v: Prisma.Decimal | number | null | undefined): number {
+  if (v == null) return 0
+  return typeof v === 'number' ? v : v.toNumber()
+}
+
 // ── tipos exportados ────────────────────────────────────────────────────────────────
 
 export interface TimelineQuery {
@@ -164,8 +170,9 @@ export class DashboardService {
 
     const completed   = curr.filter(r => r.status === 'completed')
     const successRate = curr.length ? completed.length / curr.length : 0
-    const totalCost   = curr.reduce((s, r) => s + r.totalCostUsd, 0)
-    const prevCost    = prev.reduce((s, r) => s + r.totalCostUsd, 0)
+    // totalCostUsd is Prisma.Decimal on the model — coerce with toNum()
+    const totalCost   = curr.reduce((s, r) => s + toNum(r.totalCostUsd), 0)
+    const prevCost    = prev.reduce((s, r) => s + toNum(r.totalCostUsd), 0)
 
     const durations = completed
       .filter(r => r.completedAt)
@@ -200,7 +207,7 @@ export class DashboardService {
       const slot = Math.floor(r.startedAt.getTime() / bMs) * bMs
       const b    = map.get(slot) ?? { count: 0, costUsd: 0 }
       b.count++
-      b.costUsd += r.totalCostUsd
+      b.costUsd += toNum(r.totalCostUsd)
       map.set(slot, b)
     }
 
@@ -243,7 +250,7 @@ export class DashboardService {
       b.totalTokens      += tu.total_tokens
         ?? (tu.input  ?? tu.prompt_tokens     ?? 0)
          + (tu.output ?? tu.completion_tokens ?? 0)
-      b.costUsd          += step.costUsd
+      b.costUsd          += toNum(step.costUsd)
       map.set(slot, b)
     }
 
@@ -272,9 +279,10 @@ export class DashboardService {
       ? await this.prisma.budgetPolicy.findUnique({ where: { agencyId } })
       : null
 
-    const periodDays = policy?.periodDays ?? 30
-    const s          = sinceMs(periodDays * DAY)
-    const where      = agencyId
+    const periodDays  = toNum(policy?.periodDays) || 30
+    const limitUsdNum = policy ? toNum(policy.limitUsd) : Infinity
+    const s           = sinceMs(periodDays * DAY)
+    const where       = agencyId
       ? { agencyId, startedAt: { gte: s } }
       : { startedAt: { gte: s } }
 
@@ -283,13 +291,13 @@ export class DashboardService {
       _sum: { totalCostUsd: true },
     })
 
-    const spentUsd  = agg._sum.totalCostUsd ?? 0
-    const limitUsd  = policy?.limitUsd ?? Infinity
-    const remaining = limitUsd === Infinity ? Infinity : limitUsd - spentUsd
-    const utilPct   = limitUsd === Infinity ? 0 : Math.round((spentUsd / limitUsd) * 10_000) / 100
+    // _sum.totalCostUsd is Prisma.Decimal | null
+    const spentUsd  = agg._sum.totalCostUsd?.toNumber() ?? 0
+    const remaining = limitUsdNum === Infinity ? Infinity : limitUsdNum - spentUsd
+    const utilPct   = limitUsdNum === Infinity ? 0 : Math.round((spentUsd / limitUsdNum) * 10_000) / 100
 
     return {
-      limitUsd:       limitUsd === Infinity ? -1 : limitUsd,
+      limitUsd:       limitUsdNum === Infinity ? -1 : limitUsdNum,
       spentUsd:       Math.round(spentUsd  * 10_000) / 10_000,
       remainingUsd:   remaining === Infinity ? -1 : Math.round(remaining * 10_000) / 10_000,
       utilizationPct: utilPct,
@@ -311,7 +319,7 @@ export class DashboardService {
     for (const s of steps) {
       const model = s.agent?.model ?? 'unknown'
       const e     = map.get(model) ?? { costUsd: 0, steps: 0 }
-      e.costUsd += s.costUsd
+      e.costUsd += toNum(s.costUsd)
       e.steps++
       map.set(model, e)
     }
@@ -376,10 +384,12 @@ export class DashboardService {
 
   /** Estado instantáneo del runtime. */
   async getRuntimeState(): Promise<RuntimeState> {
+    // RunStatus enum: queued | running | completed | failed | paused
+    // Approval-gate suspended runs are stored with status 'paused'.
     const [running, queued, waiting] = await Promise.all([
       this.prisma.run.count({ where: { status: 'running' } }),
       this.prisma.run.count({ where: { status: 'queued' } }),
-      this.prisma.run.count({ where: { status: 'waiting_approval' } }),
+      this.prisma.run.count({ where: { status: 'paused' } }),
     ])
     return {
       running,
@@ -427,7 +437,7 @@ export class DashboardService {
       durationMs:   r.completedAt
         ? r.completedAt.getTime() - r.startedAt.getTime()
         : null,
-      totalCostUsd: r.totalCostUsd,
+      totalCostUsd: toNum(r.totalCostUsd),
     }))
   }
 
@@ -486,9 +496,13 @@ export class DashboardService {
       })
     }
 
-    // presupuesto
+    // presupuesto: todos los campos Decimal de BudgetPolicy necesitan .toNumber()
     for (const pol of policies) {
-      const s    = sinceMs(pol.periodDays * DAY)
+      const limitUsd  = toNum(pol.limitUsd)
+      const alertAt   = toNum(pol.alertAt)
+      const periodDays = toNum(pol.periodDays)
+
+      const s    = sinceMs(periodDays * DAY)
       const scope = pol.agencyId     ? { agencyId:     pol.agencyId     }
                   : pol.departmentId ? { departmentId: pol.departmentId }
                   : pol.workspaceId  ? { workspaceId:  pol.workspaceId  }
@@ -500,22 +514,22 @@ export class DashboardService {
         where: { ...scope, startedAt: { gte: s } } as never,
         _sum:  { totalCostUsd: true },
       })
-      const spent   = agg._sum.totalCostUsd ?? 0
-      const utilPct = spent / pol.limitUsd
+      const spent   = agg._sum.totalCostUsd?.toNumber() ?? 0
+      const utilPct = spent / limitUsd
 
       if (utilPct >= 1) {
         alerts.push({
           level:   'critical',
           type:    'budget_exceeded',
-          message: `Budget exceeded: $${spent.toFixed(4)} / $${pol.limitUsd} (${Math.round(utilPct * 100)}%)`,
-          meta:    { policyId: pol.id, spent, limit: pol.limitUsd },
+          message: `Budget exceeded: $${spent.toFixed(4)} / $${limitUsd} (${Math.round(utilPct * 100)}%)`,
+          meta:    { policyId: pol.id, spent, limit: limitUsd },
         })
-      } else if (utilPct >= pol.alertAt) {
+      } else if (utilPct >= alertAt) {
         alerts.push({
           level:   'warning',
           type:    'budget_near_limit',
-          message: `Budget at ${Math.round(utilPct * 100)}% of $${pol.limitUsd} limit`,
-          meta:    { policyId: pol.id, spent, limit: pol.limitUsd },
+          message: `Budget at ${Math.round(utilPct * 100)}% of $${limitUsd} limit`,
+          meta:    { policyId: pol.id, spent, limit: limitUsd },
         })
       }
     }
@@ -529,7 +543,11 @@ export class DashboardService {
     const rows: BudgetRow[] = []
 
     for (const pol of policies) {
-      const s     = sinceMs(pol.periodDays * DAY)
+      const limitUsd   = toNum(pol.limitUsd)
+      const alertAt    = toNum(pol.alertAt)
+      const periodDays = toNum(pol.periodDays)
+
+      const s     = sinceMs(periodDays * DAY)
       const scope = pol.agencyId     ? { scope: 'agency',     scopeId: pol.agencyId,     where: { agencyId:     pol.agencyId     } }
                   : pol.departmentId ? { scope: 'department', scopeId: pol.departmentId, where: { departmentId: pol.departmentId } }
                   : pol.workspaceId  ? { scope: 'workspace',  scopeId: pol.workspaceId,  where: { workspaceId:  pol.workspaceId  } }
@@ -541,22 +559,22 @@ export class DashboardService {
         _sum:  { totalCostUsd: true },
       })
 
-      const spentUsd   = agg._sum.totalCostUsd ?? 0
-      const remaining  = pol.limitUsd - spentUsd
-      const utilPct    = Math.round((spentUsd / pol.limitUsd) * 10_000) / 100
+      const spentUsd   = agg._sum.totalCostUsd?.toNumber() ?? 0
+      const remaining  = limitUsd - spentUsd
+      const utilPct    = Math.round((spentUsd / limitUsd) * 10_000) / 100
 
       rows.push({
         policyId:       pol.id,
         scope:          scope.scope,
         scopeId:        scope.scopeId,
-        limitUsd:       pol.limitUsd,
-        periodDays:     pol.periodDays,
-        alertAt:        pol.alertAt,
+        limitUsd,
+        periodDays,
+        alertAt,
         spentUsd:       Math.round(spentUsd  * 10_000) / 10_000,
         remainingUsd:   Math.round(remaining * 10_000) / 10_000,
         utilizationPct: utilPct,
-        isOverBudget:   spentUsd > pol.limitUsd,
-        isNearLimit:    spentUsd >= pol.alertAt * pol.limitUsd,
+        isOverBudget:   spentUsd > limitUsd,
+        isNearLimit:    spentUsd >= alertAt * limitUsd,
       })
     }
 
