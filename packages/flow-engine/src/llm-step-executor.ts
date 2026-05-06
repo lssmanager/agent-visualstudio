@@ -5,7 +5,7 @@
  * Cambios respecto a la versión anterior:
  *   - Integra ModelPolicyResolver para resolver modelo con jerarquía
  *     flow_node > agent > workspace > fallback
- *   - Soporta providers OAuth via OAuthService.getAccessToken()
+ *   - Soporta providers OAuth via IOAuthService.getAccessToken()
  *   - Escribe CostEvent en DB al finalizar el step (async, no bloquea)
  *   - Mantiene backwards-compat: si no se inyecta prisma, funciona igual
  *     que antes (resolución por nodeConfig solamente)
@@ -21,9 +21,25 @@ import type { SkillSpec } from '../../core-types/src/skill-spec.js'
 import { ModelPolicyResolver } from './model-policy-resolver.js'
 import type { ResolvedModel } from './model-policy-resolver.js'
 import type { PrismaClient } from '@prisma/client'
-import type { OAuthService } from '../../apps/api/src/services/oauth.service.js'
 
-// ── Config ──────────────────────────────────────────────────────────────
+// ── IOAuthService — local interface (avoids cross-package import from apps/api) ──
+/**
+ * Minimal contract that any OAuthService implementation must satisfy.
+ * The concrete OAuthService in apps/api satisfies this interface structurally
+ * (TypeScript structural typing — no explicit `implements` needed).
+ *
+ * Only the single method used by LLMStepExecutor is declared here.
+ * If more methods are needed in the future, add them to this interface.
+ */
+export interface IOAuthService {
+  /**
+   * Returns a valid access token for the given LlmProvider DB record ID.
+   * Implementations must handle token refresh transparently.
+   */
+  getAccessToken(llmProviderId: string): Promise<string>
+}
+
+// ── Config ────────────────────────────────────────────────────────────────
 
 export interface LLMStepExecutorConfig {
   /**
@@ -50,9 +66,11 @@ export interface LLMStepExecutorConfig {
 
   /**
    * OAuthService para obtener access tokens de providers OAuth.
-   * Solo necesario si algún provider usa authType = 'oauth'.
+   * Typed against IOAuthService (local interface) instead of the concrete
+   * class from apps/api to avoid cross-package imports.
+   * Only necessary if any provider uses authType = 'oauth'.
    */
-  oauthService?: OAuthService
+  oauthService?: IOAuthService
 
   /**
    * Cost estimator — solo usado en modo "sin DB" (sin CostEvent).
@@ -61,7 +79,7 @@ export interface LLMStepExecutorConfig {
   estimateCost?: (model: string, usage: RunStepTokenUsage) => number
 }
 
-// ── Contexto de ejecución ───────────────────────────────────────────────
+// ── Contexto de ejecución ────────────────────────────────────────────
 
 export interface StepExecutionContext {
   runId:       string
@@ -82,7 +100,7 @@ export interface StepExecutionResult {
   resolvedModel: ResolvedModel
 }
 
-// ── LLMStepExecutor ─────────────────────────────────────────────────────
+// ── LLMStepExecutor ───────────────────────────────────────────────────
 
 export class LLMStepExecutor {
   private readonly resolver: ModelPolicyResolver | null
@@ -114,10 +132,10 @@ export class LLMStepExecutor {
           resolvedAt: 'node_config' as const,
         }
 
-    // ── 2. Obtener provider instanciado ───────────────────────────────
+    // ── 2. Obtener provider instanciado ────────────────────────────────
     const provider = await this.resolveProvider(resolved, context.workspaceId)
 
-    // ── 3. Construir step inicial ─────────────────────────────────────
+    // ── 3. Construir step inicial ───────────────────────────────────────
     const step: RunStep = {
       id:        stepId,
       runId:     context.runId,
@@ -129,19 +147,19 @@ export class LLMStepExecutor {
     }
 
     try {
-      // ── 4. System prompt ───────────────────────────────────────────
+      // ── 4. System prompt ───────────────────────────────────────────────
       const systemPrompt =
         typeof node.config.systemPrompt === 'string'
           ? node.config.systemPrompt
           : buildDefaultSystemPrompt(node, context, resolved)
 
-      // ── 5. User message ────────────────────────────────────────────
+      // ── 5. User message ────────────────────────────────────────────────
       const userContent =
         typeof node.config.input === 'string'
           ? interpolate(node.config.input as string, context.state)
           : JSON.stringify(context.state)
 
-      // ── 6. Resolver tools ──────────────────────────────────────────
+      // ── 6. Resolver tools ──────────────────────────────────────────────
       const skillTools: McpToolDefinition[] = skillsToMcpTools(
         context.availableSkills.map((s) => ({
           ...s,
@@ -156,7 +174,7 @@ export class LLMStepExecutor {
         ...(context.extraTools ?? []),
       ]
 
-      // ── 7. ToolCallLoop ────────────────────────────────────────────
+      // ── 7. ToolCallLoop ────────────────────────────────────────────────
       const loopResult = await runToolCallLoop({
         provider,
         model:       resolved.model,
@@ -170,7 +188,7 @@ export class LLMStepExecutor {
         maxTokens:     resolved.maxTokens,
       })
 
-      // ── 8. Token usage + costo ─────────────────────────────────────
+      // ── 8. Token usage + costo ─────────────────────────────────────────
       const tokenUsage: RunStepTokenUsage = {
         input:  loopResult.totalUsage.promptTokens,
         output: loopResult.totalUsage.completionTokens,
@@ -182,7 +200,7 @@ export class LLMStepExecutor {
         totalTokens:     loopResult.totalUsage.totalTokens,
       })
 
-      // ── 9. Escribir CostEvent en DB (async fire-and-forget) ────────
+      // ── 9. Escribir CostEvent en DB (async fire-and-forget) ────────────
       this.writeCostEvent({
         runId:       context.runId,
         workspaceId: context.workspaceId,
@@ -196,7 +214,7 @@ export class LLMStepExecutor {
         policyId: resolved.policyId,
       })
 
-      // ── 10. Output y estado ────────────────────────────────────────
+      // ── 10. Output y estado ────────────────────────────────────────────
       const output = {
         content:          loopResult.finalMessage.content,
         hitMaxIterations: loopResult.hitMaxIterations,
@@ -225,7 +243,7 @@ export class LLMStepExecutor {
     }
   }
 
-  // ── Helpers privados ─────────────────────────────────────────────────
+  // ── Helpers privados ──────────────────────────────────────────────────
 
   /**
    * Obtiene el ILLMProvider correcto para el slug resuelto.
@@ -235,11 +253,9 @@ export class LLMStepExecutor {
     resolved:    ResolvedModel,
     workspaceId: string,
   ): Promise<ILLMProvider> {
-    // Buscar en el mapa de providers instanciados
     const cached = this.config.providers.get(resolved.provider)
     if (cached) return cached
 
-    // Si hay prisma y oauthService, intentar construir el provider desde DB
     if (this.config.prisma && this.config.oauthService) {
       const dbProvider = await this.config.prisma.llmProvider.findFirst({
         where:   { workspaceId, provider: resolved.provider },
@@ -250,10 +266,8 @@ export class LLMStepExecutor {
         let apiKey = ''
 
         if (dbProvider.catalog.authType === 'oauth') {
-          // OAuth: obtener access token dinámico (refresca si es necesario)
           apiKey = await this.config.oauthService.getAccessToken(dbProvider.id)
         } else if (dbProvider.apiKeyEnc) {
-          // API key: descifrar
           apiKey = decryptApiKey(dbProvider.apiKeyEnc)
         }
 
@@ -263,13 +277,11 @@ export class LLMStepExecutor {
           defaultModel: resolved.model,
         })
 
-        // Cachear para el resto de la ejecución del run
         this.config.providers.set(resolved.provider, instance)
         return instance
       }
     }
 
-    // Fallback: defaultProvider o error
     if (this.config.defaultProvider) return this.config.defaultProvider
 
     throw new Error(
@@ -283,11 +295,9 @@ export class LLMStepExecutor {
     model:    string,
     usage:    { promptTokens: number; completionTokens: number; totalTokens: number },
   ): number | undefined {
-    // Preferir estimateCost del provider si es OpenAILLMProvider
     if (provider instanceof OpenAILLMProvider) {
       return provider.estimateCost(model, usage)
     }
-    // Callback legacy
     if (this.config.estimateCost) {
       return this.config.estimateCost(model, { input: usage.promptTokens, output: usage.completionTokens })
     }
@@ -329,7 +339,7 @@ export class LLMStepExecutor {
   }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 function buildDefaultSystemPrompt(
   node:     FlowNode,
