@@ -13,7 +13,7 @@ export type {
   SpecialistMatch,
   BlockedStatus,
   DelegateBlock,
-} from './hierarchy-orchestrator.js'
+} from './hierarchy-orchestrator'
 
 export {
   HierarchyOrchestrator,
@@ -21,17 +21,17 @@ export {
   jaccardScore,
   parseDelegateBlocks,
   DELEGATION_TIMEOUT_MS,
-} from './hierarchy-orchestrator.js'
+} from './hierarchy-orchestrator'
 
 // [F2b-03] generateOrchestratorPrompt() — función pura para sintetizar
 // el systemPrompt del orchestrator a partir de capacidades de hijos.
 export type {
   ChildCapabilitySummary,
   GenerateOrchestratorPromptParams,
-} from './profile-propagator.service.js'
+} from './profile-propagator.service'
 
 export {
   generateOrchestratorPrompt,
   buildChildSummary,
   aggregateCapabilities,
-} from './profile-propagator.service.js'
+} from './profile-propagator.service'
