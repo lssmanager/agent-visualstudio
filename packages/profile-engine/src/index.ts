@@ -1,3 +1,6 @@
+// packages/profile-engine/src/index.ts
+// @lss/profile-engine — public API
+
 // Markdown loaders — fuente primaria para loading dinámico desde disco
 export {
   loadProfileFromMarkdown,
@@ -7,9 +10,9 @@ export {
   loadRoutinesCatalog,
   invalidateRoutinesCatalog,
   type RoutineInfo,
-} from './loaders/index.js'
+} from './loaders/index'
 
-export * from './routines.js'
+export * from './routines'
 
 // ProfilePropagatorService — persistencia en Prisma (AgentProfile)
 export type {
@@ -18,19 +21,19 @@ export type {
   PropagateProfileInput,
   ResolvedProfile,
   PropagateUpResult,
-} from './profile-propagator.service.js'
+} from './profile-propagator.service'
 
-export { ProfilePropagatorService } from './profile-propagator.service.js'
+export { ProfilePropagatorService } from './profile-propagator.service'
 
 // ModelCapabilityRegistry — catálogo seed y resolución de fallback (uso legacy/tests)
-export type { ModelFamily, ModelCapability } from './model-capability-registry.js'
+export type { ModelFamily, ModelCapability } from './model-capability-registry'
 export {
   CAPABILITY_REGISTRY,
   seedFamiliesForModel,
   seedContextKForModel,
   resolveModelFallbackChain,
   ModelCapabilityRegistry,
-} from './model-capability-registry.js'
+} from './model-capability-registry'
 
 // ProviderCatalogService — CRUD de credenciales + sync desde APIs de proveedores
 export type {
@@ -38,19 +41,18 @@ export type {
   UpdateProviderInput,
   ModelFilter,
   ResolvedModel,
-} from './provider-catalog.service.js'
+} from './provider-catalog.service'
 export {
   encryptApiKey,
   decryptApiKey,
   ProviderCatalogService,
-} from './provider-catalog.service.js'
+} from './provider-catalog.service'
 
 // ModelCatalogService — consulta del catálogo en DB
-export type { ModelCatalogEntryWithProvider } from './model-catalog.service.js'
-export { ModelCatalogService } from './model-catalog.service.js'
+export type { ModelCatalogEntryWithProvider } from './model-catalog.service'
+export { ModelCatalogService } from './model-catalog.service'
 
 // AgentBuilder — creación/eliminación de agentes con propagación de orchestrator prompts
-// FIX: OrchestratorModelResolver and OrchestratorPromptPropagator are interfaces — export as type
 export type {
   CreateAgentInput,
   UpdateAgentInput,
@@ -58,6 +60,6 @@ export type {
   ModelResolution,
   OrchestratorModelResolver,
   OrchestratorPromptPropagator,
-} from './agent-builder.js'
+} from './agent-builder'
 
-export { AgentBuilder } from './agent-builder.js'
+export { AgentBuilder } from './agent-builder'
