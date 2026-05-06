@@ -15,10 +15,15 @@
  *   getTrace(id)        → findRunById(id)
  *   getReplayMetadata   → findRunById + metadata
  *   replayRun(id)       → createRun + executeRun (guarda flowId nulo)
- *   compareRuns(ids)    → findRunById × N  (usa tokenUsage.input/output)
+ *   compareRuns(ids)    → findRunById × N  (usa promptTokens/completionTokens)
  *   getRunCost(id)      → findRunById + steps aggregate
  *   getUsage(filters)   → findRunsByWorkspace + aggregate por run
  *   getUsageByAgent()   → findRunsByWorkspace + per-agent aggregate
+ *
+ * IMPORTANT — Prisma field notes:
+ *   - RunStep.costUsd is Prisma Decimal — MUST call Number() before arithmetic
+ *   - RunStep has NO .tokenUsage sub-object; fields are flat:
+ *       promptTokens, completionTokens, totalTokens
  */
 
 import { getPrisma } from '../core/db/prisma.service';
@@ -26,11 +31,10 @@ import {
   RunRepository,
   FlowExecutor,
   LLMStepExecutor,
-} from '../../../../../packages/run-engine/src/index.js';
-import type { AgentExecutorFn } from '../../../../../packages/run-engine/src/index.js';
-import type { RunStatus } from '@prisma/client';
+} from '@lss/run-engine';
+import type { AgentExecutorFn } from '@lss/run-engine';
 
-// ── Singletons (lazy, construidos en la primera llamada) ─────────────────────
+// ── Singletons (lazy, construidos en la primera llamada) ───────────────────
 
 let _repo: RunRepository | null = null;
 
@@ -43,7 +47,7 @@ function getRepo(): RunRepository {
  * AgentExecutorFn mínima que usa LLMStepExecutor para ejecutar un RunStep.
  */
 const executeAgent: AgentExecutorFn = async (stepId: string) => {
-  const executor = new LLMStepExecutor();
+  const executor = new LLMStepExecutor({ prisma: getPrisma() });
   return executor.execute(stepId);
 };
 
@@ -54,11 +58,27 @@ function getFlowExecutor(): FlowExecutor {
   });
 }
 
-// ── RunsService ─────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────
+
+/**
+ * Safely convert a Prisma Decimal (or number | null | undefined) to JS number.
+ * Prisma stores costUsd as Decimal — using it directly in arithmetic silently
+ * produces NaN. Always go through this helper.
+ */
+function toNum(v: unknown): number {
+  if (v == null) return 0;
+  if (typeof v === 'number') return v;
+  // Prisma Decimal has .toNumber()
+  if (typeof (v as any).toNumber === 'function') return (v as any).toNumber();
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+// ── RunsService ─────────────────────────────────────────────────────
 
 export class RunsService {
 
-  // ── Queries ────────────────────────────────────────────────────────────────
+  // ── Queries ───────────────────────────────────────────────────────
 
   async findAll(workspaceId: string) {
     return getRepo().findRunsByWorkspace(workspaceId);
@@ -68,7 +88,7 @@ export class RunsService {
     return getRepo().findRunById(id);
   }
 
-  // ── Mutations ──────────────────────────────────────────────────────────────
+  // ── Mutations ────────────────────────────────────────────────────
 
   async startRun(params: {
     workspaceId: string;
@@ -101,8 +121,6 @@ export class RunsService {
 
   /**
    * approveStep — actualización atómica para evitar doble-decisión bajo concurrencia.
-   * updateMany({ where: { runId, stepId, status: 'pending' } }) garantiza
-   * que sólo una llamada simultánea gana la escritura; si count===0, ya fue decidido.
    */
   async approveStep(runId: string, stepId: string) {
     const prisma = getPrisma();
@@ -143,7 +161,7 @@ export class RunsService {
     });
   }
 
-  // ── Trace & Replay ─────────────────────────────────────────────────────────
+  // ── Trace & Replay ──────────────────────────────────────────────
 
   async getTrace(id: string) {
     return getRepo().findRunById(id);
@@ -175,12 +193,11 @@ export class RunsService {
     const original = await getRepo().findRunById(id);
     if (!original) throw new Error(`Run not found: ${id}`);
 
-    const status = original.status as RunStatus;
+    const status = original.status as string;
     if (status !== 'completed' && status !== 'failed') {
       throw new Error('Can only replay completed or failed runs');
     }
 
-    // Guard: flowId es requerido para crear un run válido
     if (!original.flowId) {
       throw new Error(
         `Cannot replay run ${id}: original run has no flowId. ` +
@@ -201,12 +218,8 @@ export class RunsService {
     });
   }
 
-  // ── Analytics ──────────────────────────────────────────────────────────────
+  // ── Analytics ──────────────────────────────────────────────────
 
-  /**
-   * compareRuns — usa tokenUsage.input/output (contrato de stepPrismaToSpec).
-   * promptTokens/completionTokens no existen en el objeto mapeado.
-   */
   async compareRuns(ids: string[]) {
     const repo = getRepo();
     const runs = await Promise.all(ids.map((id) => repo.findRunById(id)));
@@ -214,11 +227,12 @@ export class RunsService {
     const summaries = runs.map((run) => {
       if (!run) throw new Error(`Run not found`);
       const steps = run.steps ?? [];
-      const totalCost = steps.reduce((s, st) => s + ((st as any).costUsd ?? 0), 0);
+      // costUsd is Prisma Decimal — use toNum() helper
+      const totalCost = steps.reduce((s, st: any) => s + toNum(st.costUsd), 0);
       const totalTokens = steps.reduce(
-        (acc, st) => ({
-          input:  acc.input  + ((st as any).tokenUsage?.input  ?? 0),
-          output: acc.output + ((st as any).tokenUsage?.output ?? 0),
+        (acc, st: any) => ({
+          input:  acc.input  + (st.promptTokens     ?? 0),
+          output: acc.output + (st.completionTokens ?? 0),
         }),
         { input: 0, output: 0 },
       );
@@ -254,10 +268,11 @@ export class RunsService {
       nodeId:     s.nodeId,
       nodeType:   s.nodeType,
       agentId:    s.agentId,
-      costUsd:    s.costUsd ?? 0,
+      // costUsd is Prisma Decimal — convert to number
+      costUsd:    toNum(s.costUsd),
       tokenUsage: {
-        input:  s.tokenUsage?.input  ?? 0,
-        output: s.tokenUsage?.output ?? 0,
+        input:  s.promptTokens     ?? 0,
+        output: s.completionTokens ?? 0,
       },
     }));
 
@@ -270,11 +285,6 @@ export class RunsService {
     return { runId: run.id, totalCost, totalTokens, steps };
   }
 
-  /**
-   * getUsage — acumula cost+tokens por run individualmente.
-   * findRunsByWorkspace no incluye steps; usamos findRunById por run
-   * para obtener step-level cost/tokens.
-   */
   async getUsage(workspaceId: string, filters?: { from?: string; to?: string; groupBy?: string }) {
     let runs = await getRepo().findRunsByWorkspace(workspaceId, { limit: 1000 });
 
@@ -290,7 +300,6 @@ export class RunsService {
     const groupBy = filters?.groupBy ?? 'flow';
     const groupMap = new Map<string, { cost: number; tokens: { input: number; output: number }; runs: number }>();
 
-    // Cargamos steps por run para acumular cost/tokens reales
     const fullRuns = await Promise.all(
       runs.map((r) => getRepo().findRunById(r.id)),
     );
@@ -308,9 +317,10 @@ export class RunsService {
 
       const steps = run.steps ?? [];
       for (const st of steps as any[]) {
-        entry.cost              += st.costUsd              ?? 0;
-        entry.tokens.input      += st.tokenUsage?.input    ?? 0;
-        entry.tokens.output     += st.tokenUsage?.output   ?? 0;
+        // costUsd is Prisma Decimal — convert to number before accumulating
+        entry.cost              += toNum(st.costUsd);
+        entry.tokens.input      += st.promptTokens     ?? 0;
+        entry.tokens.output     += st.completionTokens ?? 0;
       }
     }
 
@@ -327,14 +337,10 @@ export class RunsService {
     return { totalCost, totalTokens, totalRuns: runs.length, groups };
   }
 
-  /**
-   * getUsageByAgent — cuenta runs (no steps) por agente y acumula cost/tokens.
-   */
   async getUsageByAgent(workspaceId: string) {
     const runs = await getRepo().findRunsByWorkspace(workspaceId, { limit: 1000 });
     const agentMap = new Map<string, { cost: number; tokens: { input: number; output: number }; runs: number }>();
 
-    // Cargamos steps para cost/tokens reales por agente
     const fullRuns = await Promise.all(
       runs.map((r) => getRepo().findRunById(r.id)),
     );
@@ -348,9 +354,10 @@ export class RunsService {
 
       const steps = run.steps ?? [];
       for (const st of steps as any[]) {
-        entry.cost              += st.costUsd              ?? 0;
-        entry.tokens.input      += st.tokenUsage?.input    ?? 0;
-        entry.tokens.output     += st.tokenUsage?.output   ?? 0;
+        // costUsd is Prisma Decimal — convert to number before accumulating
+        entry.cost              += toNum(st.costUsd);
+        entry.tokens.input      += st.promptTokens     ?? 0;
+        entry.tokens.output     += st.completionTokens ?? 0;
       }
     }
 
