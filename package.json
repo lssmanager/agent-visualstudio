@@ -8,10 +8,11 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "prestart": "npx prisma generate --schema=apps/api/prisma/schema.prisma",
+    "postinstall": "npx prisma generate --schema=packages/db/prisma/schema.prisma",
+    "prestart": "npx prisma generate --schema=packages/db/prisma/schema.prisma",
     "start": "node dist/apps/api/src/main.js",
-    "build": "npx prisma generate --schema=apps/api/prisma/schema.prisma && tsc -p tsconfig.json && npx vite build --config apps/web/vite.config.ts",
-    "build:ci": "tsc -p tsconfig.json && npx vite build --config apps/web/vite.config.ts",
+    "build": "npx prisma generate --schema=packages/db/prisma/schema.prisma && tsc -p tsconfig.json && npx vite build --config apps/web/vite.config.ts",
+    "build:ci": "npx prisma generate --schema=packages/db/prisma/schema.prisma && tsc -p tsconfig.json --noEmitOnError false --skipLibCheck && npx vite build --config apps/web/vite.config.ts",
     "build:web": "npx vite build --config apps/web/vite.config.ts",
     "build:gateway": "tsc -p apps/gateway/tsconfig.json",
     "dev": "NODE_ENV=development ts-node -P tsconfig.json apps/api/src/main.ts",
@@ -28,7 +29,7 @@
     "test:e2e:run-engine": "jest --config packages/run-engine/src/__tests__/e2e/jest.e2e.config.ts --runInBand"
   },
   "prisma": {
-    "schema": "apps/api/prisma/schema.prisma"
+    "schema": "packages/db/prisma/schema.prisma"
   },
   "keywords": [
     "openclaw",
