@@ -10,9 +10,11 @@
  */
 
 import { z } from 'zod'
-import { ChannelType } from '@prisma/client'
+// Fix 3: usar ChannelKind (nombre canónico del schema v10)
+// ChannelType sigue existiendo como enum alias en el schema (backward compat)
+import { ChannelKind } from '@prisma/client'
 
-// ── Schemas de credenciales por canal ──────────────────────────────────
+// ── Schemas de credenciales por canal ───────────────────────────────────
 
 /** Telegram Bot API */
 export const TelegramCredentialsSchema = z.object({
@@ -96,27 +98,27 @@ export const WebchatCredentialsSchema = z.object({
 })
 export type WebchatCredentials = z.infer<typeof WebchatCredentialsSchema>
 
-// ── Discriminated union — mapeo ChannelType → schema ───────────────────
+// ── Discriminated union — mapeo ChannelKind → schema ─────────────────────
 
 export const CREDENTIALS_SCHEMA_BY_TYPE = {
-  [ChannelType.telegram]: TelegramCredentialsSchema,
-  [ChannelType.whatsapp]: WhatsAppCredentialsSchema,
-  [ChannelType.discord]:  DiscordCredentialsSchema,
-  [ChannelType.teams]:    TeamsCredentialsSchema,
-  [ChannelType.slack]:    SlackCredentialsSchema,
-  [ChannelType.webhook]:  WebhookCredentialsSchema,
-  [ChannelType.webchat]:  WebchatCredentialsSchema,
-} as const satisfies Record<ChannelType, z.ZodObject<z.ZodRawShape>>
+  [ChannelKind.telegram]: TelegramCredentialsSchema,
+  [ChannelKind.whatsapp]: WhatsAppCredentialsSchema,
+  [ChannelKind.discord]:  DiscordCredentialsSchema,
+  [ChannelKind.teams]:    TeamsCredentialsSchema,
+  [ChannelKind.slack]:    SlackCredentialsSchema,
+  [ChannelKind.webhook]:  WebhookCredentialsSchema,
+  [ChannelKind.webchat]:  WebchatCredentialsSchema,
+} as const satisfies Record<ChannelKind, z.ZodObject<z.ZodRawShape>>
 
 export type CredentialsByType = {
-  [K in ChannelType]: z.infer<typeof CREDENTIALS_SCHEMA_BY_TYPE[K]>
+  [K in ChannelKind]: z.infer<typeof CREDENTIALS_SCHEMA_BY_TYPE[K]>
 }
 
 /**
- * Valida un objeto de credenciales según el ChannelType.
+ * Valida un objeto de credenciales según el ChannelKind.
  * Lanza ZodError si la validación falla.
  */
-export function parseCredentials<T extends ChannelType>(
+export function parseCredentials<T extends ChannelKind>(
   type:  T,
   input: unknown,
 ): CredentialsByType[T] {
@@ -127,7 +129,7 @@ export function parseCredentials<T extends ChannelType>(
  * Valida sin lanzar excepciones.
  * Retorna { success, data, error }.
  */
-export function safeParseCredentials<T extends ChannelType>(
+export function safeParseCredentials<T extends ChannelKind>(
   type:  T,
   input: unknown,
 ): z.SafeParseReturnType<CredentialsByType[T], CredentialsByType[T]> {

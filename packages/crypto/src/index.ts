@@ -8,10 +8,24 @@ export {
   decryptSecret,
 } from './channel-secrets.js'
 
+// Fix 9: exportar Zod schemas CON sufijo Schema (los DTOs los importan así)
+// Los types (sin sufijo) también se exportan para backward compat.
+export {
+  TelegramCredentialsSchema,
+  WhatsAppCredentialsSchema,
+  DiscordCredentialsSchema,
+  TeamsCredentialsSchema,
+  SlackCredentialsSchema,
+  WebhookCredentialsSchema,
+  WebchatCredentialsSchema,
+  CREDENTIALS_SCHEMA_BY_TYPE,
+  parseCredentials,
+  safeParseCredentials,
+} from './credentials-schema.js'
+
 export type {
   TelegramCredentials,
-  WhatsAppBaileysCredentials,
-  WhatsAppCloudCredentials,
+  WhatsAppCredentials,
   DiscordCredentials,
   TeamsCredentials,
   SlackCredentials,
