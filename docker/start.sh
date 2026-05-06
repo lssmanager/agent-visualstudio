@@ -37,8 +37,7 @@ echo "[startup] Prisma migrate deploy"
 
 echo "[startup] Checking frontend build"
 if [ ! -f apps/web/dist/index.html ]; then
-  echo "[startup] ERROR: apps/web/dist/index.html not found. GUI cannot render." >&2
-  exit 1
+  echo "[startup] WARNING: apps/web/dist/index.html not found — running in backend-only mode (GUI unavailable)"
 fi
 
 if [ -f dist/apps/api/src/main.js ]; then
@@ -47,4 +46,9 @@ if [ -f dist/apps/api/src/main.js ]; then
 fi
 
 echo "[startup] Compiled API not found; starting TS API with transpile-only for GUI evaluation"
-exec ./node_modules/.bin/ts-node --transpile-only -r tsconfig-paths/register -P tsconfig.deploy.json apps/api/src/main.ts
+exec ./node_modules/.bin/ts-node \
+  --transpile-only \
+  --skip-project \
+  -r tsconfig-paths/register \
+  -P tsconfig.deploy.json \
+  apps/api/src/main.ts

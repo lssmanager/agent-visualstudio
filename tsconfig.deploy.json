@@ -1,11 +1,16 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    "moduleResolution": "node",
     "skipLibCheck": true,
     "noEmitOnError": false,
     "strictNullChecks": false,
     "strict": false,
     "noImplicitAny": false
+  },
+  "ts-node": {
+    "transpileOnly": true,
+    "files": true
   },
   "exclude": [
     "node_modules",
