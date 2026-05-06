@@ -1,53 +1,80 @@
 #!/bin/sh
 set -eu
 
+# ─── Variables de entorno con defaults ──────────────────────────────────
 export PORT="${PORT:-3000}"
 export STUDIO_API_PORT="${STUDIO_API_PORT:-$PORT}"
+export NODE_ENV="${NODE_ENV:-production}"
 
-echo "[startup] Agent VisualStudio starting..."
+echo "[startup] Agent VisualStudio — NODE_ENV=${NODE_ENV}"
 
-if [ -z "${DATABASE_URL:-}" ]; then
-  echo "[startup] ERROR: DATABASE_URL is required" >&2
+# ─── Validación de variables obligatorias ────────────────────────────
+_require_env() {
+  eval _val="\$$1"
+  if [ -z "$_val" ]; then
+    echo "[startup] ERROR: $1 is required but not set" >&2
+    exit 1
+  fi
+}
+
+_require_env DATABASE_URL
+_require_env CHANNEL_ENC_KEY
+_require_env ENCRYPTION_KEY
+
+_enc_len=$(printf "%s" "$ENCRYPTION_KEY" | wc -c)
+if [ "$_enc_len" -ne 64 ]; then
+  echo "[startup] ERROR: ENCRYPTION_KEY must be exactly 64 hex chars (got ${_enc_len})" >&2
   exit 1
 fi
 
-if [ -z "${CHANNEL_ENC_KEY:-}" ]; then
-  echo "[startup] ERROR: CHANNEL_ENC_KEY is required" >&2
+# ─── Verificar que hay migraciones para aplicar ────────────────────────
+MIGRATIONS_DIR="packages/db/prisma/migrations"
+
+if [ ! -d "$MIGRATIONS_DIR" ]; then
+  echo "[startup] ERROR: $MIGRATIONS_DIR not found" >&2
   exit 1
 fi
 
-if [ -z "${ENCRYPTION_KEY:-}" ]; then
-  echo "[startup] ERROR: ENCRYPTION_KEY is required. Must be 64 hex chars." >&2
+MIGRATION_COUNT=$(find "$MIGRATIONS_DIR" -name "migration.sql" | wc -l)
+
+if [ "$MIGRATION_COUNT" -eq 0 ]; then
+  echo "[startup] ERROR: No migration.sql files found in $MIGRATIONS_DIR" >&2
+  echo "[startup] Run: pnpm --filter @lss/db run db:migrate:dev --name init" >&2
   exit 1
 fi
 
-if [ "$(printf "%s" "$ENCRYPTION_KEY" | wc -c)" -ne 64 ]; then
-  echo "[startup] ERROR: ENCRYPTION_KEY must be exactly 64 hex chars." >&2
-  exit 1
-fi
+echo "[startup] Found ${MIGRATION_COUNT} migration(s) to deploy"
 
+# ─── Prisma validate ─────────────────────────────────────────────────
 echo "[startup] Prisma validate"
-./node_modules/.bin/prisma validate --schema=packages/db/prisma/schema.prisma
+./node_modules/.bin/prisma validate \
+  --schema=packages/db/prisma/schema.prisma
 
+# ─── Prisma generate ────────────────────────────────────────────────
 echo "[startup] Prisma generate"
-./node_modules/.bin/prisma generate --schema=packages/db/prisma/schema.prisma
+./node_modules/.bin/prisma generate \
+  --schema=packages/db/prisma/schema.prisma
 
+# ─── Prisma migrate deploy ──────────────────────────────────────────
 echo "[startup] Prisma migrate deploy"
-./node_modules/.bin/prisma migrate deploy --schema=packages/db/prisma/schema.prisma
+./node_modules/.bin/prisma migrate deploy \
+  --schema=packages/db/prisma/schema.prisma
 
-echo "[startup] Checking frontend build"
+echo "[startup] Database schema applied successfully"
+
+# ─── Verificar frontend build (no bloqueante) ─────────────────────────
 if [ ! -f apps/web/dist/index.html ]; then
-  echo "[startup] WARNING: apps/web/dist/index.html not found — running in backend-only mode (GUI unavailable)"
+  echo "[startup] WARNING: apps/web/dist/index.html not found — backend-only mode"
 fi
 
-if [ -f dist/apps/api/src/main.js ]; then
-  echo "[startup] Starting compiled API on port ${STUDIO_API_PORT}"
-  exec node dist/apps/api/src/main.js
+# ─── Verificar build compilado (OBLIGATORIO en producción) ────────────────
+if [ ! -f dist/apps/api/src/main.js ]; then
+  echo "[startup] ERROR: Compiled API not found at dist/apps/api/src/main.js" >&2
+  echo "[startup] Run the build step before deploying: pnpm run build" >&2
+  echo "[startup] The ts-node fallback was removed — it does not resolve ESM import errors." >&2
+  exit 1
 fi
 
-echo "[startup] Compiled API not found; starting TS API with transpile-only for GUI evaluation"
-exec ./node_modules/.bin/ts-node \
-  --transpile-only \
-  -r tsconfig-paths/register \
-  -P tsconfig.deploy.json \
-  apps/api/src/main.ts
+# ─── Arrancar API compilada ──────────────────────────────────────────────
+echo "[startup] Starting API on port ${STUDIO_API_PORT}"
+exec node dist/apps/api/src/main.js
