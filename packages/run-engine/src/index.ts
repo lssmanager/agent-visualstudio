@@ -1,8 +1,8 @@
 /**
  * run-engine public API
  *
- * FIX: added buildLLMClient re-export so settings.service.ts
- * can import it from '@lss/run-engine'.
+ * Fix B: Removed phantom type exports (CreateRunInput etc. now live in
+ * run-repository.ts and are exported from there correctly).
  */
 
 // ── Step execution ───────────────────────────────────────────────────────────
