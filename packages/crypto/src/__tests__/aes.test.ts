@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { encrypt, decrypt, encryptObject, decryptObject } from '../aes.js'
+import { encrypt, decrypt, encryptObject, decryptObject } from '../aes'
 
 const TEST_KEY = 'a'.repeat(64)  // 64 hex chars = 32 bytes válidos
 

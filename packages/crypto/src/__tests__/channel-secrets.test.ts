@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
-import { encryptSecrets, decryptSecrets, rotateEncryption } from '../channel-secrets.js'
+import { encryptSecrets, decryptSecrets, rotateEncryption } from '../channel-secrets'
 
 const validKey = () => Buffer.from(randomBytes(32)).toString('base64')
 
