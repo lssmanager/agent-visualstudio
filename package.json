@@ -37,12 +37,7 @@
   "prisma": {
     "schema": "packages/db/prisma/schema.prisma"
   },
-  "keywords": [
-    "openclaw",
-    "dashboard",
-    "agents",
-    "monitoring"
-  ],
+  "keywords": ["openclaw", "dashboard", "agents", "monitoring"],
   "author": "",
   "license": "MIT",
   "dependencies": {

@@ -1,3 +1,7 @@
+# nixpacks.toml — BLINDADO: comandos explícitos, no depende de package.json scripts
+# Razón: build:deploy era un script mutable que rompía el deploy en cada commit
+# que lo modificara. Este archivo es la única fuente de verdad del build.
+
 [variables]
 NODE_ENV = "production"
 NPM_CONFIG_PRODUCTION = "false"
@@ -7,12 +11,30 @@ NIXPACKS_NODE_VERSION = "22"
 nixPkgs = ["nodejs_22", "openssl"]
 
 [phases.install]
-cmds = ["npm install --legacy-peer-deps --no-workspaces"]
+# IMPORTANTE: no usar --no-workspaces ni --workspaces — dejar que npm resuelva
+# el monorepo normalmente para que @agent-vs/* internos estén disponibles.
+cmds = [
+  "npm install --legacy-peer-deps"
+]
 
 [phases.build]
+# Comandos hardcodeados y blindados. NUNCA llamar npm run <script> aquí.
+# Si package.json cambia, este archivo no se ve afectado.
 cmds = [
-  "npm run build:deploy"
+  # 1. Generar Prisma Client
+  "npx prisma generate --schema=packages/db/prisma/schema.prisma",
+
+  # 2. Compilar TypeScript del backend (NestJS + packages)
+  #    --noEmitOnError false : no aborta si hay errores de tipos en packages internos
+  #    --skipLibCheck        : no type-check node_modules ni .d.ts de terceros
+  "npx tsc -p tsconfig.json --noEmitOnError false --skipLibCheck",
+
+  # 3. Compilar frontend con Vite (no usa tsc directamente, usa esbuild)
+  "npx vite build --config apps/web/vite.config.ts",
+
+  # 4. Verificar que el frontend compiló correctamente
+  "test -f apps/web/dist/index.html"
 ]
 
 [start]
-cmd = "npm run start:deploy"
+cmd = "sh docker/start.sh"

@@ -1,38 +1,17 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "noEmitOnError": false,
     "skipLibCheck": true,
-    "strict": false,
-    "noImplicitAny": false,
+    "noEmitOnError": false,
     "strictNullChecks": false,
-    "declaration": false,
-    "declarationMap": false
+    "strict": false,
+    "noImplicitAny": false
   },
-  "include": [
-    "apps/api/src/**/*.ts",
-    "packages/db/src/**/*.ts",
-    "packages/crypto/src/**/*.ts",
-    "packages/core-types/src/**/*.ts",
-    "packages/schemas/src/**/*.ts",
-    "packages/run-engine/src/**/*.ts",
-    "packages/flow-engine/src/**/*.ts",
-    "packages/hierarchy/src/**/*.ts",
-    "packages/profile-engine/src/**/*.ts",
-    "packages/n8n-service/src/**/*.ts"
-  ],
   "exclude": [
     "node_modules",
     "dist",
-    "apps/web",
-    "apps/gateway",
     "**/__tests__/**",
-    "**/*.test.ts",
     "**/*.spec.ts",
-    "**/jest.config.ts",
-    "packages/*/scripts/**",
-    "packages/agency-agents-loader/**",
-    "packages/gateway-sdk/**",
-    "scripts/**"
+    "**/*.test.ts"
   ]
 }
