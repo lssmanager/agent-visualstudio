@@ -13,7 +13,7 @@
  */
 
 import { Router } from 'express';
-import { loginLocal, registerLocal } from './auth.service.js';
+import { loginLocal, registerLocal } from './auth.service';
 
 export const authRouter = Router();
 

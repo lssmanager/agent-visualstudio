@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common'
 
-import { AgentResolverService } from './agent-resolver.service.js'
-import { GatewayService } from './gateway.service.js'
+import { AgentResolverService } from './agent-resolver.service'
+import { GatewayService } from './gateway.service'
 
 @Module({
   providers: [GatewayService, AgentResolverService],
