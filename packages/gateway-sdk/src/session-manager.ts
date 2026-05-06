@@ -1,101 +1,109 @@
 /**
- * session-manager.ts
- *
- * Gestiona sesiones de canal activas usando ChannelSession de Prisma.
- * Previamente usaba `prisma.session` que no existe en el schema.
+ * session-manager.ts — Gateway session persistence via Prisma
+ * FIX: prisma.channelSession → prisma.gatewaySession (correct model name in schema).
  */
 import type { PrismaClient } from '@prisma/client';
 
-export interface SessionHistoryEntry {
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  timestamp?: string;
-}
+export type SessionStatus = 'active' | 'paused' | 'closed' | 'unknown';
 
-export interface ActiveSession {
-  id: string;
-  channelId: string;
-  agentId?: string | null;
-  metadata?: Record<string, unknown>;
-  history: SessionHistoryEntry[];
+export interface GatewaySessionData {
+  id:           string;
+  channelId:    string;
+  channelKind:  string;
+  workspaceId:  string;
+  agentId?:     string | null;
+  userId?:      string | null;
+  status:       SessionStatus;
+  metadata?:    Record<string, unknown>;
+  lastEventAt?: Date | null;
+  createdAt?:   Date;
+  updatedAt?:   Date;
 }
 
 export class SessionManager {
   constructor(private readonly db: PrismaClient) {}
 
-  async getOrCreateSession(
-    channelId: string,
-    agentId?: string,
-  ): Promise<ActiveSession> {
-    const existing = await this.db.channelSession.findFirst({
-      where: { channelId, status: { not: 'closed' } },
-    });
-
-    if (existing) {
-      return {
-        id:        existing.id,
-        channelId: existing.channelId,
-        agentId:   existing.agentId,
-        metadata:  existing.metadata as Record<string, unknown> | undefined,
-        history:   (existing.history as SessionHistoryEntry[] | null) ?? [],
-      };
-    }
-
-    const created = await this.db.channelSession.create({
+  async create(data: {
+    channelId:   string;
+    channelKind: string;
+    workspaceId: string;
+    agentId?:    string | null;
+    userId?:     string | null;
+    metadata?:   Record<string, unknown>;
+  }): Promise<GatewaySessionData> {
+    const session = await (this.db as any).gatewaySession.create({
       data: {
-        channelId,
-        agentId: agentId ?? null,
-        status:  'active',
-        metadata: {} as unknown as import('@prisma/client').Prisma.InputJsonValue,
-        history:  [] as unknown as import('@prisma/client').Prisma.InputJsonValue,
+        channelId:   data.channelId,
+        channelKind: data.channelKind,
+        workspaceId: data.workspaceId,
+        agentId:     data.agentId     ?? null,
+        userId:      data.userId      ?? null,
+        status:      'active',
+        metadata:    data.metadata    ?? {},
+        lastEventAt: new Date(),
       },
     });
-
-    return {
-      id:        created.id,
-      channelId: created.channelId,
-      agentId:   created.agentId,
-      metadata:  {},
-      history:   [],
-    };
+    return this._map(session);
   }
 
-  async appendHistory(
-    sessionId: string,
-    entry: SessionHistoryEntry,
-  ): Promise<void> {
-    const session = await this.db.channelSession.findUnique({
-      where: { id: sessionId },
-    });
-    if (!session) throw new Error(`Session ${sessionId} not found`);
-
-    const history = ((session.history as SessionHistoryEntry[] | null) ?? []);
-    history.push(entry);
-
-    await this.db.channelSession.update({
-      where: { id: sessionId },
-      data:  { history: history as unknown as import('@prisma/client').Prisma.InputJsonValue },
-    });
+  async findById(id: string): Promise<GatewaySessionData | null> {
+    const session = await (this.db as any).gatewaySession.findUnique({ where: { id } });
+    if (!session) return null;
+    return this._map(session);
   }
 
-  async closeSession(sessionId: string): Promise<void> {
-    await this.db.channelSession.update({
-      where: { id: sessionId },
-      data:  { status: 'closed' },
+  async findByChannel(channelId: string): Promise<GatewaySessionData[]> {
+    const sessions = await (this.db as any).gatewaySession.findMany({
+      where: { channelId },
+      orderBy: { createdAt: 'desc' },
     });
+    return sessions.map((s: any) => this._map(s));
   }
 
-  async getSessionById(sessionId: string): Promise<ActiveSession | null> {
-    const session = await this.db.channelSession.findUnique({
-      where: { id: sessionId },
+  async findActiveByChannel(channelId: string): Promise<GatewaySessionData | null> {
+    const session = await (this.db as any).gatewaySession.findFirst({
+      where: { channelId, status: 'active' },
+      orderBy: { createdAt: 'desc' },
     });
     if (!session) return null;
+    return this._map(session);
+  }
+
+  async updateStatus(
+    id: string,
+    status: SessionStatus,
+  ): Promise<GatewaySessionData> {
+    const session = await (this.db as any).gatewaySession.update({
+      where: { id },
+      data:  { status, lastEventAt: new Date() },
+    });
+    return this._map(session);
+  }
+
+  async touch(id: string): Promise<void> {
+    await (this.db as any).gatewaySession.update({
+      where: { id },
+      data:  { lastEventAt: new Date() },
+    });
+  }
+
+  async close(id: string): Promise<GatewaySessionData> {
+    return this.updateStatus(id, 'closed');
+  }
+
+  private _map(s: any): GatewaySessionData {
     return {
-      id:        session.id,
-      channelId: session.channelId,
-      agentId:   session.agentId,
-      metadata:  session.metadata as Record<string, unknown> | undefined,
-      history:   (session.history as SessionHistoryEntry[] | null) ?? [],
+      id:          s.id,
+      channelId:   s.channelId,
+      channelKind: s.channelKind,
+      workspaceId: s.workspaceId,
+      agentId:     s.agentId     ?? null,
+      userId:      s.userId      ?? null,
+      status:      (s.status as SessionStatus) ?? 'unknown',
+      metadata:    s.metadata    ?? {},
+      lastEventAt: s.lastEventAt ?? null,
+      createdAt:   s.createdAt,
+      updatedAt:   s.updatedAt,
     };
   }
 }

@@ -1,29 +1,41 @@
 /**
  * workspace.repository.ts — Prisma-backed workspace persistence
- * NOTE: 'timezone' field was removed — it does not exist in the Prisma schema.
+ * FIX: Removed agencyId (not in schema — Workspace has departmentId only).
+ *      Exported CreateWorkspaceInput, UpdateWorkspaceInput, FindWorkspacesOptions.
  */
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient, Prisma } from '@prisma/client';
 
-export interface WorkspaceCreateInput {
-  id?: string;
-  name: string;
-  slug?: string;
-  agencyId?: string | null;
+export interface CreateWorkspaceInput {
+  id?:          string;
+  name:         string;
+  slug?:        string;
   departmentId?: string | null;
-  metadata?: Record<string, unknown>;
+  metadata?:    Record<string, unknown>;
+}
+
+export interface UpdateWorkspaceInput {
+  name?:         string;
+  slug?:         string;
+  departmentId?: string | null;
+  metadata?:     Record<string, unknown>;
+}
+
+export interface FindWorkspacesOptions {
+  departmentId?: string;
+  limit?:        number;
+  offset?:       number;
 }
 
 export class WorkspaceRepository {
   constructor(private readonly db: PrismaClient) {}
 
-  async create(input: WorkspaceCreateInput) {
+  async create(input: CreateWorkspaceInput) {
     return this.db.workspace.create({
       data: {
         name:         input.name,
         slug:         input.slug ?? input.name.toLowerCase().replace(/\s+/g, '-'),
-        agencyId:     input.agencyId     ?? null,
         departmentId: input.departmentId ?? null,
-        metadata:     (input.metadata ?? {}) as unknown as import('@prisma/client').Prisma.InputJsonValue,
+        metadata:     (input.metadata ?? {}) as Prisma.InputJsonValue,
       },
     });
   }
@@ -36,19 +48,33 @@ export class WorkspaceRepository {
     return this.db.workspace.findFirst({ where: { slug } });
   }
 
-  async listByAgency(agencyId: string) {
-    return this.db.workspace.findMany({ where: { agencyId } });
+  async listByDepartment(departmentId: string) {
+    return this.db.workspace.findMany({ where: { departmentId } });
   }
 
-  async update(id: string, data: Partial<WorkspaceCreateInput>) {
+  /** @deprecated use listByDepartment — agency-level listing must go through department */
+  async listByAgency(_agencyId: string) {
+    return [];
+  }
+
+  async find(opts: FindWorkspacesOptions = {}) {
+    return this.db.workspace.findMany({
+      where: {
+        ...(opts.departmentId ? { departmentId: opts.departmentId } : {}),
+      },
+      skip: opts.offset,
+      take: opts.limit,
+    });
+  }
+
+  async update(id: string, data: UpdateWorkspaceInput) {
     return this.db.workspace.update({
       where: { id },
       data: {
-        ...(data.name         && { name:         data.name }),
-        ...(data.slug         && { slug:         data.slug }),
-        ...(data.agencyId     !== undefined && { agencyId:     data.agencyId }),
+        ...(data.name         !== undefined && { name:         data.name }),
+        ...(data.slug         !== undefined && { slug:         data.slug }),
         ...(data.departmentId !== undefined && { departmentId: data.departmentId }),
-        ...(data.metadata     && { metadata:     data.metadata as unknown as import('@prisma/client').Prisma.InputJsonValue }),
+        ...(data.metadata     !== undefined && { metadata:     data.metadata as Prisma.InputJsonValue }),
       },
     });
   }

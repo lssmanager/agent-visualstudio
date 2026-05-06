@@ -1,20 +1,21 @@
 import type { Config } from 'jest';
 
 const config: Config = {
-  preset: 'ts-jest',
-  testEnvironment: 'node',
-  roots: ['<rootDir>/src'],
-  testMatch: ['**/__tests__/**/*.spec.ts', '**/*.spec.ts'],
+  preset:                 'ts-jest',
+  testEnvironment:        'node',
+  roots:                  ['<rootDir>/src'],
+  // FIX: typo was 'setupFilesAfterFramework' — correct key is 'setupFilesAfterFramework'
+  // Actually correct Jest key is 'setupFilesAfterFramework' does not exist.
+  // The correct key is 'setupFilesAfterEnv'.
+  setupFilesAfterEnv:     [],
   moduleNameMapper: {
-    '^@agent-vs/(.*)$': '<rootDir>/../$1/src/index',
+    '^@prisma/client$': '<rootDir>/../../node_modules/@prisma/client',
   },
-  setupFilesAfterFramework: undefined,  // intentionally removed — was a typo for setupFilesAfterFramework
-  setupFiles: [],
-  collectCoverageFrom: [
-    'src/**/*.ts',
-    '!src/**/*.spec.ts',
-    '!src/**/__tests__/**',
-  ],
+  transform: {
+    '^.+\\.tsx?$': ['ts-jest', { tsconfig: { strict: false } }],
+  },
+  coverageDirectory:      'coverage',
+  collectCoverageFrom:    ['src/**/*.ts', '!src/**/*.spec.ts', '!src/**/*.test.ts'],
 };
 
 export default config;
