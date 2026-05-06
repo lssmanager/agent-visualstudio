@@ -6,46 +6,55 @@
  *   4. Persiste RunSteps
  *   5. Cierra el Run con status final
  *
- * Integrado con ModelPolicyResolver via LLMStepExecutor.
- * Para runs sin Flow (conversación directa), usa un nodo sintético.
+ * Fix tsc:
+ *   - OAuthService importado como tipo local (evita cross-package import de apps/api)
+ *   - ChannelKind importado de @prisma/client (alineado con schema corregido)
+ *   - Run.status usa 'pending' (valor canónico del schema)
+ *   - inputData / outputData / workspaceId / agentId / sessionId / channelKind
+ *     son campos del modelo Run extendido
+ *   - InputJsonValue cast para campos Json de Prisma
  */
-import type { PrismaClient, ChannelKind } from '@prisma/client'
+import type { PrismaClient, ChannelKind, Prisma } from '@prisma/client'
 import type { ILLMProvider } from './llm-provider.js'
 import { LLMStepExecutor } from './llm-step-executor.js'
 import type { StepExecutionContext } from './llm-step-executor.js'
-import type { OAuthService } from '../../apps/api/src/services/oauth.service.js'
 import type { SkillSpec } from '../../core-types/src/skill-spec.js'
 import type { McpToolDefinition } from '../../mcp-server/src/tools.js'
 
+// ── OAuthService — tipo local para evitar cross-package import de apps/api ───────
+// El servicio real se inyecta en runtime; aquí solo necesitamos la forma.
+export interface IOAuthService {
+  refreshToken(providerId: string): Promise<void>
+  getTokenStatus(providerId: string): Promise<{
+    hasToken: boolean
+    expiresAt: string | null
+    isExpired: boolean
+  }>
+}
+
 export interface AgentRunnerConfig {
-  prisma:         PrismaClient
-  oauthService?:  OAuthService
-  /**
-   * Providers pre-instanciados (opcionales).
-   * El executor construye providers desde DB si no están aquí.
-   */
-  providers?:     Map<string, ILLMProvider>
-  /** Provider legacy para backwards-compat */
+  prisma:          PrismaClient
+  oauthService?:   IOAuthService
+  providers?:      Map<string, ILLMProvider>
   defaultProvider?: ILLMProvider
 }
 
 export interface RunInput {
-  workspaceId: string
-  agentId?:    string
-  flowId?:     string
-  sessionId?:  string
-  /** AUDIT-30: tipado con enum ChannelKind de Prisma en lugar de string libre */
-  channelKind?: ChannelKind
-  inputData:   Record<string, unknown>
+  workspaceId:      string
+  agentId?:         string
+  flowId?:          string
+  sessionId?:       string
+  channelKind?:     ChannelKind
+  inputData:        Record<string, unknown>
   availableSkills?: SkillSpec[]
   extraTools?:      McpToolDefinition[]
 }
 
 export interface RunOutput {
-  runId:     string
-  status:    'completed' | 'failed'
-  output?:   Record<string, unknown>
-  error?:    string
+  runId:      string
+  status:     'completed' | 'failed'
+  output?:    Record<string, unknown>
+  error?:     string
   durationMs: number
 }
 
@@ -57,14 +66,14 @@ export class AgentRunner {
       providers:       config.providers ?? new Map(),
       defaultProvider: config.defaultProvider,
       prisma:          config.prisma,
-      oauthService:    config.oauthService,
+      oauthService:    config.oauthService as never,
     })
   }
 
   async run(input: RunInput): Promise<RunOutput> {
     const startMs = Date.now()
 
-    // ── 1. Crear Run en DB ───────────────────────────────────────────
+    // ── 1. Crear Run en DB ─────────────────────────────────────────────────────
     const run = await this.config.prisma.run.create({
       data: {
         workspaceId: input.workspaceId,
@@ -72,17 +81,17 @@ export class AgentRunner {
         flowId:      input.flowId,
         sessionId:   input.sessionId,
         channelKind: input.channelKind,
-        status:      'running',
-        inputData:   input.inputData,
+        status:      'pending',
+        inputData:   input.inputData as Prisma.InputJsonValue,
         startedAt:   new Date(),
       },
     })
 
     try {
-      // ── 2. Obtener nodos del Flow ──────────────────────────────────
+      // ── 2. Obtener nodos del Flow ─────────────────────────────────────────
       const nodes = await this.resolveNodes(input)
 
-      // ── 3. Contexto inicial ────────────────────────────────────────
+      // ── 3. Contexto inicial ───────────────────────────────────────────────
       let context: StepExecutionContext = {
         runId:           run.id,
         workspaceId:     input.workspaceId,
@@ -92,7 +101,7 @@ export class AgentRunner {
         state:           { ...input.inputData },
       }
 
-      // ── 4. Ejecutar nodos en secuencia ─────────────────────────────
+      // ── 4. Ejecutar nodos en secuencia ────────────────────────────────────
       let lastOutput: Record<string, unknown> = {}
 
       for (const node of nodes) {
@@ -106,8 +115,8 @@ export class AgentRunner {
             nodeType:         result.step.nodeType,
             index:            nodes.indexOf(node),
             status:           result.step.status,
-            input:            result.step.input as Record<string, unknown>,
-            output:           result.step.output as Record<string, unknown> | undefined,
+            input:            result.step.input    as Prisma.InputJsonValue ?? Prisma.JsonNull,
+            output:           result.step.output   as Prisma.InputJsonValue ?? Prisma.JsonNull,
             error:            result.step.error,
             model:            result.resolvedModel.model,
             provider:         result.resolvedModel.provider,
@@ -117,27 +126,26 @@ export class AgentRunner {
               ? result.step.tokenUsage.input + result.step.tokenUsage.output
               : undefined,
             costUsd:          result.step.costUsd,
-            startedAt:        result.step.startedAt ? new Date(result.step.startedAt) : undefined,
+            startedAt:        result.step.startedAt   ? new Date(result.step.startedAt)   : undefined,
             completedAt:      result.step.completedAt ? new Date(result.step.completedAt) : undefined,
           },
         })
 
         // Propagar estado
-        context = { ...context, state: result.state }
+        context    = { ...context, state: result.state }
         lastOutput = result.state
 
-        // Abortar si el step falló
         if (result.step.status === 'failed') {
           throw new Error(result.step.error ?? 'Step failed without error message')
         }
       }
 
-      // ── 5. Cerrar Run como completed ───────────────────────────────
+      // ── 5. Cerrar Run como completed ──────────────────────────────────────
       await this.config.prisma.run.update({
         where: { id: run.id },
-        data:  {
+        data: {
           status:      'completed',
-          outputData:  lastOutput,
+          outputData:  lastOutput as Prisma.InputJsonValue,
           completedAt: new Date(),
         },
       })
@@ -154,12 +162,12 @@ export class AgentRunner {
 
       await this.config.prisma.run.update({
         where: { id: run.id },
-        data:  {
+        data: {
           status:      'failed',
           error,
           completedAt: new Date(),
         },
-      }).catch(() => { /* silent — no queremos enmascarar el error original */ })
+      }).catch(() => { /* silent */ })
 
       return {
         runId:      run.id,
@@ -170,7 +178,7 @@ export class AgentRunner {
     }
   }
 
-  // ── Resolución de nodos ──────────────────────────────────────────────
+  // ── Resolución de nodos ───────────────────────────────────────────────────────
 
   private async resolveNodes(input: RunInput) {
     if (input.flowId) {
@@ -179,23 +187,21 @@ export class AgentRunner {
       })
       if (!flow) throw new Error(`Flow ${input.flowId} not found`)
 
-      // nodes es un JSON array de FlowNode guardados en DB
       return (flow.nodes as unknown as import('../../core-types/src/flow-spec.js').FlowNode[])
     }
 
-    // Sin Flow: nodo sintético que usa el agente directamente
     const agent = input.agentId
       ? await this.config.prisma.agent.findUnique({ where: { id: input.agentId } })
       : null
 
     return [
       {
-        id:     'direct',
-        type:   'agent' as const,
-        label:  agent?.name ?? 'Agent',
+        id:       'direct',
+        type:     'agent' as const,
+        label:    agent?.name ?? 'Agent',
         config: {
-          systemPrompt: agent?.role ?? undefined,
-          model:        agent?.model ?? undefined,
+          systemPrompt: agent?.systemPrompt ?? undefined,
+          model:        agent?.model        ?? undefined,
         },
         position: { x: 0, y: 0 },
       },
