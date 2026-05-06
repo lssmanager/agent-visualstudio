@@ -48,7 +48,6 @@ fi
 echo "[startup] Compiled API not found; starting TS API with transpile-only for GUI evaluation"
 exec ./node_modules/.bin/ts-node \
   --transpile-only \
-  --skip-project \
   -r tsconfig-paths/register \
   -P tsconfig.deploy.json \
   apps/api/src/main.ts
