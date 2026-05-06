@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
-import type { StatusChangeEvent } from './status-change.event.js'
-import { STEP_STATUS_CHANGED }    from './status-change.event.js'
+import type { StatusChangeEvent } from './status-change.event'
+import { STEP_STATUS_CHANGED }    from './status-change.event'
 
 /**
  * EventEmitter tipado para transiciones de RunStep.

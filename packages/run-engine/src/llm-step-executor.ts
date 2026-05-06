@@ -184,7 +184,7 @@ export class LlmStepExecutor extends StepExecutor {
     agent: AgentWithRelations,
   ): Promise<StepExecutionResult> {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { HierarchyOrchestrator } = require('../../hierarchy/src/index.js') as {
+    const { HierarchyOrchestrator } = require('../../hierarchy/src/index') as {
       HierarchyOrchestrator: new (
         hierarchy:    import('../../hierarchy/src').HierarchyNode,
         executorFn:   import('../../hierarchy/src').AgentExecutorFn,
@@ -353,7 +353,7 @@ export class LlmStepExecutor extends StepExecutor {
     if (!systemPrompt) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { ProfilePropagatorService } = require('../../profile-engine/src/index.js') as {
+        const { ProfilePropagatorService } = require('../../profile-engine/src/index') as {
           ProfilePropagatorService: new (prisma: PrismaClient) => {
             resolveForAgent(id: string): Promise<{ systemPrompt: string }>;
           };

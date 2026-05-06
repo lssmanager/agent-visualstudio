@@ -16,7 +16,7 @@ import {
   isBlocked,
   deriveParentStatus,
   DELEGATION_TIMEOUT_MS,
-} from '../hierarchy-status.service.js'
+} from '../hierarchy-status.service'
 
 // ── Prisma mock factory ───────────────────────────────────────────────────
 
@@ -167,7 +167,7 @@ describe('DELEGATION_TIMEOUT_MS', () => {
     jest.isolateModules(() => {
       process.env['DELEGATION_TIMEOUT_MS'] = 'not-a-number'
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const m = require('../hierarchy-status.service.js') as typeof import('../hierarchy-status.service.js')
+      const m = require('../hierarchy-status.service') as typeof import('../hierarchy-status.service')
       badTimeout = m.DELEGATION_TIMEOUT_MS
     })
     expect(badTimeout).toBe(30_000)

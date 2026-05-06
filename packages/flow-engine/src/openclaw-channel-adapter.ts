@@ -17,14 +17,14 @@
  *   // Pass adapter.onStepComplete as FlowExecutorConfig.onStepComplete
  *   const executor = new FlowExecutor({ ..., onStepComplete: adapter.onStepComplete });
  */
-import type { RunStep } from '../../core-types/src/run-spec.js';
-import type { AgentSpec } from '../../core-types/src/agent-spec.js';
-import type { FlowSpec } from '../../core-types/src/flow-spec.js';
-import type { SkillSpec } from '../../core-types/src/skill-spec.js';
+import type { RunStep } from '../../core-types/src/run-spec';
+import type { AgentSpec } from '../../core-types/src/agent-spec';
+import type { FlowSpec } from '../../core-types/src/flow-spec';
+import type { SkillSpec } from '../../core-types/src/skill-spec';
 
 // Lazy import openclaw-fs to keep it optional — consumers who
 // don’t use openclaw-fs don’t pay the import cost.
-type OpenClawWriter = typeof import('../../openclaw-fs/src/writer.js');
+type OpenClawWriter = typeof import('../../openclaw-fs/src/writer');
 
 export interface OpenClawChannelAdapterConfig {
   /** Root directory for .openclaw/ output. Defaults to process.cwd() */
@@ -60,7 +60,7 @@ export class OpenClawChannelAdapter {
   private async getWriter(): Promise<OpenClawWriter | null> {
     if (this.writer) return this.writer;
     if (this.writerLoading) return this.writerLoading;
-    this.writerLoading = import('../../openclaw-fs/src/writer.js').then(
+    this.writerLoading = import('../../openclaw-fs/src/writer').then(
       (m) => {
         this.writer = m;
         return m;
