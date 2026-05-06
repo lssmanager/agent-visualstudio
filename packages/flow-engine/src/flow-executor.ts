@@ -149,9 +149,7 @@ export class FlowExecutor {
   }
 
   private async executeNode(
-    node: (typeof import('./flow-compiler.js').compileFlow extends (f: unknown) => infer R
-      ? R
-      : never)['nodes'][number],
+    node: FlowNode,
     context: {
       runId: string;
       workspaceId: string;
@@ -187,8 +185,10 @@ export class FlowExecutor {
       case 'subagent':
       case 'skill':
       case 'tool': {
-        // Delegate to LLMStepExecutor
-        return this.stepExecutor.execute(
+        // Delegate to LLMStepExecutor.
+        // StepExecutionResult = { step, state, resolvedModel } — destructure to
+        // return only { step, state } and satisfy executeNode's narrower return type.
+        const { step, state } = await this.stepExecutor.execute(
           {
             id: node.id,
             type: node.type,
@@ -205,6 +205,7 @@ export class FlowExecutor {
             state: context.state,
           },
         );
+        return { step, state };
       }
 
       case 'condition': {
@@ -221,10 +222,11 @@ export class FlowExecutor {
       }
 
       case 'approval': {
+        // Approval gate suspends execution — maps to 'paused' in RunStep status.
         return {
           step: {
             ...stepBase,
-            status: 'waiting_approval',
+            status: 'paused',
             completedAt: new Date().toISOString(),
             output: { pendingApproval: true },
           },
@@ -245,13 +247,14 @@ export class FlowExecutor {
       }
 
       default: {
-        // Unknown node type — skip
+        // Unknown node type — treat as a flow error (not a silent skip).
         return {
           step: {
             ...stepBase,
-            status: 'skipped',
+            status: 'failed',
             completedAt: new Date().toISOString(),
-            output: { reason: `unknown node type: ${node.type}` },
+            error: `Unknown node type: ${(node as FlowNode).type}`,
+            output: {},
           },
           state: context.state,
         };
@@ -260,7 +263,7 @@ export class FlowExecutor {
   }
 }
 
-// ── Graph helpers ────────────────────────────────────────────────────────────
+// ── Graph helpers ─────────────────────────────────────────────────────────
 
 type EdgeMap = Map<string, Array<{ to: string; condition?: string }>>;
 
