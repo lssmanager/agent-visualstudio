@@ -12,8 +12,8 @@
  *     y persiste el resultado.
  */
 
-import type { HierarchyLevel } from './hierarchy-orchestrator.js'
-import { tokenize }             from './hierarchy-orchestrator.js'
+import type { HierarchyLevel } from './hierarchy-orchestrator'
+import { tokenize }             from './hierarchy-orchestrator'
 
 // ── Tipos públicos ──────────────────────────────────────────────────────
 
