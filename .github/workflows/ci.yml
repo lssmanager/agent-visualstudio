@@ -40,3 +40,75 @@ jobs:
       # Catch TypeScript errors across all 20 packages before they reach Coolify.
       - name: TypeScript check
         run: pnpm -r exec tsc --noEmit
+
+  db-migration-check:
+    name: DB — Prisma Schema + Migration Drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: avs
+          POSTGRES_PASSWORD: avs
+          POSTGRES_DB: avs_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://avs:avs@localhost:5432/avs_ci?schema=public
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      # Fails immediately if migration.sql is missing from any migration directory.
+      # Mirrors the same check in docker/start.sh that blocks Coolify deploys.
+      - name: Check migration.sql exists
+        run: |
+          COUNT=$(find packages/db/prisma/migrations -name "migration.sql" | wc -l)
+          echo "Found $COUNT migration SQL file(s)"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "ERROR: No migration.sql found."
+            echo "Fix: run 'pnpm --filter @lss/db exec prisma migrate dev --name init' locally and commit the result."
+            exit 1
+          fi
+
+      # Apply all migrations against a clean PostgreSQL instance.
+      # Catches SQL errors that tsc cannot detect.
+      - name: Prisma migrate deploy (CI)
+        run: |
+          node_modules/.bin/prisma migrate deploy \
+            --schema=packages/db/prisma/schema.prisma
+
+      # Drift detection: fails if schema.prisma has changes not captured in a migration.
+      # This catches the "someone edited schema.prisma without running migrate dev" case.
+      - name: Prisma migrate diff (drift detection)
+        run: |
+          node_modules/.bin/prisma migrate diff \
+            --from-migrations packages/db/prisma/migrations \
+            --to-schema-datamodel packages/db/prisma/schema.prisma \
+            --shadow-database-url "$DATABASE_URL" \
+            --exit-code
