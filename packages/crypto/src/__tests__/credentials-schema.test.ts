@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { ChannelType } from '@prisma/client'
+// FIX TS2305: ChannelType ahora viene de ./channel-kind (local), no de @prisma/client
+// El enum @prisma/client solo existe en runtime post `prisma generate`.
+import { ChannelType } from '../channel-kind.js'
 import {
   TelegramCredentialsSchema,
   WhatsAppCredentialsSchema,
@@ -10,9 +12,6 @@ import {
   parseCredentials,
   safeParseCredentials,
 } from '../credentials-schema'
-// NOTE: CreateChannelConfigSchema vive en @lss/crypto y se testea
-// en apps/api/__tests__/create-channel-config.schema.test.ts
-// Este archivo solo valida lo que vive en credentials-schema.ts
 
 const VALID_TELEGRAM_TOKEN = '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij'
 
@@ -119,8 +118,10 @@ describe('SlackCredentialsSchema', () => {
 
 describe('parseCredentials / safeParseCredentials', () => {
   it('parseCredentials(telegram, valid) returns typed object', () => {
+    // FIX TS2339: parseCredentials retorna el tipo específico de telegram
+    // (TelegramCredentials), no el union — acceso directo a .botToken es válido.
     const result = parseCredentials(ChannelType.telegram, { botToken: VALID_TELEGRAM_TOKEN })
-    expect(result.botToken).toBe(VALID_TELEGRAM_TOKEN)
+    expect((result as { botToken: string }).botToken).toBe(VALID_TELEGRAM_TOKEN)
   })
 
   it('parseCredentials(telegram, invalid) throws ZodError', () => {
