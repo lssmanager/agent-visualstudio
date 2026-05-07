@@ -24,7 +24,8 @@ describe('buildAgency()', () => {
   it('cada AgentTemplate.systemPrompt tiene contenido', () => {
     for (const dept of agency.departments) {
       for (const agent of dept.agents) {
-        expect(agent.systemPrompt.length).toBeGreaterThan(0);
+        expect(agent.systemPrompt).toBeDefined();
+        expect((agent.systemPrompt as string).length).toBeGreaterThan(0);
       }
     }
   });

@@ -2,25 +2,13 @@
  * FlowExecutor — F1a-08
  *
  * Ejecuta un Run completo siguiendo el grafo definido en Flow.spec.
- * Usa AgentExecutor como único punto de entrada para RunSteps, eliminando
- * la dependencia circular que existía con LLMStepExecutor.
+ * Usa AgentExecutorFn como único punto de entrada para RunSteps.
  */
 import type { PrismaClient } from '@prisma/client';
 import type { AgentExecutorFn } from './agent-executor.service';
-import type { RunSpec, FlowEdge } from '../../core-types/src';
-import type { FlowSpec } from '../../core-types/src';
+import type { RunSpec, FlowEdge, FlowNode, FlowSpec } from '../../core-types/src';
 import { ApprovalQueue } from './approval-queue';
 import { RunRepository } from './run-repository';
-
-/** Nodo mínimo del Flow.spec — mantiene contrato compatible con core-types FlowNode */
-export interface FlowNode {
-  id: string;
-  type: 'agent' | 'condition' | 'input' | 'output' | 'approval' | 'subflow' | 'n8n_workflow' | string;
-  branches?: { true?: string; false?: string };
-  conditionExpr?: string;
-  agentId?: string;
-  config?: Record<string, unknown>;
-}
 
 /** Re-export FlowSpec from core-types so callers get the canonical type */
 export type { FlowSpec };
@@ -50,7 +38,11 @@ export class FlowExecutor {
 
   async startRun(
     flow: FlowSpec,
-    trigger: { event: string; payload?: Record<string, unknown> },
+    /**
+     * Accepts both RunTrigger ({ type, payload }) and legacy ({ event, payload }).
+     * AgentExecutor passes RunTrigger; direct callers may pass { event }.
+     */
+    trigger: { type?: string; event?: string; payload?: Record<string, unknown> },
     opts?: { agentId?: string; sessionId?: string; channelKind?: string },
   ): Promise<RunSpec> {
     const prisma = this.deps.db ?? this.deps.prisma;
@@ -65,8 +57,11 @@ export class FlowExecutor {
         sessionId:   opts?.sessionId  ?? null,
         channelKind: opts?.channelKind as string ?? null,
         status:      'pending',
-        trigger:     { event: trigger.event, payload: trigger.payload ?? {} } as unknown as import('@prisma/client').Prisma.InputJsonValue,
-        flowId:      null,
+        trigger:     {
+          type:    trigger.type ?? trigger.event ?? 'manual',
+          payload: trigger.payload ?? {},
+        } as unknown as import('@prisma/client').Prisma.InputJsonValue,
+        flowId: null,
       },
     });
 
@@ -75,7 +70,7 @@ export class FlowExecutor {
       workspaceId: run.workspaceId,
       agentId:     run.agentId ?? undefined,
       status:      run.status as RunSpec['status'],
-      trigger:     trigger,
+      trigger:     { type: trigger.type ?? trigger.event ?? 'manual', payload: trigger.payload },
       steps:       [],
     };
 
@@ -142,7 +137,7 @@ export class FlowExecutor {
     executeAgent: AgentExecutorFn,
     prisma: PrismaClient,
   ): Promise<void> {
-    const nodeMap = new Map(spec.nodes.map((n) => [n.id, n]));
+    const nodeMap = new Map<string, FlowNode>(spec.nodes.map((n) => [n.id, n]));
     const edgeMap = this._buildEdgeMap(spec);
 
     const queue: string[] = [startNodeId];
@@ -179,8 +174,7 @@ export class FlowExecutor {
 
       if (node.type === 'condition') {
         const branch = result.branch ?? ((result.output as Record<string, unknown>)?.['conditionResult'] ? 'true' : 'false');
-        const flowNode = node as unknown as { branches?: { true?: string; false?: string } };
-        const nextNodeId = flowNode.branches?.[branch as 'true' | 'false'];
+        const nextNodeId = node.branches?.[branch as 'true' | 'false'];
         if (nextNodeId) queue.push(nextNodeId);
       } else {
         const nextIds = edgeMap.get(nodeId) ?? [];
@@ -192,8 +186,10 @@ export class FlowExecutor {
   private _buildEdgeMap(spec: FlowSpec): Map<string, string[]> {
     const map = new Map<string, string[]>();
     for (const edge of (spec.edges ?? []) as FlowEdge[]) {
-      const src = edge.source;
-      const tgt = edge.target;
+      // Support both canonical (source/target) and legacy (from/to)
+      const src = edge.source ?? edge.from;
+      const tgt = edge.target ?? edge.to;
+      if (!src || !tgt) continue;
       if (!map.has(src)) map.set(src, []);
       map.get(src)!.push(tgt);
     }
