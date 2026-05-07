@@ -1,16 +1,9 @@
-import { Module } from '@nestjs/common';
-import { BuilderAgentService } from './builder-agent.service';
-import { BuilderAgentController } from './builder-agent.controller';
-
 /**
- * BuilderAgentModule
+ * builder-agent module barrel
  *
- * FIXED (2026-05-06): BuilderAgentController estaba importado pero no incluido
- * en `controllers`, causando TS2305 — "has no exported member".
+ * This module uses Express routing, not NestJS controllers.
+ * Route registration is done via registerBuilderAgentRoutes() in the router setup.
  */
-@Module({
-  controllers: [BuilderAgentController],
-  providers:   [BuilderAgentService],
-  exports:     [BuilderAgentService],
-})
-export class BuilderAgentModule {}
+
+export { BuilderAgentService } from './builder-agent.service';
+export { registerBuilderAgentRoutes } from './builder-agent.controller';
