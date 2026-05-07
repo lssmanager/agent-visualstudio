@@ -9,3 +9,4 @@ build/
 .vscode/
 .idea/
 data/workspaces-topology.json
+package-lock.json
