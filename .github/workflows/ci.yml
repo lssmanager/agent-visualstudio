@@ -1,43 +1,42 @@
 name: CI
 
 on:
-  push:
-    branches: ['**']
   pull_request:
+    branches: [main]
+  push:
     branches: [main]
 
 jobs:
-  build:
+  lockfile-and-types:
+    name: Lockfile + TypeScript
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          fetch-depth: 0
 
-      - name: Initialize submodules (fallback)
-        run: git submodule update --init --recursive
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
 
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: 22
+          cache: pnpm
 
-      - name: Install dependencies
-        run: npm install
+      # Guard: fails if any package.json was changed without updating pnpm-lock.yaml.
+      # This is what Coolify does with --frozen-lockfile in production.
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
 
       - name: Generate Prisma client
-        run: npx prisma generate
-        working-directory: apps/api
+        run: pnpm --filter @lss/db run db:generate
 
-      - name: TypeScript check (api)
-        run: npx tsc --noEmit
-        working-directory: apps/api
-
-      - name: Verify agency-agents submodule
-        run: |
-          test -d vendor/agency-agents/engineering && echo "OK: vendor/agency-agents/engineering exists"
-          find vendor/agency-agents/engineering -name "*.md" | head -5
+      # Catch TypeScript errors across all 20 packages before they reach Coolify.
+      - name: TypeScript check
+        run: pnpm -r exec tsc --noEmit
