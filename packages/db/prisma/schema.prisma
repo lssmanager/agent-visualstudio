@@ -1,16 +1,10 @@
 // ============================================================
 // schema.prisma — Agent Visual Studio
-// SCHEMA CANÓNICO v12 — fix P1012 relación duplicada
+// SCHEMA CANÓNICO v13 — fix campos faltantes + queued status
 //
-// Arquitectura: Agency → Department → Workspace → Agent
-//
-// v11   — Campos faltantes en múltiples modelos
-// v12   — Fix Prisma P1012: ModelCatalogEntry tenía dos @relation
-//          apuntando al mismo campo FK (providerId) generando el mismo
-//          constraint name. Solución: una sola relación llamada
-//          'catalogEntries' en ambos lados (ProviderCredential y
-//          ModelCatalogEntry). El campo se llama 'provider' en
-//          ModelCatalogEntry para mantener el acceso existente.
+// v12   — Fix Prisma P1012: ModelCatalogEntry relación duplicada
+// v13   — Campos faltantes: Agent.metadata, ChannelBinding.scopeLevel,
+//          ChannelConfig.config; RunStepStatus.queued
 // ============================================================
 
 generator client {
@@ -80,6 +74,7 @@ enum RunStatus {
 }
 
 enum RunStepStatus {
+  queued
   pending
   running
   completed
@@ -268,6 +263,8 @@ model Agent {
   channelBindings     Json?     @default("[]")
   policyBindings      Json?     @default("[]")
   config              Json      @default("{}")
+  // v13: campo requerido por código en agent-runner y hierarchy-orchestrator
+  metadata            Json?     @default("{}")
   isEnabled           Boolean   @default(true)
   slug                String?
   isLevelOrchestrator Boolean   @default(false)
@@ -515,10 +512,6 @@ model ProviderCredential {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  // Una sola relación hacia ModelCatalogEntry.
-  // El código puede acceder como .catalogEntries o como .models (alias).
-  // NOTA: 'models' fue eliminado para resolver P1012.
-  // Si el código usaba .models, debe migrar a .catalogEntries.
   catalogEntries ModelCatalogEntry[]
 
   @@index([agencyId])
@@ -529,9 +522,6 @@ model ProviderCredential {
 model ModelCatalogEntry {
   id                     String             @id @default(cuid())
   providerId             String
-  // Una sola relación FK hacia ProviderCredential (resuelve P1012).
-  // El campo se llama 'provider' para backward-compat con código existente.
-  // El código que usaba .credential debe usar .provider en su lugar.
   provider               ProviderCredential @relation(fields: [providerId], references: [id], onDelete: Cascade)
   modelId                String
   displayName            String
@@ -695,6 +685,8 @@ model ChannelConfig {
   displayName     String
   credentials     Json      @default("{}")
   settings        Json?     @default("{}")
+  // v13: campo requerido por gateway y channel-config.service
+  config          Json?     @default("{}")
   isActive        Boolean   @default(true)
   statusDetail    String?
   statusUpdatedAt DateTime?
@@ -716,6 +708,8 @@ model ChannelBinding {
   channelConfigId   String
   agentId           String
   route             String
+  // v13: campo requerido por hierarchy-orchestrator y gateway-sdk
+  scopeLevel        String?  @default("workspace")
   isEnabled         Boolean  @default(true)
   externalChannelId String?
   externalGuildId   String?
@@ -1042,45 +1036,30 @@ model ActivityLog {
   scopeType    String           @default("")
   scopeId      String           @default("")
   workspaceId  String?
+  agencyId     String?
+  departmentId String?
+  agentId      String?
   resource     ActivityResource @default(workspace)
-  resourceType String?
   resourceId   String?
-  actorType    String           @default("user")
-  actorId      String?
   action       String
-  payload      Json?            @default("{}")
-  detail       String           @db.Text @default("")
-  userId       String?
-  diff         Json?
+  actorId      String?
+  actorType    String           @default("user")
+  detail       Json             @default("{}")
+  metadata     Json?            @default("{}")
   ipAddress    String?
-  metadata     Json             @default("{}")
+  userAgent    String?
   createdAt    DateTime         @default(now())
 
+  workspace  Workspace?  @relation("ActivityLogScopeWorkspace",  fields: [scopeId], references: [id], map: "activity_logs_scope_workspace_fkey")
   agency     Agency?     @relation("ActivityLogScopeAgency",     fields: [scopeId], references: [id], map: "activity_logs_scope_agency_fkey")
   department Department? @relation("ActivityLogScopeDepartment", fields: [scopeId], references: [id], map: "activity_logs_scope_department_fkey")
-  workspace  Workspace?  @relation("ActivityLogScopeWorkspace",  fields: [scopeId], references: [id], map: "activity_logs_scope_workspace_fkey")
   agent      Agent?      @relation("ActivityLogScopeAgent",      fields: [scopeId], references: [id], map: "activity_logs_scope_agent_fkey")
 
   @@index([scopeId, createdAt])
   @@index([workspaceId, createdAt])
-  @@index([action, createdAt])
-  @@index([actorId, createdAt])
-  @@index([resourceId, createdAt])
+  @@index([agencyId, createdAt])
+  @@index([departmentId, createdAt])
+  @@index([agentId, createdAt])
+  @@index([resource, resourceId])
   @@map("activity_logs")
-}
-
-// ────────────────────────────────────────────────────────────
-// AUTH — LOCAL USERS
-// ────────────────────────────────────────────────────────────
-
-model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  name         String?
-  passwordHash String?
-  role         String   @default("member")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  @@map("users")
 }

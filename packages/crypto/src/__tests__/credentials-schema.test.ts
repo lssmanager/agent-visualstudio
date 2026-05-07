@@ -10,7 +10,9 @@ import {
   parseCredentials,
   safeParseCredentials,
 } from '../credentials-schema'
-import { CreateChannelConfigSchema } from '../../../apps/api/src/modules/channels/dto/create-channel-config.dto'
+// NOTE: CreateChannelConfigSchema vive en @lss/crypto y se testea
+// en apps/api/__tests__/create-channel-config.schema.test.ts
+// Este archivo solo valida lo que vive en credentials-schema.ts
 
 const VALID_TELEGRAM_TOKEN = '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij'
 
@@ -137,22 +139,5 @@ describe('CREDENTIALS_SCHEMA_BY_TYPE', () => {
     const schemaKeys = Object.keys(CREDENTIALS_SCHEMA_BY_TYPE)
     expect(schemaKeys.length).toBe(7)
     expect(schemaKeys.sort()).toEqual(channelTypeValues.sort())
-  })
-})
-
-describe('CreateChannelConfigSchema discriminated union', () => {
-  it('rejects telegram type paired with WhatsApp credentials', () => {
-    const result = CreateChannelConfigSchema.safeParse({
-      type:        ChannelType.telegram,
-      name:        'Test',
-      credentials: {
-        accessToken:        'longaccesstoken_here_12345',
-        phoneNumberId:      '12345678901',
-        wabaId:             '98765432109',
-        webhookVerifyToken: 'verify_me_please',
-      },
-      config: {},
-    })
-    expect(result.success).toBe(false)
   })
 })

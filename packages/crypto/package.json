@@ -2,5 +2,12 @@
   "name": "@lss/crypto",
   "version": "1.0.0",
   "private": true,
-  "main": "src/index.ts"
+  "main": "src/index.ts",
+  "dependencies": {
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "vitest": "catalog:",
+    "@prisma/client": "catalog:"
+  }
 }

@@ -1,115 +1,145 @@
-# Deployment Contract - OpenClaw Studio
+# Deployment Contract — Agent VisualStudio
 
-**Updated**: 2026-04-17
-**Status**: Production on Coolify
+**Updated**: 2026-05-07  
+**Status**: Production on Coolify (Nixpacks)
 
 ---
 
-## Summary
+## Quick Reference
 
 | Setting | Value |
 |---------|-------|
-| **Branch** | `master` (default) |
-| **Build** | `npm install && npm run build` |
-| **Start** | `npm start` → `node dist/apps/api/src/main.js` |
-| **Port** | 3400 |
-| **URL** | https://cost.socialstudies.cloud |
-| **Health** | `GET /api/studio/v1/studio/state` |
+| **Repo** | `lssmanager/agent-visualstudio` |
+| **Branch** | `main` |
+| **Package manager** | `pnpm@10` (corepack) |
+| **Install** | `pnpm install --frozen-lockfile` |
+| **Build** | `prisma generate && tsc -p tsconfig.json --skipLibCheck && vite build` |
+| **Start** | `sh docker/start.sh` |
+| **Port** | `3400` |
+| **URL** | https://agents.socialstudies.cloud |
+| **Health check** | `GET /api/studio/v1/studio/state` → 200 |
 
 ---
 
-## Build
+## nixpacks.toml (source of truth)
 
-```bash
-npm install && npm run build
-```
-
-This runs two steps:
-1. `tsc` — compiles backend TypeScript (`apps/api/`, `packages/`) → `dist/`
-2. `vite build` — bundles React frontend (`apps/web/src/`) → `apps/web/dist/`
-
----
-
-## Start
-
-```bash
-npm start
-# → node dist/apps/api/src/main.js
-# → OpenClaw Studio API listening on 3400
-```
-
-Express serves:
-1. API routes at `/api/studio/v1/*`
-2. Static frontend assets from `apps/web/dist/`
-3. SPA fallback (index.html) for all other routes
-
----
-
-## nixpacks.toml
+This file is the canonical build/start definition for Coolify.
+The contract below must always match it exactly.
 
 ```toml
-[variables]
-NODE_ENV = "production"
+[phases.setup]
+nixPkgs = ["nodejs_22", "openssl"]
+
+[phases.install]
+cmds = [
+  "corepack enable && corepack prepare pnpm@10 --activate && pnpm install --frozen-lockfile"
+]
+cacheDirectories = ["/root/.local/share/pnpm/store/v3"]
 
 [phases.build]
-cmds = ["npm install", "npm run build"]
+cmds = [
+  "node_modules/.bin/prisma generate --schema=packages/db/prisma/schema.prisma && tsc -p tsconfig.json --skipLibCheck && node_modules/.bin/vite build --config apps/web/vite.config.ts"
+]
+cacheDirectories = ["node_modules/.cache"]
 
 [start]
-cmd = "npm start"
+cmd = "sh docker/start.sh"
 ```
 
 ---
 
-## Environment Variables
+## Build pipeline (Nixpacks phases)
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `PORT` | 3400 | Server port |
-| `STUDIO_API_PORT` | 3400 | Explicit API port |
-| `STUDIO_API_PREFIX` | `/api/studio/v1` | API route prefix |
-| `NODE_ENV` | `development` | Set `production` in Coolify |
+```
+setup → install → build → start
+```
+
+| Phase | Command | Fails if |
+|-------|---------|----------|
+| `setup` | Install Node 22 + OpenSSL | nixpkgs unavailable |
+| `install` | `pnpm install --frozen-lockfile` | `pnpm-lock.yaml` out of sync with any `package.json` |
+| `build` | `prisma generate && tsc && vite build` | TypeScript errors, missing schema, Vite config error |
+| `start` | `sh docker/start.sh` | Missing `dist/apps/api/src/main.js`, DB unreachable |
+
+> **Rule**: Never modify `nixpacks.toml` without updating this document,
+> and never update this document without verifying it matches `nixpacks.toml`.
 
 ---
 
-## Coolify Configuration
+## Start script — docker/start.sh
 
-1. **Source**: `https://github.com/lssmanager/dashboard-agentes`
-2. **Branch**: `master`
-3. **Build Command**: `npm install && npm run build`
-4. **Start Command**: `npm start`
-5. **Port**: 3400
-6. **Health Check**: `GET /api/studio/v1/studio/state` → 200
+The script runs in order:
+
+1. Validate required env vars (`DATABASE_URL`, `CHANNEL_ENC_KEY`, `ENCRYPTION_KEY`)
+2. `prisma validate` — schema sanity check
+3. `prisma generate` — regenerate client in container
+4. `prisma migrate deploy` — apply pending migrations to the live DB
+5. `node dist/apps/api/src/main.js` — start compiled API
+
+---
+
+## Environment variables
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `PORT` | `3000` | No | Express listen port (overridden by Coolify to 3400) |
+| `STUDIO_API_PORT` | `$PORT` | No | Explicit API port |
+| `NODE_ENV` | `production` | No | Set by Coolify automatically |
+| `DATABASE_URL` | — | **Yes** | Postgres connection string |
+| `CHANNEL_ENC_KEY` | — | **Yes** | Channel encryption key |
+| `ENCRYPTION_KEY` | — | **Yes** | 64-char hex master key |
+
+---
+
+## Lockfile rule
+
+The repo uses **pnpm exclusively**. The only valid lockfile is `pnpm-lock.yaml`.
+`package-lock.json` is listed in `.gitignore` and must never be committed.
+
+When adding/updating a dependency:
+```bash
+# Always from repo root
+pnpm add <package> --filter <workspace>
+# Then verify and commit the updated lockfile
+git add pnpm-lock.yaml
+git commit -m "fix(lockfile): ..."
+```
+
+---
+
+## TypeScript gate
+
+`tsc` runs **without** `--noEmitOnError false`. A TypeScript error blocks the
+build and prevents a broken deploy from reaching production. Fix errors before
+merging to `main`.
 
 ---
 
 ## Verification
 
 ```bash
-# API responds
-curl https://cost.socialstudies.cloud/api/studio/v1/profiles
-# → 200, JSON array of profiles
+# Health check
+curl https://agents.socialstudies.cloud/api/studio/v1/studio/state
+# → 200, JSON with workspace/agents/skills/flows/profiles/compile/runtime
 
-# Frontend loads
-curl -s https://cost.socialstudies.cloud/ | head -1
+# Profiles
+curl https://agents.socialstudies.cloud/api/studio/v1/profiles
+# → 200, JSON array
+
+# Frontend
+curl -s https://agents.socialstudies.cloud/ | head -1
 # → <!DOCTYPE html>
-
-# Studio state
-curl https://cost.socialstudies.cloud/api/studio/v1/studio/state
-# → 200, { workspace, agents, skills, flows, profiles, compile, runtime }
 ```
 
 ---
 
-## What No Longer Exists
-
-The following legacy items have been removed from the tree:
+## What no longer exists
 
 | Removed | Was |
 |---------|-----|
-| `backend/` | Legacy vanilla JS Express server |
-| `frontend/` | Legacy vanilla JS dashboard (D3.js) |
-| `agents/` | Agent panel markdown configs |
-| `dev:legacy` script | `node backend/server.js` |
-| 30+ status/plan `.md` files | Build progress documentation |
-
-Legacy code is preserved in the `legacy-main-backup` branch (read-only archive).
+| `npm install` / `npm run build` | Legacy build method — replaced by pnpm |
+| `--noEmitOnError false` | Allowed TS errors to reach production — removed |
+| `package-lock.json` | npm lockfile — gitignored, must not be committed |
+| Branch `master` | Renamed to `main` |
+| URL `cost.socialstudies.cloud` | Old deployment URL |
+| `backend/`, `frontend/`, `agents/` | Legacy vanilla-JS stack |
