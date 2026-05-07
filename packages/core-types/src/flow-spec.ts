@@ -16,6 +16,12 @@ export interface FlowNode {
   label?: string;
   config: Record<string, unknown>;
   position?: { x: number; y: number };
+  /** Agent to invoke when node.type === 'agent' | 'subagent' */
+  agentId?: string;
+  /** JS expression evaluated for condition nodes */
+  conditionExpr?: string;
+  /** Branch targets for condition nodes */
+  branches?: { true?: string; false?: string };
 }
 
 /** Canonical FlowEdge — uses source/target to match React Flow conventions
@@ -41,9 +47,11 @@ export interface FlowSpec {
   description?: string;
   version?: string;
   trigger: string;
+  /** Override entry node; defaults to first node with type 'input' or nodes[0] */
+  entryNodeId?: string;
   nodes: FlowNode[];
   edges: FlowEdge[];
-  tags?: string[];
+  tags?: string[]
   isEnabled: boolean;
   createdAt?: string;
   updatedAt?: string;
