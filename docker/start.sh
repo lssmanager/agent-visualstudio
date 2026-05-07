@@ -1,14 +1,14 @@
 #!/bin/sh
 set -eu
 
-# ─── Variables de entorno con defaults ──────────────────────────────────
+# ─── Variables de entorno con defaults ───────────────────────────────────────
 export PORT="${PORT:-3000}"
 export STUDIO_API_PORT="${STUDIO_API_PORT:-$PORT}"
 export NODE_ENV="${NODE_ENV:-production}"
 
 echo "[startup] Agent VisualStudio — NODE_ENV=${NODE_ENV}"
 
-# ─── Validación de variables obligatorias ────────────────────────────
+# ─── Validación de variables obligatorias ─────────────────────────────────
 _require_env() {
   eval _val="\$$1"
   if [ -z "$_val" ]; then
@@ -18,16 +18,19 @@ _require_env() {
 }
 
 _require_env DATABASE_URL
-_require_env CHANNEL_ENC_KEY
-_require_env ENCRYPTION_KEY
+# Nombres alineados con .env.example (corregido 2026-05-07)
+# Anterior: CHANNEL_ENC_KEY — no correspondía al nombre real
+# Anterior: ENCRYPTION_KEY  — no correspondía al nombre real
+_require_env CHANNEL_SECRET
+_require_env SECRETS_ENCRYPTION_KEY
 
-_enc_len=$(printf "%s" "$ENCRYPTION_KEY" | wc -c)
+_enc_len=$(printf "%s" "$SECRETS_ENCRYPTION_KEY" | wc -c)
 if [ "$_enc_len" -ne 64 ]; then
-  echo "[startup] ERROR: ENCRYPTION_KEY must be exactly 64 hex chars (got ${_enc_len})" >&2
+  echo "[startup] ERROR: SECRETS_ENCRYPTION_KEY must be exactly 64 hex chars (got ${_enc_len})" >&2
   exit 1
 fi
 
-# ─── Verificar que hay migraciones para aplicar ────────────────────────
+# ─── Verificar que hay migraciones para aplicar ────────────────────────────
 MIGRATIONS_DIR="packages/db/prisma/migrations"
 
 if [ ! -d "$MIGRATIONS_DIR" ]; then
@@ -45,29 +48,29 @@ fi
 
 echo "[startup] Found ${MIGRATION_COUNT} migration(s) to deploy"
 
-# ─── Prisma validate ─────────────────────────────────────────────────
+# ─── Prisma validate ───────────────────────────────────────────────────
 echo "[startup] Prisma validate"
 ./node_modules/.bin/prisma validate \
   --schema=packages/db/prisma/schema.prisma
 
-# ─── Prisma generate ────────────────────────────────────────────────
+# ─── Prisma generate ──────────────────────────────────────────────────
 echo "[startup] Prisma generate"
 ./node_modules/.bin/prisma generate \
   --schema=packages/db/prisma/schema.prisma
 
-# ─── Prisma migrate deploy ──────────────────────────────────────────
+# ─── Prisma migrate deploy ──────────────────────────────────────────────
 echo "[startup] Prisma migrate deploy"
 ./node_modules/.bin/prisma migrate deploy \
   --schema=packages/db/prisma/schema.prisma
 
 echo "[startup] Database schema applied successfully"
 
-# ─── Verificar frontend build (no bloqueante) ─────────────────────────
+# ─── Verificar frontend build (no bloqueante) ───────────────────────────
 if [ ! -f apps/web/dist/index.html ]; then
   echo "[startup] WARNING: apps/web/dist/index.html not found — backend-only mode"
 fi
 
-# ─── Verificar build compilado (OBLIGATORIO en producción) ────────────────
+# ─── Verificar build compilado (OBLIGATORIO en producción) ──────────────────────
 if [ ! -f dist/apps/api/src/main.js ]; then
   echo "[startup] ERROR: Compiled API not found at dist/apps/api/src/main.js" >&2
   echo "[startup] Run the build step before deploying: pnpm run build" >&2
@@ -75,6 +78,6 @@ if [ ! -f dist/apps/api/src/main.js ]; then
   exit 1
 fi
 
-# ─── Arrancar API compilada ──────────────────────────────────────────────
+# ─── Arrancar API compilada ────────────────────────────────────────────────
 echo "[startup] Starting API on port ${STUDIO_API_PORT}"
 exec node dist/apps/api/src/main.js
