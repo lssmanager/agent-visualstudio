@@ -13,9 +13,9 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { parseAgentFile } from './parser.js';
-import { DEPARTMENTS_META } from './departments.js';
-import type { Agency, AgentTemplate, DepartmentWorkspace } from './types.js';
+import { parseAgentFile } from './parser';
+import { DEPARTMENTS_META } from './departments';
+import type { Agency, AgentTemplate, DepartmentWorkspace } from './types';
 
 // vendor/agency-agents relative to the compiled dist/ output
 const VENDOR_PATH = path.resolve(__dirname, '../../../../vendor/agency-agents');

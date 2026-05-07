@@ -34,17 +34,17 @@ import {
   CommandInteractionContext,
   makeBindingResolver,
   parseInteractionBody,
-} from '../../channels/discord.commands.js'
+} from '../../channels/discord.commands'
 
-import { DiscordAdapter }    from '../../channels/discord.adapter.js'
-import { MessageDispatcher } from '../../message-dispatcher.service.js'
+import { DiscordAdapter }    from '../../channels/discord.adapter'
+import { MessageDispatcher } from '../../message-dispatcher.service'
 import type {
   IAgentExecutor,
   DispatchInput,
   DispatchSuccess,
   DispatchFailure,
-} from '../../message-dispatcher.types.js'
-import type { IncomingMessage } from '../../channels/channel-adapter.interface.js'
+} from '../../message-dispatcher.types'
+import type { IncomingMessage } from '../../channels/channel-adapter.interface'
 
 // ════════════════════════════════════════════════════════════════════════════
 // CAPA 1 — discord.commands.ts (sin HTTP, sin Discord real)

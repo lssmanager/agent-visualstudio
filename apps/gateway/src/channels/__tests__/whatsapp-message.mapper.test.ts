@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { baileysToIncoming, jidToPhone, isGroupJid } from '../whatsapp-message.mapper.js'
+import { baileysToIncoming, jidToPhone, isGroupJid } from '../whatsapp-message.mapper'
 
 // ── Factory: WAMessage mínimo ──────────────────────────────────────────────────
 

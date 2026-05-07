@@ -6,8 +6,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { SessionManager } from '../session-manager.service.js'
-import type { IncomingMessage, OutboundMessage } from '../types.js'
+import { SessionManager } from '../session-manager.service'
+import type { IncomingMessage, OutboundMessage } from '../types'
 
 // ── Helpers de fixture ────────────────────────────────────────────────
 

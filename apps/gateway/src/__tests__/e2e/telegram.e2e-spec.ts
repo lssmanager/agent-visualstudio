@@ -26,8 +26,8 @@ import { createCipheriv, randomBytes } from 'node:crypto'
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest'
 
 // ── Imports de código real (NO mockear) ──────────────────────────────────────
-import { TelegramAdapter } from '../../channels/telegram.adapter.js'
-import { GatewayService }  from '../../gateway.service.js'
+import { TelegramAdapter } from '../../channels/telegram.adapter'
+import { GatewayService }  from '../../gateway.service'
 
 // ── Constantes del test ──────────────────────────────────────────────────────
 

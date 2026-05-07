@@ -22,7 +22,7 @@
  */
 
 import type { proto }          from '@whiskeysockets/baileys'
-import type { IncomingMessage } from './channel-adapter.interface.js'
+import type { IncomingMessage } from './channel-adapter.interface'
 
 // ── Tipos de mensajes que silenciosamente ignoramos ─────────────────────
 

@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { AgentResolverService, type BindingRow } from '../agent-resolver.service.js'
+import { AgentResolverService, type BindingRow } from '../agent-resolver.service'
 import {
   ChannelBindingNotFoundError,
   ChannelConfigInactiveError,
   AmbiguousBindingError,
-} from '../agent-resolver.errors.js'
+} from '../agent-resolver.errors'
 
 const CHANNEL_ID = 'cc-001'
 const USER_ID    = 'user-ext-001'

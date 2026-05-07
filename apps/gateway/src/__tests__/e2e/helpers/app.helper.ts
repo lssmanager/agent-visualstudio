@@ -29,15 +29,15 @@
 
 import express, { type Express }  from 'express'
 import type { Server }            from 'node:http'
-import type { PrismaMock }        from './prisma.mock.js'
-import type { IAgentExecutorLike } from './agent-executor.stub.js'
+import type { PrismaMock }        from './prisma.mock'
+import type { IAgentExecutorLike } from './agent-executor.stub'
 import {
   CHANNEL_CONFIG_ID,
   WEBHOOK_SECRET,
   TELEGRAM_BOT_TOKEN,
   AGENT_ID,
-} from './telegram.fixtures.js'
-import { TIMEOUT_REPLY } from './agent-executor.stub.js'
+} from './telegram.fixtures'
+import { TIMEOUT_REPLY } from './agent-executor.stub'
 
 // ── Tipos internos ─────────────────────────────────────────────────────────────
 

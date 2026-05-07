@@ -7,13 +7,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { MessageDispatcher, TimeoutError }       from '../message-dispatcher.service.js'
+import { MessageDispatcher, TimeoutError }       from '../message-dispatcher.service'
 import type {
   IAgentExecutor,
   DispatchInput,
   DispatchSuccessEvent,
   DispatchErrorEvent,
-} from '../message-dispatcher.types.js'
+} from '../message-dispatcher.types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 

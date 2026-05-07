@@ -1,20 +1,20 @@
-export { readConfigFromEnv, normalizeApiUrl } from './config.js';
-export type { McpServerConfig } from './config.js';
+export { readConfigFromEnv, normalizeApiUrl } from './config';
+export type { McpServerConfig } from './config';
 
-export { LssApiClient, LssApiError } from './client.js';
-export type { JsonRequestOptions } from './client.js';
+export { LssApiClient, LssApiError } from './client';
+export type { JsonRequestOptions } from './client';
 
 export {
   formatTextResponse,
   formatErrorResponse,
-} from './format.js';
-export type { McpTextContent, McpToolResult } from './format.js';
+} from './format';
+export type { McpTextContent, McpToolResult } from './format';
 
-export { createToolDefinitions } from './tools.js';
-export type { McpToolDefinition } from './tools.js';
+export { createToolDefinitions } from './tools';
+export type { McpToolDefinition } from './tools';
 
-export { skillsToMcpTools } from './skill-bridge.js';
-export type { BridgedSkillSpec } from './skill-bridge.js';
+export { skillsToMcpTools } from './skill-bridge';
+export type { BridgedSkillSpec } from './skill-bridge';
 
-export { McpServer } from './server.js';
-export type { McpServerOptions } from './server.js';
+export { McpServer } from './server';
+export type { McpServerOptions } from './server';

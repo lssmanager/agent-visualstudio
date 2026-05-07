@@ -32,7 +32,7 @@ jest.mock('@whiskeysockets/baileys', () => ({
 
 // ── Import del módulo bajo test ─────────────────────────────────────────
 // Importamos DESPUÉS de configurar el mock
-const { usePrismaAuthState, clearSessionInDb } = await import('../whatsapp-prisma-auth.js')
+const { usePrismaAuthState, clearSessionInDb } = await import('../whatsapp-prisma-auth')
 
 // ── Mock de PrismaClient ────────────────────────────────────────────────
 

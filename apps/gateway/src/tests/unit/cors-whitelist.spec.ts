@@ -20,7 +20,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import express from 'express';
 import type { Application } from 'express';
 import request from 'supertest';
-import { corsMiddleware } from '../../middleware/security.middleware.js';
+import { corsMiddleware } from '../../middleware/security.middleware';
 
 // ---------------------------------------------------------------------------
 // Setup: tres apps con distintas configs de whitelist

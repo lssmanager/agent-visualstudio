@@ -18,7 +18,7 @@
 
 import { Router, Request, Response } from 'express'
 import { PrismaClient } from '@prisma/client'
-import { TeamsAdapter } from '../channels/teams/index.js'
+import { TeamsAdapter } from '../channels/teams/index'
 
 /**
  * Factory que crea el router de Teams.

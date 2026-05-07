@@ -13,11 +13,11 @@
  */
 import type { PrismaClient, ChannelKind } from '@prisma/client';
 import { Prisma } from '@prisma/client';
-import type { ILLMProvider } from './llm-provider.js';
-import { LLMStepExecutor } from './llm-step-executor.js';
-import type { StepExecutionContext } from './llm-step-executor.js';
-import type { SkillSpec } from '../../core-types/src/skill-spec.js';
-import type { McpToolDefinition } from '../../mcp-server/src/tools.js';
+import type { ILLMProvider } from './llm-provider';
+import { LLMStepExecutor } from './llm-step-executor';
+import type { StepExecutionContext } from './llm-step-executor';
+import type { SkillSpec } from '../../core-types/src/skill-spec';
+import type { McpToolDefinition } from '../../mcp-server/src/tools';
 
 // ── OAuthService — tipo local para evitar cross-package import de apps/api ───
 export interface IOAuthService {
@@ -158,7 +158,7 @@ export class AgentRunner {
     if (input.flowId) {
       const flow = await this.config.prisma.flow.findUnique({ where: { id: input.flowId } });
       if (!flow) throw new Error(`Flow ${input.flowId} not found`);
-      return (flow.nodes as unknown as import('../../core-types/src/flow-spec.js').FlowNode[]);
+      return (flow.nodes as unknown as import('../../core-types/src/flow-spec').FlowNode[]);
     }
 
     const agent = input.agentId

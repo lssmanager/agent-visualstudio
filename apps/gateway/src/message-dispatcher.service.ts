@@ -38,8 +38,8 @@ import type {
   MessageDispatcherOptions,
   DispatchSuccessEvent,
   DispatchErrorEvent,
-} from './message-dispatcher.types.js'
-import { checkUserRateLimit }              from './middleware/user-rate-limiter.js'
+} from './message-dispatcher.types'
+import { checkUserRateLimit }              from './middleware/user-rate-limiter'
 
 // ── Constantes por defecto ─────────────────────────────────────────────
 

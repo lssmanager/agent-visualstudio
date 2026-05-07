@@ -6,9 +6,9 @@
  * - heartbeat/execution-workspace tools retained as-is (same API shape)
  */
 import { z } from 'zod';
-import { LssApiClient } from './client.js';
-import { formatErrorResponse, formatTextResponse } from './format.js';
-import type { McpToolResult } from './format.js';
+import { LssApiClient } from './client';
+import { formatErrorResponse, formatTextResponse } from './format';
+import type { McpToolResult } from './format';
 
 export interface McpToolDefinition {
   name: string;

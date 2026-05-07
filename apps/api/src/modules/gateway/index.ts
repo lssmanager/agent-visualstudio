@@ -15,8 +15,8 @@
  *   → apps/gateway/src/
  */
 
-export { GatewayModule }              from './gateway.module.js'
-export { GatewayService }             from './gateway.service.js'
-export { AgentResolverService }       from './agent-resolver.service.js'
-export { GatewayHealthService }       from './gateway-health.service.js'
-export { GatewayDiagnosticsService }  from './gateway-diagnostics.service.js'
+export { GatewayModule }              from './gateway.module'
+export { GatewayService }             from './gateway.service'
+export { AgentResolverService }       from './agent-resolver.service'
+export { GatewayHealthService }       from './gateway-health.service'
+export { GatewayDiagnosticsService }  from './gateway-diagnostics.service'

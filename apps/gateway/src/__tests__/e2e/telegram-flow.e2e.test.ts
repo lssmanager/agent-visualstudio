@@ -23,8 +23,8 @@ import {
   vi,
 } from 'vitest'
 
-import { startTestApp, type TestApp }  from './helpers/app.helper.js'
-import { prismaMock }                  from './helpers/prisma.mock.js'
+import { startTestApp, type TestApp }  from './helpers/app.helper'
+import { prismaMock }                  from './helpers/prisma.mock'
 import {
   agentExecutorStub,
   agentExecutorTimeoutStub,
@@ -32,7 +32,7 @@ import {
   resetTransientStub,
   AGENT_REPLY,
   TIMEOUT_REPLY,
-} from './helpers/agent-executor.stub.js'
+} from './helpers/agent-executor.stub'
 import {
   makeTelegramTextUpdate,
   makeTelegramCommandUpdate,
@@ -42,7 +42,7 @@ import {
   TELEGRAM_BOT_TOKEN,
   CHANNEL_CONFIG_ID,
   WEBHOOK_SECRET,
-} from './helpers/telegram.fixtures.js'
+} from './helpers/telegram.fixtures'
 
 // ── Intercepción global de fetch() ────────────────────────────────────────────
 // Se configura UNA VEZ antes de todos los tests para evitar race conditions.

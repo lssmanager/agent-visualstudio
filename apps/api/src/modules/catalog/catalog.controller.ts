@@ -23,7 +23,7 @@
  */
 
 import type { Router, Request, Response } from 'express'
-import { getPrisma } from '../../lib/prisma.js'
+import { getPrisma } from '../../lib/prisma'
 import { ModelCatalogService, ProviderCatalogService } from '@agent-vs/profile-engine'
 import type { ModelFamilyType } from '@agent-vs/core-types'
 

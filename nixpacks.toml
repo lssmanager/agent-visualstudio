@@ -1,37 +1,20 @@
-# nixpacks.toml — BLINDADO: comandos explícitos, no depende de package.json scripts
-# Razón: build:deploy era un script mutable que rompía el deploy en cada commit
-# que lo modificara. Este archivo es la única fuente de verdad del build.
-
-[variables]
-NODE_ENV = "production"
-NPM_CONFIG_PRODUCTION = "false"
-NIXPACKS_NODE_VERSION = "22"
-
 [phases.setup]
 nixPkgs = ["nodejs_22", "openssl"]
 
 [phases.install]
-# IMPORTANTE: no usar --no-workspaces ni --workspaces — dejar que npm resuelva
-# el monorepo normalmente para que @agent-vs/* internos estén disponibles.
 cmds = [
-  "npm install --legacy-peer-deps"
+  "npm install -g pnpm@10",
+  "pnpm install --frozen-lockfile"
 ]
+cacheDirectories = ["/root/.local/share/pnpm/store/v3"]
 
 [phases.build]
-# Comandos hardcodeados y blindados. NUNCA llamar npm run <script> aquí.
-# tsc fue eliminado: este es un deploy de SPA frontend (Vite → Caddy).
-# Los ~60 errores TS del backend NestJS son irrelevantes para el artefacto de deploy.
-# Vite usa esbuild internamente y NO requiere un paso tsc previo.
 cmds = [
-  # 1. Generar Prisma Client (requerido por imports del frontend si usa tipos Prisma)
-  "npx prisma generate --schema=packages/db/prisma/schema.prisma",
-
-  # 2. Compilar frontend con Vite (esbuild, no tsc)
-  "npx vite build --config apps/web/vite.config.ts",
-
-  # 3. Verificar que el frontend compiló correctamente
-  "test -f apps/web/dist/index.html"
+  "node_modules/.bin/prisma generate --schema=packages/db/prisma/schema.prisma",
+  "tsc -p tsconfig.json --noEmitOnError false --skipLibCheck",
+  "node_modules/.bin/vite build --config apps/web/vite.config.ts"
 ]
+cacheDirectories = ["node_modules/.cache"]
 
 [start]
 cmd = "sh docker/start.sh"

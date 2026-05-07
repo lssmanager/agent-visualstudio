@@ -35,12 +35,12 @@ import express, { type Express } from 'express'
 import type { Server }            from 'node:http'
 import * as nodeCrypto            from 'node:crypto'
 
-import { prismaMock }    from './helpers/prisma.mock.js'
+import { prismaMock }    from './helpers/prisma.mock'
 import {
   agentExecutorStub,
   AGENT_REPLY,
   TIMEOUT_REPLY,
-} from './helpers/agent-executor.stub.js'
+} from './helpers/agent-executor.stub'
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -55,7 +55,7 @@ import {
   WA_PHONE_NUMBER_ID,
   WA_FROM,
   WA_AGENT_ID,
-} from './helpers/whatsapp.fixtures.js'
+} from './helpers/whatsapp.fixtures'
 
 import {
   makeTelegramTextUpdate,
@@ -65,7 +65,7 @@ import {
   TELEGRAM_BOT_TOKEN,
   AGENT_ID           as TG_AGENT_ID,
   TELEGRAM_CHAT_ID,
-} from './helpers/telegram.fixtures.js'
+} from './helpers/telegram.fixtures'
 
 import {
   makeDiscordSlashAsk,
@@ -77,7 +77,7 @@ import {
   DISCORD_AGENT_ID,
   DISCORD_GUILD_ID,
   DISCORD_TEST_BYPASS_HEADER,
-} from './helpers/discord.fixtures.js'
+} from './helpers/discord.fixtures'
 
 import {
   makeTeamsMessageActivity,
@@ -89,7 +89,7 @@ import {
   TEAMS_USER_ID,
   TEAMS_SERVICE_URL,
   TEAMS_CONVERSATION_ID,
-} from './helpers/teams.fixtures.js'
+} from './helpers/teams.fixtures'
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // SERVIDOR DE TEST MULTICHANNEL
@@ -938,7 +938,7 @@ describe('Telegram: historial multiturno', () => {
 describe('WhatsApp: payloads no accionables', () => {
   it('status update (entrega de mensaje) → 200, AgentExecutor NO llamado', async () => {
     // Importamos la fixture de status update creada en whatsapp.fixtures.ts
-    const { makeWaStatusUpdate } = await import('./helpers/whatsapp.fixtures.js')
+    const { makeWaStatusUpdate } = await import('./helpers/whatsapp.fixtures')
     const body    = makeWaStatusUpdate()
     const bodyStr = JSON.stringify(body)
     const res     = await fetch(WHATSAPP_DRIVER.webhookPath(app.baseUrl), {

@@ -26,11 +26,11 @@ import EventEmitter from 'node:events'
 import {
   BaseChannelAdapter,
   type OutgoingMessage,
-} from './channel-adapter.interface.js'
-import { baileysToIncoming }              from './whatsapp-message.mapper.js'
-import { outgoingToBaileys }              from './whatsapp-send.mapper.js'
-import { ExponentialBackoff }             from './whatsapp-backoff.js'
-import { usePrismaAuthState, clearSessionInDb } from './whatsapp-prisma-auth.js'
+} from './channel-adapter.interface'
+import { baileysToIncoming }              from './whatsapp-message.mapper'
+import { outgoingToBaileys }              from './whatsapp-send.mapper'
+import { ExponentialBackoff }             from './whatsapp-backoff'
+import { usePrismaAuthState, clearSessionInDb } from './whatsapp-prisma-auth'
 import type { PrismaClient }              from '@prisma/client'
 
 // ── Tipos de Baileys (importados dinámicamente) ─────────────────────────

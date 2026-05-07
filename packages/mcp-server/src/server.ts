@@ -3,13 +3,15 @@
  * Registers both core LSS tools and skill-bridge tools.
  */
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { LssApiClient } from './client.js';
-import { createToolDefinitions, type McpToolDefinition } from './tools.js';
-import { skillsToMcpTools, type BridgedSkillSpec } from './skill-bridge.js';
+} from '@modelcontextprotocol/sdk/types.js';
+import { LssApiClient } from './client';
+import { createToolDefinitions, type McpToolDefinition } from './tools';
+import { skillsToMcpTools, type BridgedSkillSpec } from './skill-bridge';
 
 export interface McpServerOptions {
   name?: string;

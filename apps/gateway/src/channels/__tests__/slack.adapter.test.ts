@@ -8,11 +8,11 @@
 import { SlackAdapter } from '../slack.adapter'
 
 // Mock getPrisma para evitar conexión real a BD
-jest.mock('../../../lib/prisma.js', () => ({
+jest.mock('../../../lib/prisma', () => ({
   getPrisma: jest.fn(),
 }))
 
-import { getPrisma } from '../../../lib/prisma.js'
+import { getPrisma } from '../../../lib/prisma'
 const mockGetPrisma = getPrisma as jest.MockedFunction<typeof getPrisma>
 
 function makePrismaWithCredentials(credentials: Record<string, unknown>) {

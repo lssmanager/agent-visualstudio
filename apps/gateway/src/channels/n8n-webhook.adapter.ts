@@ -30,9 +30,9 @@ import { Router as createRouter } from 'express'
 import type {
   IncomingMessage,
   OutgoingMessage,
-} from './channel-adapter.interface.js'
-import type { IHttpChannelAdapter } from './channel-adapter.interface.js'
-import { BaseChannelAdapter }        from './channel-adapter.interface.js'
+} from './channel-adapter.interface'
+import type { IHttpChannelAdapter } from './channel-adapter.interface'
+import { BaseChannelAdapter }        from './channel-adapter.interface'
 
 // ── Tipos n8n ─────────────────────────────────────────────────────────────────
 
@@ -491,7 +491,7 @@ export class N8nWebhookAdapter
   }
 
   private async loadConfig(channelConfigId: string) {
-    const { PrismaService } = await import('../prisma/prisma.service.js')
+    const { PrismaService } = await import('../prisma/prisma.service')
     const db = new PrismaService()
     const config = await db.channelConfig.findUnique({ where: { id: channelConfigId } })
     if (!config) {

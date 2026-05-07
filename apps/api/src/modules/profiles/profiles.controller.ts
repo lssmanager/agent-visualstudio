@@ -13,7 +13,7 @@
  */
 
 import type { Router, Request, Response } from 'express'
-import { getPrisma } from '../../lib/prisma.js'
+import { getPrisma } from '../../lib/prisma'
 import { ProfilePropagatorService } from '@lss/profile-engine'
 
 function ok(res: Response, data: unknown, status = 200) {
