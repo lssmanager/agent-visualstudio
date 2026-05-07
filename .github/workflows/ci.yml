@@ -7,41 +7,38 @@ on:
     branches: [main]
 
 jobs:
-  build:
-    name: Install · TypeCheck · Build
+  lockfile-and-types:
+    name: Lockfile + TypeScript
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-      # ── pnpm ──────────────────────────────────────────────────────────
-      - uses: pnpm/action-setup@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
         with:
           version: 10
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
 
-      # Fails immediately if any package.json was changed without updating
-      # the lockfile — mirrors what Coolify does with --frozen-lockfile.
+      # Guard: fails if any package.json was changed without updating pnpm-lock.yaml.
+      # This is what Coolify does with --frozen-lockfile in production.
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
-      # ── Prisma generate (required before tsc) ─────────────────────────
-      - name: Prisma generate
-        run: pnpm exec prisma generate --schema=packages/db/prisma/schema.prisma
+      - name: Generate Prisma client
+        run: pnpm --filter @lss/db run db:generate
 
-      # ── TypeScript ────────────────────────────────────────────────────
+      # Catch TypeScript errors across all 20 packages before they reach Coolify.
       - name: TypeScript check
-<<<<<<< HEAD
-        run: pnpm exec tsc -p tsconfig.json --noEmit --skipLibCheck
-
-      # ── Build (API + Web) ─────────────────────────────────────────────
-      - name: Build
-        run: pnpm run build:ci
-=======
         run: pnpm -r exec tsc --noEmit
 
   db-migration-check:
@@ -115,4 +112,3 @@ jobs:
             --to-schema-datamodel packages/db/prisma/schema.prisma \
             --shadow-database-url "$DATABASE_URL" \
             --exit-code
->>>>>>> origin/main
