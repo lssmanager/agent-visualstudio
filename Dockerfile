@@ -13,9 +13,9 @@ RUN npm install --legacy-peer-deps --include=dev --ignore-scripts
 
 COPY . .
 
-# Explicit generate using the canonical schema (no custom output → writes to
-# node_modules/.prisma/client which is where @prisma/client resolves at runtime).
-RUN ./node_modules/.bin/prisma generate --schema ./apps/api/prisma/schema.prisma
+# Explicit generate using the canonical schema in packages/db/prisma.
+# This is the source of truth used by docker/start.sh and all package.json scripts.
+RUN ./node_modules/.bin/prisma generate --schema ./packages/db/prisma/schema.prisma
 
 RUN npm run build:ci
 
@@ -38,11 +38,14 @@ COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/apps/web/dist ./apps/web/dist
-COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
+
+# Canonical schema path — must match start.sh MIGRATIONS_DIR and prisma commands
+COPY --from=builder /app/packages/db/prisma ./packages/db/prisma
+
 COPY --from=builder /app/docker ./docker
 
 # Re-generate for the runner OS native binary (same schema, no custom output).
-RUN ./node_modules/.bin/prisma generate --schema ./apps/api/prisma/schema.prisma
+RUN ./node_modules/.bin/prisma generate --schema ./packages/db/prisma/schema.prisma
 
 RUN chmod +x /app/docker/start.sh
 
