@@ -30,6 +30,16 @@ export interface AgentTemplate {
   tags: string[];
   /** Full body of the .md file (the system prompt) */
   systemPrompt?: string;
+  /**
+   * Origin marker — set to 'agency-agents' by the loader.
+   * Useful for consumers that merge templates from multiple sources.
+   */
+  source?: string;
+  /**
+   * Absolute path to the source .md file on disk.
+   * Only populated when loaded from the local vendor directory.
+   */
+  filePath?: string;
 }
 
 export interface DepartmentWorkspace {
@@ -48,10 +58,9 @@ export interface DepartmentWorkspace {
    */
   label?: string;
   /**
-   * Convenience counter: equals agents.length.
-   * Provided for backward compatibility with older consumers.
+   * Count of agents in this department — always set by mapper (equals agents.length).
    */
-  agentCount?: number;
+  agentCount: number;
 }
 
 export interface Agency {
