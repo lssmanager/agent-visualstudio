@@ -1,35 +1,16 @@
-// ──────────────────────────────────────────────────────────────────────────────
-// ESTE ARCHIVO ES UN REDIRECT — NO EDITAR AQUÍ
+// ⚠️  STUB — DO NOT USE ⚠️
 //
-// El schema canónico de Prisma está en:
+// The canonical Prisma schema for this project lives at:
 //   packages/db/prisma/schema.prisma
 //
-// Este archivo existe sólo para compatibilidad con herramientas que
-// buscan el schema en apps/api/prisma/ (Prisma Studio, algunos IDE plugins).
+// This file exists only as a placeholder so that legacy IDE references
+// and git history are not broken. It is excluded from the Docker build
+// context via .dockerignore and must never be used for prisma generate,
+// prisma migrate, or prisma validate.
 //
-// FUENTE Única de verdad:
-//   packages/db/prisma/schema.prisma  (v9 — schema fusionado)
+// To run Prisma commands, always pass --schema explicitly:
+//   prisma generate  --schema packages/db/prisma/schema.prisma
+//   prisma migrate   --schema packages/db/prisma/schema.prisma
+//   prisma validate  --schema packages/db/prisma/schema.prisma
 //
-// Para regenerar el cliente:
-//   npx prisma generate --schema=packages/db/prisma/schema.prisma
-//
-// Para migraciones:
-//   npx prisma migrate dev --schema=packages/db/prisma/schema.prisma
-// ──────────────────────────────────────────────────────────────────────────────
-
-generator client {
-  provider = "prisma-client-js"
-}
-
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-
-// ⚠️  IMPORTANTE: Este schema es un placeholder vacío.
-// El schema real con todos los modelos está en:
-//   packages/db/prisma/schema.prisma
-//
-// Todas las herramientas del monorepo (package.json postinstall,
-// nixpacks.toml, Dockerfile, CI) apuntan al schema canónico.
-// Si ves este archivo, estás mirando el redirect, no el schema real.
+// See: packages/db/prisma/schema.prisma  (v13, canonical)

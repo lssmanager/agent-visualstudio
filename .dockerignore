@@ -13,3 +13,10 @@ _cleanup_backups
 npm-debug.log*
 Dockerfile*
 README.local.md
+
+# Exclude the stub/legacy Prisma location.
+# The canonical schema is packages/db/prisma/schema.prisma — used by
+# the Dockerfile, docker/start.sh, and all package.json scripts.
+# Keeping apps/api/prisma OUT of the Docker context ensures the builder
+# can never accidentally resolve prisma generate to the wrong schema.
+apps/api/prisma
