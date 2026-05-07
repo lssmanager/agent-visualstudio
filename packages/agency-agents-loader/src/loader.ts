@@ -69,7 +69,7 @@ export function buildAgency(): Agency {
     const deptMeta = DEPARTMENTS_META[deptId] ?? {
       name: deptId.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
       color: '#6b7280',
-      emoji: '🤖',
+      emoji: '\ud83e\udd16',
     };
     const deptPath = path.join(VENDOR_PATH, deptId);
 
@@ -91,6 +91,7 @@ export function buildAgency(): Agency {
       color: deptMeta.color,
       emoji: deptMeta.emoji,
       agents,
+      agentCount: agents.length,
     });
   }
 
