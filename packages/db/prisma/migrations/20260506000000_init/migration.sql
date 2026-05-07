@@ -1,3 +1,8 @@
+-- ============================================================
+-- Migration: 20260506000000_init
+-- Generated from schema.prisma v13 (Agent Visual Studio)
+-- ============================================================
+
 -- CreateEnum
 CREATE TYPE "ChannelKind" AS ENUM ('telegram', 'whatsapp', 'discord', 'webchat', 'slack', 'teams', 'webhook');
 
@@ -14,7 +19,7 @@ CREATE TYPE "BotStatus" AS ENUM ('draft', 'configured', 'provisioning', 'needsau
 CREATE TYPE "RunStatus" AS ENUM ('pending', 'running', 'paused', 'completed', 'failed', 'cancelled');
 
 -- CreateEnum
-CREATE TYPE "RunStepStatus" AS ENUM ('pending', 'running', 'completed', 'failed', 'skipped');
+CREATE TYPE "RunStepStatus" AS ENUM ('queued', 'pending', 'running', 'completed', 'failed', 'skipped');
 
 -- CreateEnum
 CREATE TYPE "MessageRole" AS ENUM ('user', 'assistant', 'system', 'tool');
@@ -124,6 +129,7 @@ CREATE TABLE "agents" (
     "channelBindings" JSONB DEFAULT '[]',
     "policyBindings" JSONB DEFAULT '[]',
     "config" JSONB NOT NULL DEFAULT '{}',
+    "metadata" JSONB DEFAULT '{}',
     "isEnabled" BOOLEAN NOT NULL DEFAULT true,
     "slug" TEXT,
     "isLevelOrchestrator" BOOLEAN NOT NULL DEFAULT false,
@@ -435,6 +441,7 @@ CREATE TABLE "channel_configs" (
     "displayName" TEXT NOT NULL,
     "credentials" JSONB NOT NULL DEFAULT '{}',
     "settings" JSONB DEFAULT '{}',
+    "config" JSONB DEFAULT '{}',
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "statusDetail" TEXT,
     "statusUpdatedAt" TIMESTAMP(3),
@@ -452,6 +459,7 @@ CREATE TABLE "channel_bindings" (
     "channelConfigId" TEXT NOT NULL,
     "agentId" TEXT NOT NULL,
     "route" TEXT NOT NULL,
+    "scopeLevel" TEXT DEFAULT 'workspace',
     "isEnabled" BOOLEAN NOT NULL DEFAULT true,
     "externalChannelId" TEXT,
     "externalGuildId" TEXT,
@@ -695,46 +703,33 @@ CREATE TABLE "activity_logs" (
     "scopeType" TEXT NOT NULL DEFAULT '',
     "scopeId" TEXT NOT NULL DEFAULT '',
     "workspaceId" TEXT,
+    "agencyId" TEXT,
+    "departmentId" TEXT,
+    "agentId" TEXT,
     "resource" "ActivityResource" NOT NULL DEFAULT 'workspace',
-    "resourceType" TEXT,
     "resourceId" TEXT,
-    "actorType" TEXT NOT NULL DEFAULT 'user',
-    "actorId" TEXT,
     "action" TEXT NOT NULL,
-    "payload" JSONB DEFAULT '{}',
-    "detail" TEXT NOT NULL DEFAULT '',
-    "userId" TEXT,
-    "diff" JSONB,
+    "actorId" TEXT,
+    "actorType" TEXT NOT NULL DEFAULT 'user',
+    "detail" JSONB NOT NULL DEFAULT '{}',
+    "metadata" JSONB DEFAULT '{}',
     "ipAddress" TEXT,
-    "metadata" JSONB NOT NULL DEFAULT '{}',
+    "userAgent" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "activity_logs_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "users" (
-    "id" TEXT NOT NULL,
-    "email" TEXT NOT NULL,
-    "name" TEXT,
-    "passwordHash" TEXT,
-    "role" TEXT NOT NULL DEFAULT 'member',
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-
-    CONSTRAINT "users_pkey" PRIMARY KEY ("id")
-);
-
--- CreateIndex
+-- CreateUniqueIndex
 CREATE UNIQUE INDEX "agencies_slug_key" ON "agencies"("slug");
 
--- CreateIndex
+-- CreateUniqueIndex
 CREATE UNIQUE INDEX "departments_agencyId_slug_key" ON "departments"("agencyId", "slug");
 
--- CreateIndex
+-- CreateUniqueIndex
 CREATE UNIQUE INDEX "workspaces_departmentId_slug_key" ON "workspaces"("departmentId", "slug");
 
--- CreateIndex
+-- CreateUniqueIndex
 CREATE UNIQUE INDEX "system_configs_key_key" ON "system_configs"("key");
 
 -- CreateIndex
@@ -743,7 +738,7 @@ CREATE INDEX "agents_workspaceId_idx" ON "agents"("workspaceId");
 -- CreateIndex
 CREATE INDEX "agents_workspaceId_slug_idx" ON "agents"("workspaceId", "slug");
 
--- CreateIndex
+-- CreateUniqueIndex
 CREATE UNIQUE INDEX "agent_profiles_agentId_key" ON "agent_profiles"("agentId");
 
 -- CreateIndex
@@ -752,6 +747,9 @@ CREATE INDEX "agent_profiles_agentId_idx" ON "agent_profiles"("agentId");
 -- CreateIndex
 CREATE INDEX "skills_workspaceId_idx" ON "skills"("workspaceId");
 
+-- CreateUniqueIndex
+CREATE UNIQUE INDEX "agent_skills_agentId_skillId_key" ON "agent_skills"("agentId", "skillId");
+
 -- CreateIndex
 CREATE INDEX "agent_skills_agentId_idx" ON "agent_skills"("agentId");
 
@@ -759,19 +757,19 @@ CREATE INDEX "agent_skills_agentId_idx" ON "agent_skills"("agentId");
 CREATE INDEX "agent_skills_skillId_idx" ON "agent_skills"("skillId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "agent_skills_agentId_skillId_key" ON "agent_skills"("agentId", "skillId");
-
--- CreateIndex
 CREATE INDEX "policies_workspaceId_idx" ON "policies"("workspaceId");
 
 -- CreateIndex
 CREATE INDEX "hooks_workspaceId_idx" ON "hooks"("workspaceId");
 
+-- CreateUniqueIndex
+CREATE UNIQUE INDEX "n8n_workflows_connectionId_n8nWorkflowId_key" ON "n8n_workflows"("connectionId", "n8nWorkflowId");
+
 -- CreateIndex
 CREATE INDEX "n8n_workflows_connectionId_idx" ON "n8n_workflows"("connectionId");
 
--- CreateIndex
-CREATE UNIQUE INDEX "n8n_workflows_connectionId_n8nWorkflowId_key" ON "n8n_workflows"("connectionId", "n8nWorkflowId");
+-- CreateUniqueIndex
+CREATE UNIQUE INDEX "llm_providers_workspaceId_provider_key" ON "llm_providers"("workspaceId", "provider");
 
 -- CreateIndex
 CREATE INDEX "llm_providers_workspaceId_idx" ON "llm_providers"("workspaceId");
@@ -779,10 +777,7 @@ CREATE INDEX "llm_providers_workspaceId_idx" ON "llm_providers"("workspaceId");
 -- CreateIndex
 CREATE INDEX "llm_providers_provider_idx" ON "llm_providers"("provider");
 
--- CreateIndex
-CREATE UNIQUE INDEX "llm_providers_workspaceId_provider_key" ON "llm_providers"("workspaceId", "provider");
-
--- CreateIndex
+-- CreateUniqueIndex
 CREATE UNIQUE INDEX "oauth_tokens_llmProviderId_key" ON "oauth_tokens"("llmProviderId");
 
 -- CreateIndex
@@ -794,6 +789,9 @@ CREATE INDEX "provider_credentials_agencyId_idx" ON "provider_credentials"("agen
 -- CreateIndex
 CREATE INDEX "provider_credentials_agencyId_isActive_idx" ON "provider_credentials"("agencyId", "isActive");
 
+-- CreateUniqueIndex
+CREATE UNIQUE INDEX "model_catalog_entries_providerId_modelId_key" ON "model_catalog_entries"("providerId", "modelId");
+
 -- CreateIndex
 CREATE INDEX "model_catalog_entries_providerId_idx" ON "model_catalog_entries"("providerId");
 
@@ -802,9 +800,6 @@ CREATE INDEX "model_catalog_entries_providerId_isActive_idx" ON "model_catalog_e
 
 -- CreateIndex
 CREATE INDEX "model_catalog_entries_modelId_idx" ON "model_catalog_entries"("modelId");
-
--- CreateIndex
-CREATE UNIQUE INDEX "model_catalog_entries_providerId_modelId_key" ON "model_catalog_entries"("providerId", "modelId");
 
 -- CreateIndex
 CREATE INDEX "flows_workspaceId_idx" ON "flows"("workspaceId");
@@ -839,17 +834,17 @@ CREATE INDEX "channels_workspaceId_idx" ON "channels"("workspaceId");
 -- CreateIndex
 CREATE INDEX "channels_boundAgentId_idx" ON "channels"("boundAgentId");
 
--- CreateIndex
+-- CreateUniqueIndex
 CREATE UNIQUE INDEX "channel_configs_workspaceId_channel_key" ON "channel_configs"("workspaceId", "channel");
 
--- CreateIndex
+-- CreateUniqueIndex
 CREATE UNIQUE INDEX "channel_bindings_channelConfigId_route_key" ON "channel_bindings"("channelConfigId", "route");
+
+-- CreateUniqueIndex
+CREATE UNIQUE INDEX "gateway_sessions_channelConfigId_externalId_key" ON "gateway_sessions"("channelConfigId", "externalId");
 
 -- CreateIndex
 CREATE INDEX "gateway_sessions_agentId_idx" ON "gateway_sessions"("agentId");
-
--- CreateIndex
-CREATE UNIQUE INDEX "gateway_sessions_channelConfigId_externalId_key" ON "gateway_sessions"("channelConfigId", "externalId");
 
 -- CreateIndex
 CREATE INDEX "conversation_messages_sessionId_createdAt_idx" ON "conversation_messages"("sessionId", "createdAt");
@@ -948,16 +943,16 @@ CREATE INDEX "activity_logs_scopeId_createdAt_idx" ON "activity_logs"("scopeId",
 CREATE INDEX "activity_logs_workspaceId_createdAt_idx" ON "activity_logs"("workspaceId", "createdAt");
 
 -- CreateIndex
-CREATE INDEX "activity_logs_action_createdAt_idx" ON "activity_logs"("action", "createdAt");
+CREATE INDEX "activity_logs_agencyId_createdAt_idx" ON "activity_logs"("agencyId", "createdAt");
 
 -- CreateIndex
-CREATE INDEX "activity_logs_actorId_createdAt_idx" ON "activity_logs"("actorId", "createdAt");
+CREATE INDEX "activity_logs_departmentId_createdAt_idx" ON "activity_logs"("departmentId", "createdAt");
 
 -- CreateIndex
-CREATE INDEX "activity_logs_resourceId_createdAt_idx" ON "activity_logs"("resourceId", "createdAt");
+CREATE INDEX "activity_logs_agentId_createdAt_idx" ON "activity_logs"("agentId", "createdAt");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
+CREATE INDEX "activity_logs_resource_resourceId_idx" ON "activity_logs"("resource", "resourceId");
 
 -- AddForeignKey
 ALTER TABLE "departments" ADD CONSTRAINT "departments_agencyId_fkey" FOREIGN KEY ("agencyId") REFERENCES "agencies"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -996,7 +991,7 @@ ALTER TABLE "n8n_workflows" ADD CONSTRAINT "n8n_workflows_connectionId_fkey" FOR
 ALTER TABLE "llm_providers" ADD CONSTRAINT "llm_providers_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "workspaces"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "llm_providers" ADD CONSTRAINT "llm_providers_provider_fkey" FOREIGN KEY ("provider") REFERENCES "provider_catalog"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "llm_providers" ADD CONSTRAINT "llm_providers_provider_fkey" FOREIGN KEY ("provider") REFERENCES "provider_catalog"("id") ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "oauth_tokens" ADD CONSTRAINT "oauth_tokens_llmProviderId_fkey" FOREIGN KEY ("llmProviderId") REFERENCES "llm_providers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -1014,22 +1009,22 @@ ALTER TABLE "flows" ADD CONSTRAINT "flows_workspaceId_fkey" FOREIGN KEY ("worksp
 ALTER TABLE "runs" ADD CONSTRAINT "runs_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "workspaces"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "runs" ADD CONSTRAINT "runs_flowId_fkey" FOREIGN KEY ("flowId") REFERENCES "flows"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "runs" ADD CONSTRAINT "runs_flowId_fkey" FOREIGN KEY ("flowId") REFERENCES "flows"("id") ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "runs" ADD CONSTRAINT "runs_agentId_fkey" FOREIGN KEY ("agentId") REFERENCES "agents"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "runs" ADD CONSTRAINT "runs_agentId_fkey" FOREIGN KEY ("agentId") REFERENCES "agents"("id") ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "run_steps" ADD CONSTRAINT "run_steps_runId_fkey" FOREIGN KEY ("runId") REFERENCES "runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "run_steps" ADD CONSTRAINT "run_steps_agentId_fkey" FOREIGN KEY ("agentId") REFERENCES "agents"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "run_steps" ADD CONSTRAINT "run_steps_agentId_fkey" FOREIGN KEY ("agentId") REFERENCES "agents"("id") ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "channels" ADD CONSTRAINT "channels_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "workspaces"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "channels" ADD CONSTRAINT "channels_boundAgentId_fkey" FOREIGN KEY ("boundAgentId") REFERENCES "agents"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "channels" ADD CONSTRAINT "channels_boundAgentId_fkey" FOREIGN KEY ("boundAgentId") REFERENCES "agents"("id") ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "channel_configs" ADD CONSTRAINT "channel_configs_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "workspaces"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -1044,7 +1039,7 @@ ALTER TABLE "channel_bindings" ADD CONSTRAINT "channel_bindings_agentId_fkey" FO
 ALTER TABLE "gateway_sessions" ADD CONSTRAINT "gateway_sessions_channelConfigId_fkey" FOREIGN KEY ("channelConfigId") REFERENCES "channel_configs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "gateway_sessions" ADD CONSTRAINT "gateway_sessions_agentId_fkey" FOREIGN KEY ("agentId") REFERENCES "agents"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "gateway_sessions" ADD CONSTRAINT "gateway_sessions_agentId_fkey" FOREIGN KEY ("agentId") REFERENCES "agents"("id") ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "conversation_messages" ADD CONSTRAINT "conversation_messages_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES "gateway_sessions"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -1053,52 +1048,28 @@ ALTER TABLE "conversation_messages" ADD CONSTRAINT "conversation_messages_sessio
 ALTER TABLE "conversation_messages" ADD CONSTRAINT "conversation_messages_channelId_fkey" FOREIGN KEY ("channelId") REFERENCES "channels"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "budget_policies" ADD CONSTRAINT "budget_policies_scope_workspace_fkey" FOREIGN KEY ("scopeId") REFERENCES "workspaces"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "budget_policies" ADD CONSTRAINT "budget_policies_scope_agency_fkey" FOREIGN KEY ("scopeId") REFERENCES "agencies"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "budget_policies" ADD CONSTRAINT "budget_policies_scope_department_fkey" FOREIGN KEY ("scopeId") REFERENCES "departments"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "budget_policies" ADD CONSTRAINT "budget_policies_scope_agent_fkey" FOREIGN KEY ("scopeId") REFERENCES "agents"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
 ALTER TABLE "budget_incidents" ADD CONSTRAINT "budget_incidents_budgetPolicyId_fkey" FOREIGN KEY ("budgetPolicyId") REFERENCES "budget_policies"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "cost_events" ADD CONSTRAINT "cost_events_runId_fkey" FOREIGN KEY ("runId") REFERENCES "runs"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "cost_events" ADD CONSTRAINT "cost_events_runId_fkey" FOREIGN KEY ("runId") REFERENCES "runs"("id") ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "cost_events" ADD CONSTRAINT "cost_events_runStepId_fkey" FOREIGN KEY ("runStepId") REFERENCES "run_steps"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "cost_events" ADD CONSTRAINT "cost_events_runStepId_fkey" FOREIGN KEY ("runStepId") REFERENCES "run_steps"("id") ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "cost_events" ADD CONSTRAINT "cost_events_budgetPolicyId_fkey" FOREIGN KEY ("budgetPolicyId") REFERENCES "budget_policies"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "cost_events" ADD CONSTRAINT "cost_events_budgetPolicyId_fkey" FOREIGN KEY ("budgetPolicyId") REFERENCES "budget_policies"("id") ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "model_policies" ADD CONSTRAINT "model_policies_scope_agency_fkey" FOREIGN KEY ("scopeId") REFERENCES "agencies"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "approvals" ADD CONSTRAINT "approvals_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "workspaces"("id") ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "model_policies" ADD CONSTRAINT "model_policies_scope_department_fkey" FOREIGN KEY ("scopeId") REFERENCES "departments"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "approvals" ADD CONSTRAINT "approvals_agentId_fkey" FOREIGN KEY ("agentId") REFERENCES "agents"("id") ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "model_policies" ADD CONSTRAINT "model_policies_scope_workspace_fkey" FOREIGN KEY ("scopeId") REFERENCES "workspaces"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "approvals" ADD CONSTRAINT "approvals_runId_fkey" FOREIGN KEY ("runId") REFERENCES "runs"("id") ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "model_policies" ADD CONSTRAINT "model_policies_scope_agent_fkey" FOREIGN KEY ("scopeId") REFERENCES "agents"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "approvals" ADD CONSTRAINT "approvals_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "workspaces"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "approvals" ADD CONSTRAINT "approvals_agentId_fkey" FOREIGN KEY ("agentId") REFERENCES "agents"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "approvals" ADD CONSTRAINT "approvals_runId_fkey" FOREIGN KEY ("runId") REFERENCES "runs"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "approvals" ADD CONSTRAINT "approvals_runStepId_fkey" FOREIGN KEY ("runStepId") REFERENCES "run_steps"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "approvals" ADD CONSTRAINT "approvals_runStepId_fkey" FOREIGN KEY ("runStepId") REFERENCES "run_steps"("id") ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "approval_comments" ADD CONSTRAINT "approval_comments_approvalId_fkey" FOREIGN KEY ("approvalId") REFERENCES "approvals"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -1107,23 +1078,10 @@ ALTER TABLE "approval_comments" ADD CONSTRAINT "approval_comments_approvalId_fke
 ALTER TABLE "routines" ADD CONSTRAINT "routines_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "workspaces"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "agent_wakeup_requests" ADD CONSTRAINT "agent_wakeup_requests_agentId_fkey" FOREIGN KEY ("agentId") REFERENCES "agents"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "agent_wakeup_requests" ADD CONSTRAINT "agent_wakeup_requests_agentId_fkey" FOREIGN KEY ("agentId") REFERENCES "agents"("id") ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "agent_wakeup_requests" ADD CONSTRAINT "agent_wakeup_requests_runId_fkey" FOREIGN KEY ("runId") REFERENCES "runs"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "agent_wakeup_requests" ADD CONSTRAINT "agent_wakeup_requests_runId_fkey" FOREIGN KEY ("runId") REFERENCES "runs"("id") ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "agent_wakeup_requests" ADD CONSTRAINT "agent_wakeup_requests_runStepId_fkey" FOREIGN KEY ("runStepId") REFERENCES "run_steps"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "activity_logs" ADD CONSTRAINT "activity_logs_scope_agency_fkey" FOREIGN KEY ("scopeId") REFERENCES "agencies"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "activity_logs" ADD CONSTRAINT "activity_logs_scope_department_fkey" FOREIGN KEY ("scopeId") REFERENCES "departments"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "activity_logs" ADD CONSTRAINT "activity_logs_scope_workspace_fkey" FOREIGN KEY ("scopeId") REFERENCES "workspaces"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "activity_logs" ADD CONSTRAINT "activity_logs_scope_agent_fkey" FOREIGN KEY ("scopeId") REFERENCES "agents"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
+ALTER TABLE "agent_wakeup_requests" ADD CONSTRAINT "agent_wakeup_requests_runStepId_fkey" FOREIGN KEY ("runStepId") REFERENCES "run_steps"("id") ON UPDATE CASCADE;
