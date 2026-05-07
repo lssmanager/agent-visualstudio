@@ -1,3 +1,9 @@
+-- ============================================================
+-- migration.sql — Agent Visual Studio
+-- Schema canónico v13
+-- Generated: 2026-05-07
+-- ============================================================
+
 -- CreateEnum
 CREATE TYPE "ChannelKind" AS ENUM ('telegram', 'whatsapp', 'discord', 'webchat', 'slack', 'teams', 'webhook');
 
@@ -14,7 +20,7 @@ CREATE TYPE "BotStatus" AS ENUM ('draft', 'configured', 'provisioning', 'needsau
 CREATE TYPE "RunStatus" AS ENUM ('pending', 'running', 'paused', 'completed', 'failed', 'cancelled');
 
 -- CreateEnum
-CREATE TYPE "RunStepStatus" AS ENUM ('pending', 'running', 'completed', 'failed', 'skipped');
+CREATE TYPE "RunStepStatus" AS ENUM ('queued', 'pending', 'running', 'completed', 'failed', 'skipped');
 
 -- CreateEnum
 CREATE TYPE "MessageRole" AS ENUM ('user', 'assistant', 'system', 'tool');
@@ -124,6 +130,7 @@ CREATE TABLE "agents" (
     "channelBindings" JSONB DEFAULT '[]',
     "policyBindings" JSONB DEFAULT '[]',
     "config" JSONB NOT NULL DEFAULT '{}',
+    "metadata" JSONB DEFAULT '{}',
     "isEnabled" BOOLEAN NOT NULL DEFAULT true,
     "slug" TEXT,
     "isLevelOrchestrator" BOOLEAN NOT NULL DEFAULT false,
@@ -435,6 +442,7 @@ CREATE TABLE "channel_configs" (
     "displayName" TEXT NOT NULL,
     "credentials" JSONB NOT NULL DEFAULT '{}',
     "settings" JSONB DEFAULT '{}',
+    "config" JSONB DEFAULT '{}',
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "statusDetail" TEXT,
     "statusUpdatedAt" TIMESTAMP(3),
@@ -452,6 +460,7 @@ CREATE TABLE "channel_bindings" (
     "channelConfigId" TEXT NOT NULL,
     "agentId" TEXT NOT NULL,
     "route" TEXT NOT NULL,
+    "scopeLevel" TEXT DEFAULT 'workspace',
     "isEnabled" BOOLEAN NOT NULL DEFAULT true,
     "externalChannelId" TEXT,
     "externalGuildId" TEXT,
@@ -695,34 +704,21 @@ CREATE TABLE "activity_logs" (
     "scopeType" TEXT NOT NULL DEFAULT '',
     "scopeId" TEXT NOT NULL DEFAULT '',
     "workspaceId" TEXT,
+    "agencyId" TEXT,
+    "departmentId" TEXT,
+    "agentId" TEXT,
     "resource" "ActivityResource" NOT NULL DEFAULT 'workspace',
-    "resourceType" TEXT,
     "resourceId" TEXT,
-    "actorType" TEXT NOT NULL DEFAULT 'user',
-    "actorId" TEXT,
     "action" TEXT NOT NULL,
-    "payload" JSONB DEFAULT '{}',
-    "detail" TEXT NOT NULL DEFAULT '',
-    "userId" TEXT,
-    "diff" JSONB,
+    "actorId" TEXT,
+    "actorType" TEXT NOT NULL DEFAULT 'user',
+    "detail" JSONB NOT NULL DEFAULT '{}',
+    "metadata" JSONB DEFAULT '{}',
     "ipAddress" TEXT,
-    "metadata" JSONB NOT NULL DEFAULT '{}',
+    "userAgent" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "activity_logs_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "users" (
-    "id" TEXT NOT NULL,
-    "email" TEXT NOT NULL,
-    "name" TEXT,
-    "passwordHash" TEXT,
-    "role" TEXT NOT NULL DEFAULT 'member',
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-
-    CONSTRAINT "users_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
@@ -753,13 +749,13 @@ CREATE INDEX "agent_profiles_agentId_idx" ON "agent_profiles"("agentId");
 CREATE INDEX "skills_workspaceId_idx" ON "skills"("workspaceId");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "agent_skills_agentId_skillId_key" ON "agent_skills"("agentId", "skillId");
+
+-- CreateIndex
 CREATE INDEX "agent_skills_agentId_idx" ON "agent_skills"("agentId");
 
 -- CreateIndex
 CREATE INDEX "agent_skills_skillId_idx" ON "agent_skills"("skillId");
-
--- CreateIndex
-CREATE UNIQUE INDEX "agent_skills_agentId_skillId_key" ON "agent_skills"("agentId", "skillId");
 
 -- CreateIndex
 CREATE INDEX "policies_workspaceId_idx" ON "policies"("workspaceId");
@@ -768,19 +764,19 @@ CREATE INDEX "policies_workspaceId_idx" ON "policies"("workspaceId");
 CREATE INDEX "hooks_workspaceId_idx" ON "hooks"("workspaceId");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "n8n_workflows_connectionId_n8nWorkflowId_key" ON "n8n_workflows"("connectionId", "n8nWorkflowId");
+
+-- CreateIndex
 CREATE INDEX "n8n_workflows_connectionId_idx" ON "n8n_workflows"("connectionId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "n8n_workflows_connectionId_n8nWorkflowId_key" ON "n8n_workflows"("connectionId", "n8nWorkflowId");
+CREATE UNIQUE INDEX "llm_providers_workspaceId_provider_key" ON "llm_providers"("workspaceId", "provider");
 
 -- CreateIndex
 CREATE INDEX "llm_providers_workspaceId_idx" ON "llm_providers"("workspaceId");
 
 -- CreateIndex
 CREATE INDEX "llm_providers_provider_idx" ON "llm_providers"("provider");
-
--- CreateIndex
-CREATE UNIQUE INDEX "llm_providers_workspaceId_provider_key" ON "llm_providers"("workspaceId", "provider");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "oauth_tokens_llmProviderId_key" ON "oauth_tokens"("llmProviderId");
@@ -795,6 +791,9 @@ CREATE INDEX "provider_credentials_agencyId_idx" ON "provider_credentials"("agen
 CREATE INDEX "provider_credentials_agencyId_isActive_idx" ON "provider_credentials"("agencyId", "isActive");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "model_catalog_entries_providerId_modelId_key" ON "model_catalog_entries"("providerId", "modelId");
+
+-- CreateIndex
 CREATE INDEX "model_catalog_entries_providerId_idx" ON "model_catalog_entries"("providerId");
 
 -- CreateIndex
@@ -802,9 +801,6 @@ CREATE INDEX "model_catalog_entries_providerId_isActive_idx" ON "model_catalog_e
 
 -- CreateIndex
 CREATE INDEX "model_catalog_entries_modelId_idx" ON "model_catalog_entries"("modelId");
-
--- CreateIndex
-CREATE UNIQUE INDEX "model_catalog_entries_providerId_modelId_key" ON "model_catalog_entries"("providerId", "modelId");
 
 -- CreateIndex
 CREATE INDEX "flows_workspaceId_idx" ON "flows"("workspaceId");
@@ -846,10 +842,10 @@ CREATE UNIQUE INDEX "channel_configs_workspaceId_channel_key" ON "channel_config
 CREATE UNIQUE INDEX "channel_bindings_channelConfigId_route_key" ON "channel_bindings"("channelConfigId", "route");
 
 -- CreateIndex
-CREATE INDEX "gateway_sessions_agentId_idx" ON "gateway_sessions"("agentId");
+CREATE UNIQUE INDEX "gateway_sessions_channelConfigId_externalId_key" ON "gateway_sessions"("channelConfigId", "externalId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "gateway_sessions_channelConfigId_externalId_key" ON "gateway_sessions"("channelConfigId", "externalId");
+CREATE INDEX "gateway_sessions_agentId_idx" ON "gateway_sessions"("agentId");
 
 -- CreateIndex
 CREATE INDEX "conversation_messages_sessionId_createdAt_idx" ON "conversation_messages"("sessionId", "createdAt");
@@ -948,16 +944,16 @@ CREATE INDEX "activity_logs_scopeId_createdAt_idx" ON "activity_logs"("scopeId",
 CREATE INDEX "activity_logs_workspaceId_createdAt_idx" ON "activity_logs"("workspaceId", "createdAt");
 
 -- CreateIndex
-CREATE INDEX "activity_logs_action_createdAt_idx" ON "activity_logs"("action", "createdAt");
+CREATE INDEX "activity_logs_agencyId_createdAt_idx" ON "activity_logs"("agencyId", "createdAt");
 
 -- CreateIndex
-CREATE INDEX "activity_logs_actorId_createdAt_idx" ON "activity_logs"("actorId", "createdAt");
+CREATE INDEX "activity_logs_departmentId_createdAt_idx" ON "activity_logs"("departmentId", "createdAt");
 
 -- CreateIndex
-CREATE INDEX "activity_logs_resourceId_createdAt_idx" ON "activity_logs"("resourceId", "createdAt");
+CREATE INDEX "activity_logs_agentId_createdAt_idx" ON "activity_logs"("agentId", "createdAt");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
+CREATE INDEX "activity_logs_resource_resourceId_idx" ON "activity_logs"("resource", "resourceId");
 
 -- AddForeignKey
 ALTER TABLE "departments" ADD CONSTRAINT "departments_agencyId_fkey" FOREIGN KEY ("agencyId") REFERENCES "agencies"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -1116,14 +1112,13 @@ ALTER TABLE "agent_wakeup_requests" ADD CONSTRAINT "agent_wakeup_requests_runId_
 ALTER TABLE "agent_wakeup_requests" ADD CONSTRAINT "agent_wakeup_requests_runStepId_fkey" FOREIGN KEY ("runStepId") REFERENCES "run_steps"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "activity_logs" ADD CONSTRAINT "activity_logs_scope_workspace_fkey" FOREIGN KEY ("scopeId") REFERENCES "workspaces"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "activity_logs" ADD CONSTRAINT "activity_logs_scope_agency_fkey" FOREIGN KEY ("scopeId") REFERENCES "agencies"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "activity_logs" ADD CONSTRAINT "activity_logs_scope_department_fkey" FOREIGN KEY ("scopeId") REFERENCES "departments"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "activity_logs" ADD CONSTRAINT "activity_logs_scope_workspace_fkey" FOREIGN KEY ("scopeId") REFERENCES "workspaces"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
 ALTER TABLE "activity_logs" ADD CONSTRAINT "activity_logs_scope_agent_fkey" FOREIGN KEY ("scopeId") REFERENCES "agents"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
