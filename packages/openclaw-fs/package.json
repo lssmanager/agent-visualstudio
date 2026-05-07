@@ -2,5 +2,8 @@
   "name": "@lss/openclaw-fs",
   "version": "1.0.0",
   "private": true,
-  "main": "src/index.ts"
+  "main": "src/index.ts",
+  "dependencies": {
+    "chokidar": "^3.6.0"
+  }
 }
