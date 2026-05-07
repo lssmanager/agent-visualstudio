@@ -1,9 +1,7 @@
 /**
  * gateway-sdk/src/types.ts
  *
- * Fix B: Added ChannelMessage, ChannelAdapter, ChannelAdapterFactory
- * and gatewayMethods — consumed by index.ts, telegram.ts and gateway.service.ts
- * but previously absent from this file.
+ * Canonical types for the gateway SDK public API.
  */
 
 // ── Channel message contract ─────────────────────────────────────────────────
@@ -25,7 +23,45 @@ export interface ChannelAdapter {
   sendMessage(channelId: string, content: string): Promise<void>;
 }
 
+/** Config object passed to an adapter at setup time */
+export interface AdapterConfig {
+  channelId:  string;
+  config:     Record<string, unknown>;
+  secrets?:   Record<string, unknown>;
+}
+
 export type ChannelAdapterFactory = (config: Record<string, unknown>) => ChannelAdapter;
+
+// ── Session types ─────────────────────────────────────────────────────────────
+
+/** Lifecycle states a gateway session can be in */
+export type SessionStatus = 'active' | 'paused' | 'closed' | 'idle' | 'unknown';
+
+/**
+ * GatewaySession represents an open conversation between an external user
+ * and an agent, mediated by a specific channel adapter.
+ */
+export interface GatewaySession {
+  id:              string;
+  agentId:         string;
+  channelId:       string;
+  externalUserId:  string;
+  status:          SessionStatus;
+  createdAt:       string;
+  lastActivityAt?: string;
+  metadata?:       Record<string, unknown>;
+}
+
+/**
+ * SessionEvent is emitted by the SessionManager whenever a session
+ * changes state (opened, message received, closed, etc.).
+ */
+export interface SessionEvent {
+  sessionId:  string;
+  type:       'opened' | 'message' | 'closed' | 'error' | 'paused' | 'resumed';
+  payload?:   Record<string, unknown>;
+  ts:         string;
+}
 
 // ── RPC method names (used by gateway.service.ts) ────────────────────────────
 
