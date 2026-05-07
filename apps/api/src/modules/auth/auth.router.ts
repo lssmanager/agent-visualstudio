@@ -12,10 +12,10 @@
  *   POST /api/auth/register — solo si ALLOW_REGISTER=true
  */
 
-import { Router } from 'express';
+import { Router, type IRouter } from 'express';
 import { loginLocal, registerLocal } from './auth.service';
 
-export const authRouter = Router();
+export const authRouter: IRouter = Router();
 
 // POST /api/auth/login
 authRouter.post('/login', async (req, res) => {
