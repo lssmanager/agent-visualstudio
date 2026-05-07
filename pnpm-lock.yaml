@@ -319,13 +319,31 @@ importers:
 
   packages/gateway-sdk: {}
 
-  packages/hierarchy: {}
+  packages/hierarchy:
+    dependencies:
+      '@lss/core-types':
+        specifier: workspace:*
+        version: link:../core-types
+      '@lss/run-engine':
+        specifier: workspace:*
+        version: link:../run-engine
 
   packages/mcp-server: {}
 
-  packages/n8n-service: {}
+  packages/n8n-service:
+    dependencies:
+      '@lss/core-types':
+        specifier: workspace:*
+        version: link:../core-types
+      '@lss/crypto':
+        specifier: workspace:*
+        version: link:../crypto
 
-  packages/openclaw-fs: {}
+  packages/openclaw-fs:
+    dependencies:
+      chokidar:
+        specifier: ^3.6.0
+        version: 3.6.0
 
   packages/profile-engine: {}
 
