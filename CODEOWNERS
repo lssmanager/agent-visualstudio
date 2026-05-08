@@ -1,0 +1,14 @@
+# Global owners
+* @lssmanager
+
+# Core runtime
+/packages/runtime/ @lssmanager
+/packages/core/ @lssmanager
+
+# Security critical
+/packages/security/ @lssmanager
+/.github/ @lssmanager
+
+# Infrastructure
+/services/ @lssmanager
+/docker/ @lssmanager

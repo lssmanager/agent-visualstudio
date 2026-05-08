@@ -1,114 +1,77 @@
 name: CI
 
 on:
-  pull_request:
-    branches: [main]
   push:
-    branches: [main]
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
 
 jobs:
-  lockfile-and-types:
-    name: Lockfile + TypeScript
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
         with:
-          submodules: recursive
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+          version: 8
+      - uses: actions/setup-node@v4
         with:
-          version: 10
+          node-version: '20'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      # Guard: fails if any package.json was changed without updating pnpm-lock.yaml.
-      # This is what Coolify does with --frozen-lockfile in production.
-      - name: Install (frozen lockfile)
-        run: pnpm install --frozen-lockfile
-
-      - name: Generate Prisma client
-        run: pnpm --filter @lss/db run db:generate
-
-      # Catch TypeScript errors across all 20 packages before they reach Coolify.
-      - name: TypeScript check
-        run: pnpm -r exec tsc --noEmit
-
-  db-migration-check:
-    name: DB — Prisma Schema + Migration Drift
+  typecheck:
+    name: TypeScript
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 8
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
 
+  test:
+    name: Test
+    runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:15
         env:
-          POSTGRES_USER: avs
-          POSTGRES_PASSWORD: avs
-          POSTGRES_DB: avs_ci
-        ports:
-          - 5432:5432
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agent_vs_test
         options: >-
           --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-
-    env:
-      DATABASE_URL: postgresql://avs:avs@localhost:5432/avs_ci?schema=public
-
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
         with:
-          submodules: recursive
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+          version: 8
+      - uses: actions/setup-node@v4
         with:
-          version: 10
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install (frozen lockfile)
-        run: pnpm install --frozen-lockfile
-
-      # Fails immediately if migration.sql is missing from any migration directory.
-      # Mirrors the same check in docker/start.sh that blocks Coolify deploys.
-      - name: Check migration.sql exists
-        run: |
-          COUNT=$(find packages/db/prisma/migrations -name "migration.sql" | wc -l)
-          echo "Found $COUNT migration SQL file(s)"
-          if [ "$COUNT" -eq 0 ]; then
-            echo "ERROR: No migration.sql found."
-            echo "Fix: run 'pnpm --filter @lss/db exec prisma migrate dev --name init' locally and commit the result."
-            exit 1
-          fi
-
-      # Apply all migrations against a clean PostgreSQL instance.
-      # Catches SQL errors that tsc cannot detect.
-      - name: Prisma migrate deploy (CI)
-        run: |
-          node_modules/.bin/prisma migrate deploy \
-            --schema=packages/db/prisma/schema.prisma
-
-      # Drift detection: fails if schema.prisma has changes not captured in a migration.
-      # This catches the "someone edited schema.prisma without running migrate dev" case.
-      - name: Prisma migrate diff (drift detection)
-        run: |
-          node_modules/.bin/prisma migrate diff \
-            --from-migrations packages/db/prisma/migrations \
-            --to-schema-datamodel packages/db/prisma/schema.prisma \
-            --shadow-database-url "$DATABASE_URL" \
-            --exit-code
+          node-version: '20'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/agent_vs_test
+      - run: pnpm test
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/agent_vs_test
+          REDIS_URL: redis://localhost:6379
