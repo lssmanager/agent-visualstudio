@@ -1,122 +1,118 @@
-# agent-visualstudio
+# 🤖 Agent VisualStudio
+
+[![CI](https://github.com/lssmanager/agent-visualstudio/actions/workflows/ci.yml/badge.svg)](https://github.com/lssmanager/agent-visualstudio/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue)](https://www.typescriptlang.org/)
+[![pnpm](https://img.shields.io/badge/pnpm-monorepo-orange)](https://pnpm.io/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-blue)](https://www.postgresql.org/)
 
 > Enterprise hierarchical multi-agent orchestration platform with durable runtime, visual flows, multi-channel communication, RAG, observability and enterprise governance.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-20+-green)](https://nodejs.org/)
-
 ---
 
-## Vision
+## 🏗️ Architecture Overview
 
-`agent-visualstudio` is a production-grade, enterprise-ready platform for designing, deploying and governing hierarchical multi-agent AI systems. Inspired by the best patterns from CrewAI, LangGraph, n8n, Flowise, AutoGen, Semantic Kernel and OpenClaw, it unifies them under a single coherent durable runtime.
-
----
-
-## Core Architecture
+Agent VisualStudio organizes AI agents in a strict **4-level hierarchy**:
 
 ```
 Agency
-  └── Department
-        └── Workspace
-              └── Agent
+└── Department
+    └── Workspace
+        └── Agent
 ```
 
-Every configuration, model, tool, memory policy, budget, and channel binding flows **down** this hierarchy. Every child can override its parent. Everything is observable, versionable and durable.
+Configuration (prompts, tools, models, memory, policies, channels, budget) **flows downward** — lower levels inherit and can override. Every agent resolves its effective configuration from most-specific to least-specific.
+
+### Core Layers
+
+| Layer | Description |
+|-------|-------------|
+| **Runtime** | Durable Run/RunStep engine, HITL, checkpointing, fallback chain |
+| **Hierarchy** | Agency → Department → Workspace → Agent inheritance |
+| **Core Files** | 8 `.md` files compiled at runtime into agent context |
+| **Flow Editor** | Visual node-based execution editor with sandbox + versioning |
+| **Channels Gateway** | WebChat, Telegram, WhatsApp, Teams, Discord |
+| **Providers** | 50+ LLM adapters across 7 tiers with fallback chains |
+| **Memory & RAG** | Episodic memory, semantic search, context compression |
+| **Observability** | OpenTelemetry spans, Visual Run Debugger, eval engine |
+| **Security** | ToolGuard, prompt injection detection, output guardrails, audit log |
 
 ---
 
-## Platform Pillars
+## 🚀 Quickstart
 
-| Pillar | Description |
-|--------|-------------|
-| **Durable Runtime** | PostgreSQL-backed run state, checkpointing, retry engine, HITL |
-| **Visual Flow Editor** | Node-based workflow designer (n8n/Flowise inspired) |
-| **Hierarchical Governance** | Agency → Department → Workspace → Agent inheritance |
-| **Multi-Agent Orchestration** | Supervisor, GroupChat, Debate, Routing, Replanning |
-| **Channel Gateway** | WhatsApp (Baileys), Telegram (grammY), Discord, Teams, WebChat |
-| **LLM Provider Abstraction** | OpenAI, Anthropic, Gemini, OpenRouter, Ollama, Groq + fallback chains |
-| **Memory & RAG** | Per-scope vector memory with pluggable backends |
-| **Observability** | OpenTelemetry, structured logs, token & cost tracking |
-| **Security & Governance** | ToolGuard, prompt injection detection, approval engine, audit logs |
-| **Templates Hub** | Reusable agent/workflow templates registry |
+```bash
+# Prerequisites: Node 20+, pnpm 9+, Docker
+git clone https://github.com/lssmanager/agent-visualstudio.git
+cd agent-visualstudio
+pnpm install
+cp .env.example .env
+docker compose up -d db redis
+pnpm db:migrate
+pnpm dev
+```
+
+Open [http://localhost:3000](http://localhost:3000)
 
 ---
 
-## Monorepo Structure
+## 📦 Monorepo Structure
 
 ```
 agent-visualstudio/
 ├── apps/
-│   ├── web/                    # Next.js dashboard + flow editor
-│   └── api/                    # NestJS API gateway
-├── packages/
-│   ├── core/                   # Shared types, contracts, interfaces
-│   ├── runtime/                # Durable execution engine
-│   ├── agents/                 # Agent lifecycle & registry
-│   ├── hierarchy/              # Agency/Department/Workspace system
-│   ├── tools/                  # Tool & skill runtime
-│   ├── memory/                 # Memory backends & RAG
-│   ├── channels/               # Channel adapters
-│   ├── providers/              # LLM provider abstraction
-│   ├── flows/                  # Flow DSL & execution
-│   ├── observability/          # OTel, metrics, tracing
-│   └── security/               # ToolGuard, guardrails
+│   ├── web/          # Next.js frontend
+│   └── cli/          # CLI tooling
 ├── services/
-│   ├── channel-gateway/        # Unified channel ingestion service
-│   ├── run-worker/             # Async run processing worker
-│   ├── rag-service/            # RAG indexing & retrieval service
-│   └── eval-service/           # Evaluation & benchmarking service
-├── docs/
-├── architecture/
-├── roadmap/
-├── examples/
-└── .github/
+│   ├── api/          # REST + WebSocket API
+│   ├── worker/       # Background job processor
+│   ├── gateway/      # Channel gateway
+│   └── scheduler/    # Cron / routine scheduler
+├── packages/
+│   ├── runtime/      # Core run engine
+│   ├── sdk/          # TypeScript SDK
+│   ├── types/        # Shared types
+│   └── ui-components/# Shared UI components
+├── docs/             # Documentation
+├── architecture/     # Diagrams + ADRs
+├── roadmap/          # Phase planning
+└── examples/         # Example agents and flows
 ```
 
 ---
 
-## Core Files System
+## 📚 Documentation
 
-Every entity in the hierarchy uses **Core Files** (OpenClaw-inspired):
-
-- `AGENTS.md` — Agent roster and capabilities
-- `SOUL.md` — Identity, personality, behavioral guidelines
-- `TOOLS.md` — Available tools and usage policies
-- `MEMORY.md` — Memory strategy and retention rules
-- `HEARTBEAT.md` — Routines, health checks, scheduled tasks
-- `IDENTITY.md` — Role, scope, authorization level
-- `USER.md` — User profile and preferences
-- `BOOTSTRAP.md` — Initialization sequence
-
----
-
-## Getting Started
-
-> Development setup docs coming in Phase F0.
-
-```bash
-git clone https://github.com/lssmanager/agent-visualstudio
-cd agent-visualstudio
-pnpm install
-pnpm dev
-```
+- [Architecture Overview](docs/architecture/overview.md)
+- [Hierarchy Model](docs/hierarchy/overview.md)
+- [Core Files](docs/core-files/overview.md)
+- [Runtime](docs/runtime/overview.md)
+- [Channels](docs/channels/overview.md)
+- [Providers](docs/providers/overview.md)
+- [Roadmap](docs/roadmap/phases.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security](SECURITY.md)
 
 ---
 
-## Roadmap
+## 🗺️ Roadmap
 
-See [roadmap/ROADMAP.md](./roadmap/ROADMAP.md) for the full phased delivery plan.
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](./CONTRIBUTING.md).
+See [docs/roadmap/phases.md](docs/roadmap/phases.md) for the full F0–F16 phase plan.
 
 ---
 
-## License
+## 🤝 Contributing
 
-MIT — see [LICENSE](./LICENSE).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for branch naming, PR format, commit conventions, and dev setup.
+
+---
+
+## 🔒 Security
+
+See [SECURITY.md](SECURITY.md) for vulnerability reporting and disclosure policy.
+
+---
+
+## 📄 License
+
+[MIT](LICENSE) © 2026 Agent VisualStudio Contributors

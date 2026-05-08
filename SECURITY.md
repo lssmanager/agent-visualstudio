@@ -4,40 +4,59 @@
 
 | Version | Supported |
 | ------- | --------- |
-| main    | ✅ |
-| beta    | ✅ |
+| main    | ✅ Yes    |
+| < 1.0   | ❌ No     |
+
+---
 
 ## Reporting a Vulnerability
 
-**DO NOT open a public GitHub issue for security vulnerabilities.**
+**Do NOT open a public GitHub issue for security vulnerabilities.**
 
-Please report security issues by emailing: security@agent-visualstudio.dev
+Please report security vulnerabilities via one of these channels:
 
-Include:
+1. **GitHub Private Security Advisory** (preferred): [Create Advisory](https://github.com/lssmanager/agent-visualstudio/security/advisories/new)
+2. **Email**: security@agent-visualstudio.dev
+
+### What to Include
+
 - Description of the vulnerability
 - Steps to reproduce
-- Potential impact
-- Any suggested mitigations
+- Potential impact / attack vector
+- Suggested fix (optional)
+- Your GitHub username (for credit)
 
-We will respond within 48 hours and aim to release a patch within 7 days for critical issues.
+---
+
+## Disclosure Policy
+
+1. **Acknowledgment**: We will acknowledge receipt within **48 hours**.
+2. **Triage**: We will assess severity within **5 business days**.
+3. **Fix**: Critical/High vulnerabilities patched within **14 days** of confirmation.
+4. **Disclosure**: Coordinated public disclosure after patch is released.
+5. **Credit**: Reporter credited in release notes (unless anonymity requested).
+
+---
 
 ## Security Architecture
 
-### ToolGuard
-All tool calls pass through ToolGuard which validates:
-- Permission scope against the executing agent's authorization level
-- Input sanitization against injection patterns
-- Output validation against defined schemas
-- Rate limiting per agent/workspace/agency
+Agent VisualStudio implements defense in depth:
 
-### Prompt Injection Detection
-All user inputs are scanned for prompt injection patterns before being passed to LLM providers.
+- **ToolGuard**: validates every tool call against name, args schema, and scope before execution
+- **Prompt injection detection**: pattern + embedding-based detection before sensitive actions
+- **Output guardrails**: response validation before delivery to channels
+- **Immutable audit log**: append-only log for all sensitive actions
+- **HTTP hardening**: helmet, rate limiting, CORS, security headers
+- **Row-level security**: PostgreSQL RLS per Agency for multi-tenancy
+- **Secret management**: secrets never stored in plaintext; SecretRef pattern (env/file/exec)
 
-### Audit Logging
-All sensitive operations (tool execution, credential access, agent creation, hierarchy modifications) are written to an immutable audit log.
+---
 
-### Credential Management
-LLM API keys and channel credentials are never stored in plaintext. All secrets use encrypted storage with key rotation support.
+## Responsible Disclosure
 
-### Human-in-the-Loop (HITL)
-High-risk tool executions require explicit human approval before proceeding. Approvals survive system restarts.
+We follow the principle of coordinated vulnerability disclosure. We ask that you:
+
+- Give us reasonable time to fix the issue before public disclosure
+- Avoid accessing or modifying user data without permission
+- Not perform denial-of-service attacks
+- Not exploit vulnerabilities in production systems

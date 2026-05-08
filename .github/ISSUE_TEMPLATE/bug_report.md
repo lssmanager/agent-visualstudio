@@ -1,37 +1,48 @@
 ---
-name: Bug Report
-about: Report a reproducible bug
-title: '[BUG] '
-labels: 'type:bug,priority:high'
+name: 🐛 Bug Report
+about: Report a bug or unexpected behavior
+labels: type:bug, priority:medium
 assignees: ''
 ---
 
-## Description
+## 🐛 Bug Description
 
-<!-- Clear description of the bug -->
+<!-- A clear and concise description of what the bug is. -->
 
-## Environment
+## 📋 Steps to Reproduce
 
-- OS:
-- Node.js version:
-- Package version:
-- Provider (if applicable):
-- Channel (if applicable):
+1. Go to '...'
+2. Click on '...'
+3. See error
 
-## Steps to Reproduce
+## 🔍 Expected Behavior
 
-1. 
-2. 
-3. 
+<!-- What you expected to happen. -->
 
-## Expected Behavior
+## 💥 Actual Behavior
 
-## Actual Behavior
+<!-- What actually happened. Include error messages, stack traces. -->
 
-## Logs / Traces
+## 🖥️ Environment
+
+- OS: [e.g. Ubuntu 22.04]
+- Node.js version: [e.g. 20.11]
+- pnpm version: [e.g. 9.0]
+- Branch/commit: [e.g. main / abc1234]
+- Affected service: [e.g. api, worker, gateway, web]
+
+## 📎 Logs / Screenshots
+
+<!-- Paste relevant logs or attach screenshots. -->
 
 ```
-<!-- Paste relevant logs or OTel traces -->
+[paste logs here]
 ```
 
-## Additional Context
+## 🔗 Related Issues
+
+<!-- Link any related issues: Closes #N, Related to #N -->
+
+## 🏷️ Labels
+
+<!-- Apply: type:bug, area:*, priority:* -->

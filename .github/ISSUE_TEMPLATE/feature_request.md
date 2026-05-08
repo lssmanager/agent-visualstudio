@@ -1,33 +1,45 @@
 ---
-name: Feature Request
+name: ✨ Feature Request
 about: Propose a new feature or enhancement
-title: '[FEAT] '
-labels: 'type:feature,needs-design'
+labels: type:feature, priority:medium
 assignees: ''
 ---
 
-## Problem Statement
+## ✨ Feature Summary
 
-<!-- What problem does this feature solve? What user/system need does it address? -->
+<!-- One-sentence description of the feature. -->
 
-## Proposed Solution
+## 🎯 Problem / Motivation
 
-<!-- High-level description of the proposed feature -->
+<!-- What problem does this solve? Why is it needed? -->
 
-## Architecture Impact
+## 📐 Proposed Solution
 
-<!-- Which layers of the hierarchy are affected? Does this touch runtime, channels, providers, UI? -->
+<!-- Technical description of how this should work. -->
 
-## Acceptance Criteria
+## ✅ Acceptance Criteria
 
-- [ ] 
-- [ ] 
-- [ ] 
+- [ ] Criterion 1
+- [ ] Criterion 2
+- [ ] Criterion 3
 
-## References
+## 🔧 Technical Subtasks
 
-<!-- Links to related issues, ADRs, or external projects for inspiration -->
+- [ ] Subtask 1
+- [ ] Subtask 2
 
-## Milestone
+## 🔗 Dependencies
 
-<!-- Which phase does this belong to? -->
+<!-- Depends on #N -->
+
+## ⚠️ Risks
+
+<!-- Any known risks, breaking changes, or areas of uncertainty. -->
+
+## 📚 References
+
+<!-- Links to relevant docs, inspiration projects, RFCs. -->
+
+## 🏷️ Labels
+
+<!-- Apply: type:feature, area:*, priority:* -->

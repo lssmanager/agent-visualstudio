@@ -1,50 +1,47 @@
-## Summary
+## 📋 Summary
 
-<!-- Describe what this PR does and why -->
+<!-- What does this PR do? One paragraph summary. -->
+
+## 🔗 Related Issues
 
 Closes #<!-- issue number -->
 
-## Type of Change
+<!-- Also add: Depends on #N, Related to #N if applicable -->
 
-- [ ] feat: New feature
-- [ ] fix: Bug fix
-- [ ] refactor: Code refactoring
-- [ ] docs: Documentation
-- [ ] chore: Maintenance
-- [ ] perf: Performance improvement
-- [ ] security: Security fix
+## 🏷️ Type of Change
 
-## Milestone / Phase
+- [ ] `feat` — new feature
+- [ ] `fix` — bug fix
+- [ ] `refactor` — code refactor (no functional change)
+- [ ] `docs` — documentation only
+- [ ] `chore` — tooling, dependencies, CI
+- [ ] `test` — tests only
+- [ ] `perf` — performance improvement
+- [ ] `security` — security fix
 
-<!-- Which milestone does this belong to? e.g., F1 - Core Runtime -->
+## ✅ Checklist
 
-## Architecture Impact
+- [ ] CI passes (lint + typecheck + tests)
+- [ ] Issue linked above
+- [ ] Milestone set
+- [ ] Labels applied (type:*, area:*, priority:*)
+- [ ] Tests added/updated for new behavior
+- [ ] No `console.log` or debug artifacts
+- [ ] Breaking changes noted below (if any)
+- [ ] ADR created/updated (if architectural change)
 
-<!-- Does this change the hierarchy model, runtime contracts, or cross-package interfaces? -->
+## 🧪 Testing
 
-- [ ] No architecture impact
-- [ ] Changes internal package API
-- [ ] Changes cross-package contract (requires `@agent-vs/core` update)
-- [ ] Changes runtime state schema (requires migration)
-- [ ] Breaking change
+<!-- How was this tested? Unit tests? Integration tests? Manual steps? -->
 
-## Checklist
+## 💥 Breaking Changes
 
-- [ ] TypeScript strict mode — no `any`
-- [ ] Unit tests written and passing
-- [ ] Integration tests written (if runtime path affected)
-- [ ] `pnpm lint` passes
-- [ ] `pnpm test` passes
-- [ ] No hardcoded credentials or provider names
-- [ ] Observability: spans/logs added for new execution paths
-- [ ] ToolGuard: new tools validated
-- [ ] Docs updated if needed
-- [ ] ADR created if significant architectural decision was made
+<!-- List any breaking changes and migration steps required. -->
 
-## Testing Notes
+## 📸 Screenshots / Demos
 
-<!-- How was this tested? Any edge cases to be aware of? -->
+<!-- For UI changes, include screenshots or screen recordings. -->
 
-## Screenshots / Traces
+## 🗒️ Notes for Reviewers
 
-<!-- For UI changes or runtime flow changes, attach screenshots or OTel traces -->
+<!-- Anything specific you want reviewers to focus on. -->

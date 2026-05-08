@@ -1,14 +1,26 @@
-# Global owners
-* @lssmanager
+# Global owners — review required for all PRs
+* @lssmanager/core-team
 
-# Core runtime
-/packages/runtime/ @lssmanager
-/packages/core/ @lssmanager
+# Runtime engine
+/packages/runtime/ @lssmanager/core-team
+/services/worker/ @lssmanager/core-team
 
-# Security critical
-/packages/security/ @lssmanager
-/.github/ @lssmanager
+# API service
+/services/api/ @lssmanager/core-team
+
+# Frontend
+/apps/web/ @lssmanager/core-team
+/packages/ui-components/ @lssmanager/core-team
+
+# Security-sensitive areas
+/services/gateway/ @lssmanager/core-team
+/packages/runtime/src/security/ @lssmanager/core-team
 
 # Infrastructure
-/services/ @lssmanager
-/docker/ @lssmanager
+/.github/ @lssmanager/core-team
+docker-compose*.yml @lssmanager/core-team
+prisma/ @lssmanager/core-team
+
+# Documentation
+/docs/ @lssmanager/core-team
+/architecture/ @lssmanager/core-team

@@ -1,18 +1,13 @@
-name: CI
+name: Test
 
 on:
   pull_request:
-    branches: [main, develop]
   push:
     branches: [main]
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  lint:
-    name: Lint
+  unit:
+    name: Unit Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,25 +19,10 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
+      - run: pnpm test:unit
 
-  typecheck:
-    name: Type Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v3
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-
-  test:
-    name: Tests
+  integration:
+    name: Integration Tests
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -58,15 +38,6 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
-      redis:
-        image: redis:7
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 6379:6379
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v3
@@ -80,7 +51,6 @@ jobs:
       - run: pnpm db:migrate
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/agent_visualstudio_test
-      - run: pnpm test
+      - run: pnpm test:integration
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/agent_visualstudio_test
-          REDIS_URL: redis://localhost:6379
