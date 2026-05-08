@@ -679,7 +679,11 @@ export abstract class BaseChannelAdapter implements IChannelAdapter {
       return
     }
     // Disparar a listeners suscritos via on('message', ...)
-    this._eventEmitter.emit('message', msg)
+    try {
+      this._eventEmitter.emit('message', msg)
+    } catch (err) {
+      console.error(`[${this.channel}] EventEmitter listener threw exception:`, err)
+    }
     if (this._messageHandler) {
       await this._messageHandler(msg)
     } else {

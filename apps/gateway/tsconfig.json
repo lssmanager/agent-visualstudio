@@ -2,7 +2,6 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "composite":               true,
-    "ignoreDeprecations":      "5.0",
     "experimentalDecorators":  true,
     "emitDecoratorMetadata":   true,
     "outDir":                  "dist",
