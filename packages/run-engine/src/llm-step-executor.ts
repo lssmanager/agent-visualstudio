@@ -26,7 +26,7 @@
  *   with buildOutputsMap() — see step-executor.ts.
  */
 
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient, Prisma } from '@prisma/client';
 import type { FlowNode } from '../../core-types/src';
 import type { RunStep, RunSpec } from '../../core-types/src';
 import { calculateTokenCost } from '../../core-types/src';
@@ -309,8 +309,9 @@ export class LlmStepExecutor extends StepExecutor {
     const policyCtx: PolicyResolverContext = {
       agentId:      agent.id,
       workspaceId:  agent.workspaceId,
-      departmentId: agent.workspace.departmentId,
-      agencyId:     agent.workspace.department.agencyId,
+      // departmentId is nullable in Workspace (String?) — coerce null to undefined
+      departmentId: agent.workspace.departmentId ?? undefined,
+      agencyId:     agent.workspace.department?.agencyId,
     };
 
     const effectivePolicy = await this.policyResolver.resolve(policyCtx);
@@ -332,7 +333,8 @@ export class LlmStepExecutor extends StepExecutor {
         },
         _sum: { costUsd: true },
       });
-      const spent = _sum.costUsd ?? 0;
+      // costUsd is Decimal? — convert to number for comparison
+      const spent = _sum.costUsd ? (_sum.costUsd as unknown as { toNumber(): number }).toNumber() : 0;
       if (spent >= budgetPolicy.limitUsd) {
         throw new BudgetExceededError(
           budgetPolicy.limitUsd,
@@ -650,6 +652,10 @@ function parseToolArgs(argsJson: string): Record<string, unknown> {
   }
 }
 
+/**
+ * AgentWithRelations — typed result of db.agent.findUnique({ include: { workspace: ... } })
+ * departmentId is String? (nullable) in the Workspace model — must be string | null here.
+ */
 type AgentWithRelations = {
   id: string;
   workspaceId: string;
@@ -657,8 +663,8 @@ type AgentWithRelations = {
   instructions: unknown;
   executionMode: unknown;
   workspace: {
-    departmentId: string;
-    department: { agencyId: string };
+    departmentId: string | null;
+    department: { agencyId: string } | null;
   };
   skillLinks: Array<{ skill: { name: unknown; description: unknown; functions: unknown } }>;
   subagents: Array<{
@@ -697,6 +703,9 @@ function buildHierarchyNode(agent: AgentWithRelations): import('../../hierarchy/
 // Suppress potential --noUnusedLocals warning for ToolDefinition
 // (imported for type-checking the tools parameter in executeToolCalls)
 void (undefined as unknown as ToolDefinition);
+
+// Suppress unused import warning for Prisma (used implicitly via type import)
+void (undefined as unknown as Prisma);
 
 // ── Backward-compatible alias ─────────────────────────────────────────────────
 // agent-executor.service.ts and index.ts reference `LLMStepExecutor` (all-caps).

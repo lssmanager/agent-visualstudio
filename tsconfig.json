@@ -74,6 +74,10 @@
     "apps/web",
     "apps/gateway",
     "**/__tests__/**",
-    "**/*.test.ts"
+    "**/_tests_/**",
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "**/*.e2e-spec.ts",
+    "**/*.e2e.ts"
   ]
 }

@@ -10,8 +10,8 @@ import type { RunSpec, FlowEdge, FlowNode, FlowSpec } from '../../core-types/src
 import { ApprovalQueue } from './approval-queue';
 import { RunRepository } from './run-repository';
 
-/** Re-export FlowSpec from core-types so callers get the canonical type */
-export type { FlowSpec };
+/** Re-export FlowSpec, FlowNode and FlowEdge so callers get the canonical types */
+export type { FlowSpec, FlowNode, FlowEdge };
 
 export interface IRunRepository {
   save(run: RunSpec): void;
