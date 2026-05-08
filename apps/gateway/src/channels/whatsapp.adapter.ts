@@ -2,7 +2,10 @@
  * whatsapp.adapter.ts — WhatsApp Cloud API Adapter
  *
  * Recibe webhooks de Meta y envía mensajes vía WhatsApp Cloud API.
- * Requiere: PHONE_NUMBER_ID y token en secretsEncrypted.
+ * Requiere: PHONE_NUMBER_ID y accessToken en credentials (JsonValue).
+ *
+ * FIX [#396]: secretsEncrypted eliminado del schema Prisma.
+ * Las credenciales se leen desde config.credentials (campo actual).
  */
 
 import type { IncomingMessage, OutgoingMessage } from './channel-adapter.interface'
@@ -45,15 +48,13 @@ export class WhatsAppAdapter extends BaseChannelAdapter {
   async initialize(channelConfigId: string): Promise<void> {
     this.channelConfigId = channelConfigId
 
-    // AUDIT-24: leer secretsEncrypted, NO credentials/tokenEnc
+    // FIX [#396]: leer desde credentials (JsonValue), no secretsEncrypted.
     const config  = await this.loadConfig(channelConfigId)
-    const secrets = config.secretsEncrypted
-      ? JSON.parse(this.decryptSecrets(config.secretsEncrypted))
-      : {}
+    const secrets = (config.credentials as Record<string, unknown>) ?? {}
 
-    const cfg = config.config as Record<string, unknown>
-    this.phoneNumberId = (cfg.phoneNumberId   as string) ?? ''
-    this.accessToken   = (secrets.accessToken as string) ?? ''
+    const cfg = (config.config as Record<string, unknown>) ?? {}
+    this.phoneNumberId = (cfg.phoneNumberId    as string) ?? ''
+    this.accessToken   = (secrets.accessToken  as string) ?? ''
   }
 
   async dispose(): Promise<void> {
@@ -134,11 +135,6 @@ export class WhatsAppAdapter extends BaseChannelAdapter {
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────
-
-  private decryptSecrets(_enc: string): string {
-    // F3b-05: decrypt AES-256-GCM — placeholder hasta implementación completa
-    return '{}'
-  }
 
   private async loadConfig(channelConfigId: string) {
     const { PrismaService } = await import('../prisma/prisma.service')

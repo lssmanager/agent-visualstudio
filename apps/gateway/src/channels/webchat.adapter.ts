@@ -17,17 +17,14 @@
  *   { type: 'error', code, message }
  *   { type: 'connected', sessionId }  ← primer frame al conectar
  *
- * FIX [F3b-05]: initialize() ya no lee config.credentials (texto plano).
- * Usa decryptSecrets(config.secretsEncrypted) desde @lss/crypto para
- * leer las credenciales descifradas en memoria. Si secretsEncrypted es null
- * (canal webchat sin credenciales adicionales) usa {} como fallback.
+ * FIX [#396]: secretsEncrypted eliminado del schema. Se lee desde
+ * config.credentials (JsonValue) — campo actual del schema Prisma.
  */
 
 import { WebSocketServer, WebSocket, type RawData } from 'ws'
 import type { IncomingMessage as HttpIncomingMessage, Server } from 'http'
 import type { PrismaClient } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
-import { decryptSecrets } from '@lss/crypto'
 import {
   BaseChannelAdapter,
   type IncomingMessage,
@@ -111,9 +108,9 @@ export class WebChatAdapter extends BaseChannelAdapter {
     })
     if (!config) throw new Error(`ChannelConfig not found: ${channelConfigId}`)
 
-    this.credentials = config.secretsEncrypted
-      ? decryptSecrets(config.secretsEncrypted)
-      : {}
+    // FIX [#396]: secretsEncrypted eliminado del schema.
+    // Las credenciales viven ahora en config.credentials (JsonValue).
+    this.credentials = (config.credentials as Record<string, unknown>) ?? {}
 
     // Crear WebSocketServer adjunto al httpServer existente.
     // path: '/gateway/webchat' → filtra solo esta ruta.

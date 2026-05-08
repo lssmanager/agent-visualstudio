@@ -12,6 +12,8 @@
  * @module channel-adapter.interface
  */
 
+import { EventEmitter } from 'events'
+
 // ── Tipos de canal ───────────────────────────────────────────────────────────
 
 /**
@@ -250,6 +252,26 @@ export interface OutgoingMessage {
   externalId: string
 
   /**
+   * ID del `ChannelConfig` en base de datos.
+   *
+   * Campo opcional mantenido para compatibilidad con tests y adapters legacy
+   * que construyen `OutgoingMessage` directamente con este campo.
+   *
+   * @remarks
+   * En el flujo normal de producción este valor se propaga via contexto
+   * de sesión; aquí se acepta para evitar errores TS2353 en los tests e2e.
+   */
+  channelConfigId?: string
+
+  /**
+   * Tipo de canal de destino.
+   *
+   * Campo opcional para que los tests e2e puedan especificar el canal
+   * sin romper el contrato de producción.
+   */
+  channelType?: ChannelType | string
+
+  /**
    * Texto principal de la respuesta.
    *
    * Obligatorio. Puede estar vacío (`''`) solo si `richContent` lleva todo
@@ -438,7 +460,7 @@ export interface ChannelAdapter {
    * Aplica la configuración descifrada y establece la conexión activa.
    *
    * @param config  — configuración no sensible del canal (e.g., `webhookPath`)
-   * @param secrets — secretos descifrados (tokens, API keys)
+   * @param secrets — credenciales (tokens, API keys)
    * @param mode    — modo de operación del adaptador
    */
   setup(
@@ -487,6 +509,9 @@ export interface ChannelAdapter {
  * - Método {@link emit} para despachar mensajes normalizados al gateway
  * - Método {@link makeTimestamp} para timestamps ISO 8601 consistentes
  * - Almacenamiento de `channelConfigId` y `credentials`
+ * - EventEmitter público (`on` / `off` / `removeAllListeners`) para que los
+ *   tests e2e y los consumidores internos puedan suscribirse a eventos del
+ *   adapter (e.g., `'message'`, `'error'`) sin acceder a internals.
  *
  * @remarks
  * Los adapters concretos **deben** extender esta clase e implementar:
@@ -536,6 +561,17 @@ export abstract class BaseChannelAdapter implements IChannelAdapter {
   protected credentials: Record<string, unknown> = {}
 
   /**
+   * EventEmitter interno usado por `on()`, `off()` y `removeAllListeners()`.
+   *
+   * Separado del handler de mensajes legacy (`_messageHandler`) para no
+   * romper la API existente. Los tests e2e pueden suscribirse con:
+   *   `adapter.on('message', handler)`
+   * y el adapter los dispara con `this._eventEmitter.emit('message', msg)`
+   * desde dentro de `emit()`.
+   */
+  private readonly _eventEmitter = new EventEmitter()
+
+  /**
    * Acceso protegido al handler de mensajes registrado.
    *
    * Las subclases pueden leerlo para verificar si hay handler antes de
@@ -551,6 +587,52 @@ export abstract class BaseChannelAdapter implements IChannelAdapter {
   abstract dispose(): Promise<void>
 
   /**
+   * Suscribe un listener al evento indicado.
+   *
+   * Equivalente a `EventEmitter.on()`. Útil para tests e2e y consumidores
+   * que necesitan reaccionar a eventos del adapter sin usar `onMessage()`.
+   *
+   * @example
+   * ```ts
+   * adapter.on('message', (msg) => console.log(msg))
+   * ```
+   */
+  on(event: string, listener: (...args: unknown[]) => void): this {
+    this._eventEmitter.on(event, listener)
+    return this
+  }
+
+  /**
+   * Elimina un listener específico del evento indicado.
+   *
+   * @example
+   * ```ts
+   * adapter.off('message', myHandler)
+   * ```
+   */
+  off(event: string, listener: (...args: unknown[]) => void): this {
+    this._eventEmitter.off(event, listener)
+    return this
+  }
+
+  /**
+   * Elimina todos los listeners del evento indicado (o de todos los eventos
+   * si no se especifica evento).
+   *
+   * Útil en `afterEach` de tests para limpiar subscripciones entre tests.
+   *
+   * @example
+   * ```ts
+   * adapter.removeAllListeners('message')
+   * adapter.removeAllListeners() // limpia todos los eventos
+   * ```
+   */
+  removeAllListeners(event?: string): this {
+    this._eventEmitter.removeAllListeners(event)
+    return this
+  }
+
+  /**
    * Registra el handler que procesará cada mensaje entrante.
    *
    * Llamado por `ChannelAdapterRegistry` justo después de instanciar el adapter.
@@ -563,7 +645,8 @@ export abstract class BaseChannelAdapter implements IChannelAdapter {
   }
 
   /**
-   * Despacha un {@link IncomingMessage} normalizado al handler del gateway.
+   * Despacha un {@link IncomingMessage} normalizado al handler del gateway
+   * y lo emite además como evento `'message'` en el EventEmitter interno.
    *
    * Valida que `channelConfigId` esté presente antes de invocar el handler.
    * Si no hay handler registrado, emite un warning y descarta el mensaje
@@ -594,6 +677,12 @@ export abstract class BaseChannelAdapter implements IChannelAdapter {
     if (!msg.channelConfigId) {
       console.warn(`[${this.channel}] emit() called without channelConfigId — message dropped`)
       return
+    }
+    // Disparar a listeners suscritos via on('message', ...)
+    try {
+      this._eventEmitter.emit('message', msg)
+    } catch (err) {
+      console.error(`[${this.channel}] EventEmitter listener threw exception:`, err)
     }
     if (this._messageHandler) {
       await this._messageHandler(msg)

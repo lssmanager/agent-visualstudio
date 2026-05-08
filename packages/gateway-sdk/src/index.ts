@@ -1,6 +1,5 @@
 // gateway-sdk/src/index.ts — barrel export v2
-// Fix: re-exporta IChannelAdapter con alias ChannelAdapter,
-//      ChannelAdapterOptions, y gatewayMethods
+// Fix #395: re-export registry, IChannelAdapter, TelegramAdapter, WebChatAdapter
 
 export * from './types.js';
 export * from './protocol.js';
@@ -15,6 +14,12 @@ export {
   IChannelAdapter,
   IChannelAdapter as ChannelAdapter,
   type ChannelAdapterOptions,
+  registry,
+  ChannelAdapterRegistry,
 } from './channel-adapter.js';
 
 export { gatewayMethods } from './methods.js';
+
+// Adapters concretos requeridos por apps/gateway/src/server.ts y routes/webchat.ts
+export { TelegramAdapter } from './adapters/telegram.js';
+export { WebChatAdapter } from './adapters/webchat.js';

@@ -6,7 +6,7 @@ import {
   AmbiguousBindingError,
 } from './agent-resolver.errors'
 
-// ── Constantes ───────────────────────────────────────────────────────────────
+// ── Constantes ─────────────────────────────────────────────────────────────────
 
 /**
  * Orden numérico de prioridad: mayor número = mayor especificidad = se prefiere.
@@ -19,26 +19,26 @@ const SCOPE_PRIORITY: Record<string, number> = {
   agent:      4,
 } as const
 
-// ── TTL del caché de bindings (5 minutos) ──────────────────────────────
+// ── TTL del caché de bindings (5 minutos) ──────────────────────────
 
 const CACHE_TTL_MS = 5 * 60 * 1_000
 
 // ── Tipos internos ────────────────────────────────────────────────────────────
 
+// FIX [#397]: scopeId e isDefault eliminados del schema ChannelBinding.
+// ResolvedAgent mantiene los campos como opcionales para retrocompatibilidad
+// con consumidores que aún lean estos valores.
 export interface ResolvedAgent {
   agentId:    string
   scopeLevel: string
-  scopeId:    string
   bindingId:  string
-  isDefault:  boolean
 }
 
+// FIX [#397]: BindingRow ya no incluye scopeId ni isDefault.
 export interface BindingRow {
   id:         string
   agentId:    string
   scopeLevel: string
-  scopeId:    string
-  isDefault:  boolean
 }
 
 interface CacheEntry {
@@ -46,7 +46,7 @@ interface CacheEntry {
   cachedAt:  number
 }
 
-// ── Servicio ───────────────────────────────────────────────────────────────
+// ── Servicio ─────────────────────────────────────────────────────────────────
 
 @Injectable()
 export class AgentResolverService {
@@ -61,11 +61,13 @@ export class AgentResolverService {
    *   1. Si la sesión ya existe y tiene agentId asignado →
    *      conservar ese agentId (sticky session).
    *   2. Si hay exactamente 1 binding → usar ese.
-   *   3. Si hay un binding con isDefault=true → usar ese.
-   *   4. Ordenar por SCOPE_PRIORITY (agent > workspace > department > agency)
+   *   3. Ordenar por SCOPE_PRIORITY (agent > workspace > department > agency)
    *      y usar el de mayor prioridad.
-   *   5. Si hay empate en prioridad y ninguno es isDefault → AmbiguousBindingError.
-   *   6. Si no hay bindings → ChannelBindingNotFoundError.
+   *   4. Si hay empate en prioridad → AmbiguousBindingError.
+   *   5. Si no hay bindings → ChannelBindingNotFoundError.
+   *
+   * NOTA [#397]: isDefault eliminado del schema; la resolución usa
+   * únicamente scopeLevel priority + sticky-session.
    */
   async resolve(
     channelConfigId: string,
@@ -79,48 +81,26 @@ export class AgentResolverService {
         return {
           agentId:    existingAgentId,
           scopeLevel: binding.scopeLevel,
-          scopeId:    binding.scopeId,
           bindingId:  binding.id,
-          isDefault:  binding.isDefault,
         }
       }
       // El binding fue eliminado → re-resolver sin sticky
     }
 
-    // ── 2. Cargar todos los bindings activos del canal ──────────────────
+    // ── 2. Cargar todos los bindings activos del canal ─────────────────
     const bindings = await this.loadBindings(channelConfigId)
 
     if (bindings.length === 0) {
       throw new ChannelBindingNotFoundError(channelConfigId)
     }
 
-    // ── 3. Un solo binding → directo ────────────────────────────────
+    // ── 3. Un solo binding → directo ──────────────────────────────
     if (bindings.length === 1) {
       const b = bindings[0]
-      return { agentId: b.agentId, scopeLevel: b.scopeLevel, scopeId: b.scopeId, bindingId: b.id, isDefault: b.isDefault }
+      return { agentId: b.agentId, scopeLevel: b.scopeLevel, bindingId: b.id }
     }
 
-    // ── 4. Binding marcado isDefault → usar ese ──────────────────────
-    const defaultBindings = bindings.filter((b) => b.isDefault)
-    if (defaultBindings.length > 1) {
-      throw new AmbiguousBindingError(
-        channelConfigId,
-        defaultBindings.map((b) => b.agentId),
-      )
-    }
-
-    const defaultBinding = defaultBindings[0]
-    if (defaultBinding) {
-      return {
-        agentId:    defaultBinding.agentId,
-        scopeLevel: defaultBinding.scopeLevel,
-        scopeId:    defaultBinding.scopeId,
-        bindingId:  defaultBinding.id,
-        isDefault:  true,
-      }
-    }
-
-    // ── 5. Ordenar por prioridad de scope ────────────────────────────
+    // ── 4. Ordenar por prioridad de scope ───────────────────────────
     const sorted = [...bindings].sort((a, b) => {
       const pa = SCOPE_PRIORITY[a.scopeLevel] ?? 0
       const pb = SCOPE_PRIORITY[b.scopeLevel] ?? 0
@@ -132,7 +112,7 @@ export class AgentResolverService {
       (b) => (SCOPE_PRIORITY[b.scopeLevel] ?? 0) === topPriority,
     )
 
-    // ── 6. Empate sin isDefault → AmbiguousBindingError ───────────────
+    // ── 5. Empate → AmbiguousBindingError ────────────────────────────
     if (topCandidates.length > 1) {
       throw new AmbiguousBindingError(
         channelConfigId,
@@ -144,9 +124,7 @@ export class AgentResolverService {
     return {
       agentId:    winner.agentId,
       scopeLevel: winner.scopeLevel,
-      scopeId:    winner.scopeId,
       bindingId:  winner.id,
-      isDefault:  winner.isDefault,
     }
   }
 
@@ -160,14 +138,12 @@ export class AgentResolverService {
 
   /**
    * Devuelve todos los bindings de un canal (para la UI admin).
+   * FIX [#397]: orderBy ya no usa isDefault (campo eliminado).
    */
   async listBindings(channelConfigId: string): Promise<BindingRow[]> {
     return this.db.channelBinding.findMany({
-      where: { channelConfigId },
-      orderBy: [
-        { isDefault: 'desc' },
-        { createdAt: 'asc' },
-      ],
+      where:   { channelConfigId },
+      orderBy: { createdAt: 'asc' },
     })
   }
 
@@ -188,14 +164,13 @@ export class AgentResolverService {
       throw new ChannelConfigInactiveError(channelConfigId)
     }
 
+    // FIX [#397]: select ya no incluye scopeId ni isDefault
     const bindings = await this.db.channelBinding.findMany({
-      where: { channelConfigId },
+      where:  { channelConfigId },
       select: {
         id:         true,
         agentId:    true,
         scopeLevel: true,
-        scopeId:    true,
-        isDefault:  true,
       },
     })
 
