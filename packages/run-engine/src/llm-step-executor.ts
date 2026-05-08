@@ -123,7 +123,7 @@ export class BudgetExceededError extends Error {
 // ─── LlmStepExecutor ──────────────────────────────────────────────────────────
 
 export class LlmStepExecutor extends StepExecutor {
-  private readonly db: PrismaClient;
+  private readonly _db: PrismaClient;
   private readonly maxToolRoundsOverride: number;
   private readonly gateway?: GatewayRpcClient;
   private readonly policyResolver: PolicyResolver;
@@ -131,11 +131,11 @@ export class LlmStepExecutor extends StepExecutor {
 
   constructor(options: LlmStepExecutorOptions) {
     super();
-    this.db                    = options.db;
+    this._db                   = options.db;
     this.maxToolRoundsOverride = options.maxToolRounds ?? 10;
     this.gateway               = options.gateway;
-    this.policyResolver        = new PolicyResolver(this.db);
-    this.skillInvoker          = new SkillInvoker(this.db);
+    this.policyResolver        = new PolicyResolver(this._db);
+    this.skillInvoker          = new SkillInvoker(this._db);
   }
 
   // ─── Agent node execution ─────────────────────────────────────────────────
@@ -150,7 +150,7 @@ export class LlmStepExecutor extends StepExecutor {
       return { status: 'failed', error: 'agent node missing agentId in config' };
     }
 
-    const agent = await this.db.agent.findUnique({
+    const agent = await this._db.agent.findUnique({
       where: { id: agentId },
       include: {
         workspace:  { include: { department: { include: { agency: true } } } },
@@ -169,10 +169,10 @@ export class LlmStepExecutor extends StepExecutor {
       'direct';
 
     if (executionMode === 'orchestrated') {
-      return this.executeOrchestrated(node, step, run, agent);
+      return this.executeOrchestrated(node, step, run, agent as AgentWithRelations);
     }
 
-    return this.executeDirect(node, step, run, agent);
+    return this.executeDirect(node, step, run, agent as AgentWithRelations);
   }
 
   // ─── Orchestrated path ────────────────────────────────────────────────────
@@ -259,7 +259,7 @@ export class LlmStepExecutor extends StepExecutor {
               ?? 'Complete the assigned task.';
 
     const orchestrator = new HierarchyOrchestrator(
-      hierarchy, executorFn, this.db, supervisorFn,
+      hierarchy, executorFn, this._db, supervisorFn,
       { parallel: true, maxRetries: 2 },
     );
 
@@ -293,7 +293,7 @@ export class LlmStepExecutor extends StepExecutor {
     const agentId = (node.config?.agentId as string) ?? step.agentId ?? '';
     let agent = agentOrNull;
     if (!agent) {
-      const loaded = await this.db.agent.findUnique({
+      const loaded = await this._db.agent.findUnique({
         where: { id: agentId },
         include: {
           workspace:  { include: { department: { include: { agency: true } } } },
@@ -302,15 +302,20 @@ export class LlmStepExecutor extends StepExecutor {
         },
       });
       if (!loaded) return { status: 'failed', error: `Agent '${agentId}' not found` };
-      agent = loaded;
+      agent = loaded as AgentWithRelations;
+    }
+
+    // ── Null guard (TS18047) ───────────────────────────────────────────────
+    if (!agent) {
+      return { status: 'failed', error: `Agent '${agentId}' not found` };
     }
 
     // ── Policy resolution ──────────────────────────────────────────────────
     const policyCtx: PolicyResolverContext = {
       agentId:      agent.id,
       workspaceId:  agent.workspaceId,
-      departmentId: agent.workspace.departmentId,
-      agencyId:     agent.workspace.department.agencyId,
+      departmentId: agent.workspace.departmentId ?? undefined,
+      agencyId:     agent.workspace.department?.agencyId,
     };
 
     const effectivePolicy = await this.policyResolver.resolve(policyCtx);
@@ -319,10 +324,11 @@ export class LlmStepExecutor extends StepExecutor {
 
     // ── Budget guard ───────────────────────────────────────────────────────
     if (budgetPolicy) {
+      const periodDays = budgetPolicy.periodDays ?? 30;
       const windowStart = new Date(
-        Date.now() - budgetPolicy.periodDays * 24 * 60 * 60 * 1000,
+        Date.now() - periodDays * 24 * 60 * 60 * 1000,
       );
-      const { _sum } = await this.db.runStep.aggregate({
+      const { _sum } = await this._db.runStep.aggregate({
         where: {
           run: {
             flow: { workspaceId: agent.workspaceId },
@@ -332,7 +338,13 @@ export class LlmStepExecutor extends StepExecutor {
         },
         _sum: { costUsd: true },
       });
-      const spent = _sum.costUsd ?? 0;
+      // Prisma returns Decimal for costUsd — convert to number for comparison
+      const rawSpent = _sum.costUsd;
+      const spent = rawSpent == null
+        ? 0
+        : typeof rawSpent === 'object' && 'toNumber' in rawSpent
+          ? (rawSpent as { toNumber(): number }).toNumber()
+          : Number(rawSpent);
       if (spent >= budgetPolicy.limitUsd) {
         throw new BudgetExceededError(
           budgetPolicy.limitUsd,
@@ -358,7 +370,7 @@ export class LlmStepExecutor extends StepExecutor {
             resolveForAgent(id: string): Promise<{ systemPrompt: string }>;
           };
         };
-        const propagator = new ProfilePropagatorService(this.db);
+        const propagator = new ProfilePropagatorService(this._db);
         const resolved   = await propagator.resolveForAgent(agent.id);
         systemPrompt      = resolved.systemPrompt;
       } catch {
@@ -368,7 +380,9 @@ export class LlmStepExecutor extends StepExecutor {
 
     // ── Tools from skill links (F1b-03: buildToolDefinitions) ──────────────
     const skillLinks = agent.skillLinks ?? [];
-    const tools      = buildToolDefinitions(skillLinks.map(({ skill }) => skill));
+    const tools      = buildToolDefinitions(
+      skillLinks.map(({ skill }) => skill as SkillRow),
+    );
 
     const userContent = (node.config?.prompt as string)
                      ?? JSON.stringify(run.trigger.payload ?? {})
@@ -429,25 +443,6 @@ export class LlmStepExecutor extends StepExecutor {
   /**
    * Runs the agentic tool-call loop until the LLM stops calling tools
    * or maxRounds is reached.
-   *
-   * Design decisions:
-   *  - tool_calls within a single round are dispatched in parallel
-   *    (Promise.all) because the LLM decided them simultaneously.
-   *  - Tool results are truncated to MAX_TOOL_RESULT_CHARS before being
-   *    pushed into the context window to prevent context overflow.
-   *  - hitMaxRounds is set when the loop exits because of the round
-   *    limit, NOT because the LLM finished naturally.
-   *  - A tool call that fails (ok=false) is still pushed back to the LLM
-   *    as a tool message containing the error — letting the model decide
-   *    whether to retry or give up.
-   *
-   * @param initialMessages  Messages to start the loop with [system, user, ...]
-   * @param tools            ToolDefinitions visible to the LLM
-   * @param modelId          Primary model identifier (provider/model)
-   * @param fallbackChain    Alternative models if the primary throws
-   * @param temperature      Sampling temperature
-   * @param maxTokens        Max completion tokens per LLM call
-   * @param maxRounds        Hard cap on tool-calling rounds
    */
   private async executeToolCalls(
     initialMessages: ChatMessage[],
@@ -469,10 +464,8 @@ export class LlmStepExecutor extends StepExecutor {
     const toolCallResults: ToolCallResult[] = [];
 
     for (let round = 0; round < maxRounds; round++) {
-      // ── LLM call with fallback chain ──────────────────────────────────
       let llmResp: LlmResponse;
       try {
-        // Wrap adapter result into LlmResponse (normalises tool_calls + usage field names)
         llmResp = toLlmResponse(
           await adapter.chat(messages, tools, { model: activeModel, temperature, maxTokens }),
         );
@@ -499,20 +492,16 @@ export class LlmStepExecutor extends StepExecutor {
       totalOutput += llmResp!.usage.output;
       lastContent  = llmResp!.content;
 
-      // ── No tool calls → LLM is done, exit loop ────────────────────────
       if (!llmResp!.tool_calls.length) break;
 
-      // ── Count this round ──────────────────────────────────────────────
       toolRoundsUsed++;
 
-      // Push assistant message with tool_calls back into context
       messages.push({
         role:       'assistant',
         content:    llmResp!.content,
         tool_calls: llmResp!.tool_calls,
       });
 
-      // ── Dispatch tool calls in parallel (independent within one round) ─
       const roundResults = await Promise.all(
         llmResp!.tool_calls.map(async (tc: ToolCallRequest): Promise<ToolCallResult> => {
           const t0   = Date.now();
@@ -531,7 +520,6 @@ export class LlmStepExecutor extends StepExecutor {
 
       toolCallResults.push(...roundResults);
 
-      // ── Push tool results back (with truncation guard) ─────────────────
       for (const tr of roundResults) {
         const rawContent = JSON.stringify(
           tr.ok ? tr.result : { error: tr.error },
@@ -548,7 +536,6 @@ export class LlmStepExecutor extends StepExecutor {
         });
       }
 
-      // ── Detect hard cutoff ────────────────────────────────────────────
       if (round === maxRounds - 1 && llmResp!.tool_calls.length > 0) {
         hitMaxRounds = true;
       }
@@ -575,13 +562,11 @@ export class LlmStepExecutor extends StepExecutor {
   ): Promise<StepExecutionResult> {
     const t0 = Date.now();
 
-    // Path 1: inline webhookUrl in node.config (no DB required)
     const inlineUrl = node.config?.webhookUrl as string | undefined;
     if (inlineUrl) {
       return this.executeInlineWebhook(node, t0);
     }
 
-    // Path 2: registered skill in DB
     const skillName = (node.config?.skillName as string)
                    ?? (node.config?.skillId   as string)
                    ?? 'unknown';
@@ -602,10 +587,6 @@ export class LlmStepExecutor extends StepExecutor {
     };
   }
 
-  /**
-   * Executes an n8n webhook configured directly in node.config.
-   * Does NOT require a Skill row in the database.
-   */
   private async executeInlineWebhook(
     node: FlowNode,
     t0:   number,
@@ -650,6 +631,13 @@ function parseToolArgs(argsJson: string): Record<string, unknown> {
   }
 }
 
+/** Minimal shape of a Skill row returned by Prisma include */
+interface SkillRow {
+  name:        string;
+  description: string | null;
+  functions:   unknown;
+}
+
 type AgentWithRelations = {
   id: string;
   workspaceId: string;
@@ -657,10 +645,11 @@ type AgentWithRelations = {
   instructions: unknown;
   executionMode: unknown;
   workspace: {
-    departmentId: string;
+    /** Prisma schema: departmentId String? — nullable */
+    departmentId: string | null;
     department: { agencyId: string };
   };
-  skillLinks: Array<{ skill: { name: unknown; description: unknown; functions: unknown } }>;
+  skillLinks: Array<{ skill: SkillRow }>;
   subagents: Array<{
     id: string;
     name: string;
@@ -694,11 +683,6 @@ function buildHierarchyNode(agent: AgentWithRelations): import('../../hierarchy/
   };
 }
 
-// Suppress potential --noUnusedLocals warning for ToolDefinition
-// (imported for type-checking the tools parameter in executeToolCalls)
 void (undefined as unknown as ToolDefinition);
 
-// ── Backward-compatible alias ─────────────────────────────────────────────────
-// agent-executor.service.ts and index.ts reference `LLMStepExecutor` (all-caps).
-// Keep both names pointing to the same class to avoid breaking existing consumers.
 export { LlmStepExecutor as LLMStepExecutor };
