@@ -11,10 +11,12 @@
  *
  * AUDIT-21: mensajes sin chat.id son descartados con logger.warn + return.
  *   Nunca se construye un IncomingMessage con externalId falsy/undefined.
+ *
+ * fix(TS6059): import de getPrisma movido a src/lib/prisma (dentro de rootDir).
  */
 
 import { Router, type Request, type Response } from 'express';
-import { getPrisma } from '../../lib/prisma';
+import { getPrisma } from '../lib/prisma';
 import {
   BaseChannelAdapter,
   type ChannelType,
