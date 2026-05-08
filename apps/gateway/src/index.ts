@@ -1,11 +1,6 @@
 /**
  * apps/gateway/src/index.ts
- *
- * Re-exporta los símbolos que gateway.service.ts importa
- * desde '@agent-vs/gateway-sdk'.
- *
- * El alias @agent-vs/gateway-sdk está mapeado a este archivo
- * en apps/gateway/tsconfig.json.
+ * SDK interno del Gateway. El alias @agent-vs/gateway-sdk mapea aqui.
  */
 
 export { SessionManager } from './session/index'
@@ -15,3 +10,8 @@ export type {
   IncomingMessage,
   OutboundMessage,
 } from './session/index'
+
+export { TelegramAdapter }          from './channels/telegram.adapter'
+export { WebChatAdapter }           from './channels/webchat.adapter'
+export type { IChannelAdapter }     from './channels/channel-adapter.interface'
+export { registry }                 from './channels/registry'

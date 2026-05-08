@@ -1,6 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "composite":               true,
     "ignoreDeprecations":      "5.0",
     "experimentalDecorators":  true,
     "emitDecoratorMetadata":   true,
@@ -9,9 +10,11 @@
     "baseUrl":                 ".",
     "paths": {
       "@gateway/*":             ["src/*"],
-      "@agent-vs/gateway-sdk":  ["src/index.ts"]
+      "@agent-vs/gateway-sdk":  ["src/index.ts"],
+      "@agent-vs/flow-engine":  ["src/stubs/flow-engine.stub.ts"],
+      "@lss/crypto":            ["src/stubs/crypto.stub.ts"]
     }
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "**/*.spec.ts", "**/*.test.ts", "**/__tests__/**"]
+  "exclude": ["node_modules", "dist", "**/*.spec.ts", "**/*.test.ts", "**/__tests__/**", "src/tests/**"]
 }
