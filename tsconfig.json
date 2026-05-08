@@ -74,6 +74,7 @@
     "apps/web",
     "apps/gateway",
     "**/__tests__/**",
-    "**/*.test.ts"
+    "**/*.test.ts",
+    "**/*.spec.ts"
   ]
 }

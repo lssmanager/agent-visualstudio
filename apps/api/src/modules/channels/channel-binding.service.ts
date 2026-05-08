@@ -1,10 +1,15 @@
 /**
  * channel-binding.service.ts — F3a-32
  *
- * Fix tsc: reemplaza import NestJS de getPrisma con la versión Express
- * (apps/api/src/lib/prisma.ts) que ya existe como singleton.
- * Se elimina @Injectable() — este servicio se instancia manualmente
- * en los controllers Express (patrón del repo).
+ * fix(tsc): eliminar scopeId del DTO público.
+ * scopeId era un campo eliminado del schema Prisma en v12+.
+ * La lógica interna ya resolvía el scope desde externalChannelId/externalGuildId;
+ * lo único que faltaba era limpiar la interfaz ResolvedBinding y el _toResolved.
+ *
+ * Cambios:
+ *   - ResolvedBinding ya no expone `scopeId` (campo fantasma)
+ *   - _toResolved no construye ni retorna scopeId
+ *   - createBinding ya no pasa scopeId a Prisma (ese campo no existe en el schema)
  */
 
 import { getPrisma } from '../../lib/prisma'
@@ -29,14 +34,19 @@ export interface ResolveBindingQuery {
   guildId?:   string | null
 }
 
+/**
+ * fix(tsc): ResolvedBinding ya no incluye scopeId.
+ * El campo fue eliminado del schema en v12. El scope se deriva
+ * en runtime desde externalChannelId y externalGuildId.
+ * scopeLevel se conserva como metadata útil para el caller.
+ */
 export interface ResolvedBinding {
   id:                string
   channelConfigId:   string
   agentId:           string
   externalChannelId: string | null
   externalGuildId:   string | null
-  scopeLevel:        'channel' | 'guild'
-  scopeId:           string
+  scopeLevel:        'channel' | 'guild' | 'agent'
 }
 
 export class ChannelBindingService {
@@ -65,6 +75,8 @@ export class ChannelBindingService {
       }
     }
 
+    // fix: no se pasa scopeId — ese campo fue eliminado del schema Prisma v12.
+    // scopeLevel se inicializa como 'agent' (valor por defecto del campo en el schema).
     const binding = await this.db.channelBinding.create({
       data: {
         channelConfigId:   dto.channelConfigId,
@@ -72,7 +84,6 @@ export class ChannelBindingService {
         externalChannelId: dto.externalChannelId ?? null,
         externalGuildId:   dto.externalGuildId   ?? null,
         scopeLevel:        'agent',
-        scopeId:           dto.agentId,
       },
     })
 
@@ -153,6 +164,10 @@ export class ChannelBindingService {
     await this.db.channelBinding.delete({ where: { id } })
   }
 
+  /**
+   * fix(tsc): _toResolved ya no genera scopeId.
+   * scopeLevel se deriva desde los campos de externalChannelId/externalGuildId.
+   */
   private _toResolved(binding: {
     id:                string
     channelConfigId:   string
@@ -161,9 +176,11 @@ export class ChannelBindingService {
     externalGuildId:   string | null
     [key: string]: unknown
   }): ResolvedBinding {
-    const scopeLevel: 'channel' | 'guild' =
-      binding.externalChannelId ? 'channel' : 'guild'
-    const scopeId = binding.externalChannelId ?? binding.externalGuildId ?? ''
+    const scopeLevel: 'channel' | 'guild' | 'agent' =
+      binding.externalChannelId ? 'channel'
+      : binding.externalGuildId ? 'guild'
+      : 'agent'
+
     return {
       id:                binding.id,
       channelConfigId:   binding.channelConfigId,
@@ -171,7 +188,6 @@ export class ChannelBindingService {
       externalChannelId: binding.externalChannelId,
       externalGuildId:   binding.externalGuildId,
       scopeLevel,
-      scopeId,
     }
   }
 }

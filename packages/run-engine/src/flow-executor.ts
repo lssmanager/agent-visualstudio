@@ -6,12 +6,25 @@
  */
 import type { PrismaClient } from '@prisma/client';
 import type { AgentExecutorFn } from './agent-executor.service';
-import type { RunSpec, FlowEdge, FlowNode, FlowSpec } from '../../core-types/src';
+import type { RunSpec, FlowEdge, FlowSpec } from '../../core-types/src';
+// fix(tsc): importar FlowNode explícitamente — antes era importado pero no re-exportado,
+// lo que causaba 3 errores en cascada en consumers que hacen:
+//   import type { FlowNode } from '@lss/run-engine'
+import type { FlowNode } from '../../core-types/src';
 import { ApprovalQueue } from './approval-queue';
 import { RunRepository } from './run-repository';
 
 /** Re-export FlowSpec from core-types so callers get the canonical type */
 export type { FlowSpec };
+
+/**
+ * fix(tsc): re-exportar FlowNode desde core-types.
+ * Antes este archivo importaba FlowNode pero no lo exponía en el barrel,
+ * por lo que cualquier consumer de @lss/run-engine que necesitara el tipo
+ * recibía: 'Module has no exported member FlowNode'.
+ * La exportación en index.ts ya existe; esta re-exportación cierra el círculo.
+ */
+export type { FlowNode };
 
 export interface IRunRepository {
   save(run: RunSpec): void;
