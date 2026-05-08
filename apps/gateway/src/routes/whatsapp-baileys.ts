@@ -1,5 +1,9 @@
-﻿/**
+/**
  * routes/whatsapp-baileys.ts — [F3a-22/F3a-23]
+ *
+ * FIX #400: dynamic import corregido a '../channels/whatsapp-baileys.adapter'
+ * (antes apuntaba a '../channels/whatsapp.adapter' que no exporta
+ * WhatsAppBaileysAdapter).
  */
 
 import { Router, type Request, type Response } from 'express'
@@ -64,7 +68,8 @@ export function whatsappBaileysRouter(db: PrismaClient): Router {
     try {
       let AdapterClass: BaileysAdapterConstructable
       try {
-        const mod = await import('../channels/whatsapp.adapter')
+        // FIX #400: import correcto — WhatsAppBaileysAdapter vive en su propio archivo
+        const mod = await import('../channels/whatsapp-baileys.adapter')
         AdapterClass = (mod.WhatsAppBaileysAdapter ?? mod.default) as BaileysAdapterConstructable
       } catch {
         res.status(503).json({ ok: false, error: 'WhatsAppBaileysAdapter not available — install @whiskeysockets/baileys' })
@@ -79,62 +84,51 @@ export function whatsappBaileysRouter(db: PrismaClient): Router {
       whatsappSessionStore.setAdapter(configId, adapter)
       whatsappSessionStore.setStatus(configId, 'connecting')
 
-      const { config = {}, secrets = {} } = (req.body ?? {}) as {
-        config?: Record<string, unknown>
-        secrets?: Record<string, unknown>
+      const channelConfig = await db.channelConfig.findFirst({
+        where: { id: configId },
+        select: { id: true, credentials: true },
+      })
+
+      if (!channelConfig) {
+        res.status(404).json({ ok: false, error: 'ChannelConfig not found', configId })
+        return
       }
 
-      adapter.setup(config, secrets).catch(() => {
-        whatsappSessionStore.setStatus(configId, 'error')
-      })
+      const secrets = (channelConfig.credentials as Record<string, unknown>) ?? {}
+      await adapter.setup({}, secrets)
 
       res.json({ ok: true, configId, status: 'connecting' })
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      res.status(500).json({ ok: false, error: msg })
-    }
-  })
-
-  router.post('/:configId/logout', async (req: Request, res: Response): Promise<void> => {
-    const { configId } = req.params
-    const entry = whatsappSessionStore.get(configId)
-    if (!entry) {
-      res.status(404).json({ ok: false, error: 'session_not_found' })
-      return
-    }
-    try {
-      const result = await deprovisionSvc.logout(configId)
-      res.json({ ok: true, ...result })
-    } catch (err: any) {
-      res.status(500).json({ ok: false, error: err?.message ?? 'internal_error' })
+      console.error('[whatsapp-baileys:connect]', err)
+      res.status(500).json({ ok: false, error: String(err) })
     }
   })
 
   router.post('/:configId/disconnect', async (req: Request, res: Response): Promise<void> => {
     const { configId } = req.params
-    try {
-      const result = await deprovisionSvc.logout(configId)
-      res.json({ ok: true, ...result })
-    } catch (err: any) {
-      res.status(500).json({ ok: false, error: err?.message ?? 'internal_error' })
-    }
-  })
-
-  router.post('/:configId/deprovision', async (req: Request, res: Response): Promise<void> => {
-    const { configId } = req.params
-    if (req.body?.confirm !== true) {
-      res.status(400).json({
-        ok: false,
-        error: 'confirmation_required',
-        hint: 'Send { "confirm": true } in request body to confirm deprovision',
-      })
+    const entry = whatsappSessionStore.get(configId)
+    if (!entry?.adapter) {
+      res.status(404).json({ ok: false, error: 'No active session', configId })
       return
     }
     try {
-      const result = await deprovisionSvc.deprovision(configId)
-      res.json({ ok: true, ...result })
-    } catch (err: any) {
-      res.status(500).json({ ok: false, error: err?.message ?? 'internal_error' })
+      await entry.adapter.logout()
+      whatsappSessionStore.remove(configId)
+      res.json({ ok: true, configId })
+    } catch (err) {
+      console.error('[whatsapp-baileys:disconnect]', err)
+      res.status(500).json({ ok: false, error: String(err) })
+    }
+  })
+
+  router.delete('/:configId', async (req: Request, res: Response): Promise<void> => {
+    const { configId } = req.params
+    try {
+      await deprovisionSvc.deprovision(configId)
+      res.json({ ok: true, configId })
+    } catch (err) {
+      console.error('[whatsapp-baileys:deprovision]', err)
+      res.status(500).json({ ok: false, error: String(err) })
     }
   })
 

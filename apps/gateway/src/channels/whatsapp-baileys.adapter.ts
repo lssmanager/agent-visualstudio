@@ -20,6 +20,11 @@
  *   - Eliminados imports node:path y node:fs
  *   - setup() ya no llama fs.mkdirSync()
  *   - PrismaClient inyectado via constructor
+ *
+ * FIX #400:
+ *   - channel = 'whatsapp' (era 'whatsapp-baileys', valor inválido en ChannelType)
+ *   - baileysToIncoming() ahora recibe channelConfigId como 2do argumento
+ *   - receive() idem
  */
 
 import EventEmitter from 'node:events'
@@ -82,7 +87,9 @@ interface WhatsAppBaileysConfig {
 // ── WhatsAppBaileysAdapter ───────────────────────────────────────────────
 
 export class WhatsAppBaileysAdapter extends BaseChannelAdapter {
-  readonly channel = 'whatsapp-baileys'
+  // FIX #400: 'whatsapp-baileys' no es un valor de ChannelType.
+  // Usamos 'whatsapp' que es el valor canónico del enum para este canal.
+  readonly channel = 'whatsapp' as const
 
   // Prisma (F5-02): inyectado en el constructor para persistir credenciales
   private readonly prisma: PrismaClient
@@ -274,7 +281,8 @@ export class WhatsAppBaileysAdapter extends BaseChannelAdapter {
       for (const rawMsg of event.messages) {
         // Castear a proto.IWebMessageInfo (estructura compatible)
         const waMsg = rawMsg as Parameters<typeof baileysToIncoming>[0]
-        const normalized = baileysToIncoming(waMsg)
+        // FIX #400: pasar channelConfigId como 2do argumento requerido
+        const normalized = baileysToIncoming(waMsg, this.channelConfigId)
         if (!normalized) continue   // null = mensaje propio / sistema / no soportado
 
         this.emit(normalized).catch((err: unknown) =>
@@ -365,7 +373,11 @@ export class WhatsAppBaileysAdapter extends BaseChannelAdapter {
     rawPayload: Record<string, unknown>,
     _secrets:   Record<string, unknown>,
   ): Promise<ReturnType<typeof baileysToIncoming>> {
-    return baileysToIncoming(rawPayload as Parameters<typeof baileysToIncoming>[0])
+    // FIX #400: pasar channelConfigId como 2do argumento requerido
+    return baileysToIncoming(
+      rawPayload as Parameters<typeof baileysToIncoming>[0],
+      this.channelConfigId,
+    )
   }
 
   // ── Callbacks públicos ──────────────────────────────────────────────────────
