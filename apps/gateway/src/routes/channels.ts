@@ -7,17 +7,16 @@
  *
  *   POST   /api/channels
  *     Crea un ChannelConfig y su ChannelBinding inicial.
- *     Encripta secrets con AES-256-GCM antes de persistir.
- *     Body: { type, name, agentId, config?, secrets?, scopeLevel?, scopeId? }
+ *     Body: { channel, name, agentId, config?, credentials?, scopeLevel? }
  *
  *   GET    /api/channels
- *     Lista ChannelConfigs. Query: ?agentId=&type=&isActive=true|false
+ *     Lista ChannelConfigs. Query: ?agentId=&channel=&isActive=true|false
  *
  *   GET    /api/channels/:id
- *     Detalle de un ChannelConfig. Secrets siempre redactados.
+ *     Detalle de un ChannelConfig. Credentials siempre redactadas.
  *
  *   PATCH  /api/channels/:id
- *     Actualiza name, config, secrets (re-encripta si cambia) o isActive.
+ *     Actualiza name, config, credentials o isActive.
  *
  *   DELETE /api/channels/:id
  *     Borra ChannelConfig. Cascada elimina bindings + sessions.
@@ -30,48 +29,18 @@
  *
  *   POST   /api/channels/:channelId/bindings
  *     Crea un ChannelBinding adicional (canal → agente adicional).
- *     Body: { agentId, scopeLevel?, scopeId?, isDefault? }
+ *     Body: { agentId, scopeLevel? }
  *
  *   DELETE /api/channels/:channelId/bindings/:bindingId
  *     Elimina un binding específico.
  *
- * Encriptación de secrets:
- *   AES-256-GCM, llave: GATEWAY_ENCRYPTION_KEY (hex 64 chars = 32 bytes)
- *   Formato: [12 bytes IV][16 bytes authTag][N bytes ciphertext], hex-encoded.
- *   La misma rutina que usa GatewayService.decrypt().
+ * FIX [#396]: secretsEncrypted → credentials (JsonValue)
+ * FIX [#397]: scopeId e isDefault eliminados de ChannelBinding
  */
 
-import { randomBytes, createCipheriv } from 'crypto';
 import { Router, type Request, type Response } from 'express';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient, Prisma } from '@prisma/client';
 import type { GatewayService } from '../gateway.service';
-
-// ---------------------------------------------------------------------------
-// Encrypt helper (mirrors GatewayService.decrypt)
-// ---------------------------------------------------------------------------
-
-function encryptSecrets(
-  secrets: Record<string, unknown>,
-  keyHex: string,
-): string {
-  const key  = Buffer.from(keyHex || '0'.repeat(64), 'hex');
-  const iv   = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const encrypted = Buffer.concat([
-    cipher.update(JSON.stringify(secrets), 'utf8'),
-    cipher.final(),
-  ]);
-  const authTag = cipher.getAuthTag();
-  return Buffer.concat([iv, authTag, encrypted]).toString('hex');
-}
-
-function redactSecrets<T extends Record<string, unknown>>(
-  obj: T,
-): Record<string, string> {
-  return Object.fromEntries(
-    Object.keys(obj).map((k) => [k, '***']),
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Router factory
@@ -82,76 +51,62 @@ export function channelsApiRouter(
   gatewayService: GatewayService,
 ): Router {
   const router = Router();
-  const keyHex = process.env.GATEWAY_ENCRYPTION_KEY ?? '';
 
-  if (!keyHex) {
-    console.warn(
-      '[channels] GATEWAY_ENCRYPTION_KEY not set — secrets will be stored as empty object',
-    );
-  }
-
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   // POST /api/channels — crear ChannelConfig + ChannelBinding inicial
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   router.post('/', async (req: Request, res: Response): Promise<void> => {
     const body = req.body as {
-      type:        string;
+      channel:     string;
       name:        string;
       agentId:     string;
       config?:     Record<string, unknown>;
-      secrets?:    Record<string, unknown>;
+      credentials?: Record<string, unknown>;
       scopeLevel?: string;
-      scopeId?:    string;
-      isDefault?:  boolean;
     };
 
-    if (!body.type || !body.name || !body.agentId) {
-      res.status(400).json({ ok: false, error: 'type, name and agentId are required' });
+    // Aceptar tanto 'channel' (nombre actual del schema) como 'type' (legacy)
+    const channelType = body.channel ?? (req.body as Record<string, unknown>).type as string | undefined;
+
+    if (!channelType || !body.name || !body.agentId) {
+      res.status(400).json({ ok: false, error: 'channel, name and agentId are required' });
       return;
     }
 
-    // teams agregado como tipo permitido (F3a-27)
     const allowedTypes = ['webchat', 'telegram', 'whatsapp', 'slack', 'discord', 'webhook', 'teams'];
-    if (!allowedTypes.includes(body.type)) {
+    if (!allowedTypes.includes(channelType)) {
       res.status(400).json({
         ok:    false,
-        error: `type must be one of: ${allowedTypes.join(', ')}`,
+        error: `channel must be one of: ${allowedTypes.join(', ')}`,
       });
       return;
     }
 
     try {
-      // Verify agent exists
       const agent = await db.agent.findUnique({ where: { id: body.agentId } });
       if (!agent) {
         res.status(404).json({ ok: false, error: 'Agent not found' });
         return;
       }
 
-      const secretsEncrypted = encryptSecrets(
-        body.secrets ?? {},
-        keyHex,
-      );
-
-      // Create ChannelConfig + ChannelBinding in a transaction
+      // FIX [#396]: guardar en credentials (JsonValue), no en secretsEncrypted
       const result = await db.$transaction(async (tx) => {
         const channel = await tx.channelConfig.create({
           data: {
-            type:             body.type,
-            name:             body.name,
-            config:           body.config   ?? {},
-            secretsEncrypted,
-            isActive:         false,
+            channel:     channelType,
+            name:        body.name,
+            config:      (body.config ?? {}) as Prisma.InputJsonValue,
+            credentials: (body.credentials ?? {}) as Prisma.InputJsonValue,
+            isActive:    false,
           },
         });
 
+        // FIX [#397]: crear binding SIN scopeId ni isDefault
         const binding = await tx.channelBinding.create({
           data: {
             channelConfigId: channel.id,
             agentId:         body.agentId,
             scopeLevel:      body.scopeLevel ?? 'agent',
-            scopeId:         body.scopeId   ?? body.agentId,
-            isDefault:       body.isDefault ?? true,
           },
         });
 
@@ -160,7 +115,7 @@ export function channelsApiRouter(
 
       res.status(201).json({
         ok:      true,
-        channel: sanitizeChannel(result.channel),
+        channel: sanitizeChannel(result.channel as Record<string, unknown>),
         binding: result.binding,
       });
     } catch (err) {
@@ -169,14 +124,15 @@ export function channelsApiRouter(
     }
   });
 
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   // GET /api/channels — listar
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   router.get('/', async (req: Request, res: Response): Promise<void> => {
     try {
-      const { agentId, type, isActive } = req.query as Record<string, string>;
+      const { agentId, channel, type, isActive } = req.query as Record<string, string>;
+      // Acepta tanto ?channel= como ?type= (legacy)
+      const channelFilter = channel ?? type;
 
-      // Filter by agentId via bindings
       const agentFilter = agentId
         ? { bindings: { some: { agentId } } }
         : {};
@@ -184,10 +140,8 @@ export function channelsApiRouter(
       const channels = await db.channelConfig.findMany({
         where: {
           ...agentFilter,
-          ...(type     ? { type }                    : {}),
-          ...(isActive !== undefined
-            ? { isActive: isActive === 'true' }
-            : {}),
+          ...(channelFilter ? { channel: channelFilter }           : {}),
+          ...(isActive !== undefined ? { isActive: isActive === 'true' } : {}),
         },
         include: { bindings: { include: { agent: { select: { id: true, name: true, slug: true } } } } },
         orderBy: { createdAt: 'desc' },
@@ -195,7 +149,7 @@ export function channelsApiRouter(
 
       res.json({
         ok:   true,
-        data: channels.map(sanitizeChannel),
+        data: channels.map((c) => sanitizeChannel(c as Record<string, unknown>)),
       });
     } catch (err) {
       console.error('[channels] list error:', err);
@@ -203,9 +157,9 @@ export function channelsApiRouter(
     }
   });
 
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   // GET /api/channels/:id — detalle
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   router.get('/:id', async (req: Request, res: Response): Promise<void> => {
     try {
       const channel = await db.channelConfig.findUnique({
@@ -218,21 +172,22 @@ export function channelsApiRouter(
         return;
       }
 
-      res.json({ ok: true, data: sanitizeChannel(channel) });
+      res.json({ ok: true, data: sanitizeChannel(channel as Record<string, unknown>) });
     } catch (err) {
       console.error('[channels] get error:', err);
       res.status(500).json({ ok: false, error: 'Internal error' });
     }
   });
 
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   // PATCH /api/channels/:id — actualizar
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   router.patch('/:id', async (req: Request, res: Response): Promise<void> => {
     const body = req.body as {
-      name?:    string;
-      config?:  Record<string, unknown>;
-      secrets?: Record<string, unknown>;
+      name?:        string;
+      config?:      Record<string, unknown>;
+      credentials?: Record<string, unknown>;
+      isActive?:    boolean;
     };
 
     try {
@@ -244,28 +199,27 @@ export function channelsApiRouter(
         return;
       }
 
-      const updateData: Record<string, unknown> = {};
-      if (body.name)    updateData.name   = body.name;
-      if (body.config)  updateData.config = body.config;
-      if (body.secrets) {
-        updateData.secretsEncrypted = encryptSecrets(body.secrets, keyHex);
-      }
+      const updateData: Prisma.ChannelConfigUpdateInput = {};
+      if (body.name    !== undefined) updateData.name        = body.name;
+      if (body.config  !== undefined) updateData.config      = body.config  as Prisma.InputJsonValue;
+      if (body.credentials !== undefined) updateData.credentials = body.credentials as Prisma.InputJsonValue;
+      if (body.isActive !== undefined) updateData.isActive   = body.isActive;
 
       const updated = await db.channelConfig.update({
         where: { id: req.params.id },
         data:  updateData,
       });
 
-      res.json({ ok: true, data: sanitizeChannel(updated) });
+      res.json({ ok: true, data: sanitizeChannel(updated as Record<string, unknown>) });
     } catch (err) {
       console.error('[channels] update error:', err);
       res.status(500).json({ ok: false, error: 'Internal error' });
     }
   });
 
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   // DELETE /api/channels/:id — eliminar
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
     try {
       const existing = await db.channelConfig.findUnique({
@@ -276,7 +230,6 @@ export function channelsApiRouter(
         return;
       }
 
-      // Deactivate first (graceful shutdown for adapters like Telegram)
       if (existing.isActive) {
         await gatewayService.deactivateChannel(req.params.id).catch(() => {});
       }
@@ -289,9 +242,9 @@ export function channelsApiRouter(
     }
   });
 
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   // POST /api/channels/:id/activate
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   router.post('/:id/activate', async (req: Request, res: Response): Promise<void> => {
     try {
       const existing = await db.channelConfig.findUnique({
@@ -307,10 +260,8 @@ export function channelsApiRouter(
         return;
       }
 
-      // Call adapter setup (e.g., registers Telegram webhook)
       await gatewayService.activateChannel(req.params.id);
 
-      // Mark as active in DB
       await db.channelConfig.update({
         where: { id: req.params.id },
         data:  { isActive: true },
@@ -326,9 +277,9 @@ export function channelsApiRouter(
     }
   });
 
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   // POST /api/channels/:id/deactivate
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   router.post('/:id/deactivate', async (req: Request, res: Response): Promise<void> => {
     try {
       const existing = await db.channelConfig.findUnique({
@@ -358,15 +309,13 @@ export function channelsApiRouter(
     }
   });
 
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   // POST /api/channels/:channelId/bindings — agregar binding adicional
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   router.post('/:channelId/bindings', async (req: Request, res: Response): Promise<void> => {
     const body = req.body as {
       agentId:     string;
       scopeLevel?: string;
-      scopeId?:    string;
-      isDefault?:  boolean;
     };
 
     if (!body.agentId) {
@@ -375,7 +324,6 @@ export function channelsApiRouter(
     }
 
     try {
-      // Verify channel + agent exist
       const [channel, agent] = await Promise.all([
         db.channelConfig.findUnique({ where: { id: req.params.channelId } }),
         db.agent.findUnique(        { where: { id: body.agentId } }),
@@ -384,27 +332,17 @@ export function channelsApiRouter(
       if (!channel) { res.status(404).json({ ok: false, error: 'ChannelConfig not found' }); return; }
       if (!agent)   { res.status(404).json({ ok: false, error: 'Agent not found' });         return; }
 
-      // If setting as default, unset other defaults for this channel
-      if (body.isDefault) {
-        await db.channelBinding.updateMany({
-          where: { channelConfigId: req.params.channelId, isDefault: true },
-          data:  { isDefault: false },
-        });
-      }
-
+      // FIX [#397]: crear binding SIN scopeId ni isDefault
       const binding = await db.channelBinding.create({
         data: {
           channelConfigId: req.params.channelId,
           agentId:         body.agentId,
           scopeLevel:      body.scopeLevel ?? 'agent',
-          scopeId:         body.scopeId   ?? body.agentId,
-          isDefault:       body.isDefault ?? false,
         },
       });
 
       res.status(201).json({ ok: true, data: binding });
     } catch (err: unknown) {
-      // Unique constraint: binding already exists
       if (
         err instanceof Error &&
         err.message.includes('Unique constraint')
@@ -417,9 +355,9 @@ export function channelsApiRouter(
     }
   });
 
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   // DELETE /api/channels/:channelId/bindings/:bindingId
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   router.delete(
     '/:channelId/bindings/:bindingId',
     async (req: Request, res: Response): Promise<void> => {
@@ -446,17 +384,18 @@ export function channelsApiRouter(
 }
 
 // ---------------------------------------------------------------------------
-// Sanitize: nunca exponer secretsEncrypted al cliente
+// Sanitize: nunca exponer credentials al cliente
 // ---------------------------------------------------------------------------
 
 function sanitizeChannel(channel: Record<string, unknown>): Record<string, unknown> {
-  const { secretsEncrypted: _dropped, ...safe } = channel as {
+  // FIX [#396/#397]: eliminar credentials del payload de respuesta
+  const { credentials: _cred, secretsEncrypted: _enc, ...safe } = channel as {
+    credentials:      unknown;
     secretsEncrypted: unknown;
-    [key: string]: unknown;
+    [key: string]:    unknown;
   };
   return {
     ...safe,
-    // Indicate whether secrets are configured, without exposing them
-    hasSecrets: Boolean(_dropped),
+    hasCredentials: Boolean(_cred),
   };
 }
