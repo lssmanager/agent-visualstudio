@@ -2,17 +2,20 @@ FROM node:20-bookworm-slim AS builder
 
 WORKDIR /app
 
-RUN apt-get update -qq && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update -qq && apt-get install -y --no-install-recommends git openssl && rm -rf /var/lib/apt/lists/*
 
-COPY package*.json ./
+# Instalar pnpm globalmente
+RUN npm install -g pnpm
 
-RUN npm install --legacy-peer-deps --include=dev --ignore-scripts
+COPY pnpm-lock.yaml package.json ./
+
+RUN pnpm install --frozen-lockfile
 
 COPY . .
 
 RUN ./node_modules/.bin/prisma generate --schema ./packages/db/prisma/schema.prisma
 
-RUN npm run build:ci
+RUN pnpm run build
 
 # ── Runner ────────────────────────────────────────────────────────────────────
 FROM node:20-bookworm-slim AS runner
@@ -25,7 +28,11 @@ ENV NODE_ENV=production
 ENV PORT=3400
 ENV STUDIO_API_PORT=3400
 
-COPY --from=builder /app/package*.json ./
+# pnpm en runner por si se necesita en runtime
+RUN npm install -g pnpm
+
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/pnpm-lock.yaml ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/apps/web/dist ./apps/web/dist
