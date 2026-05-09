@@ -7,7 +7,10 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends git openssl
 # Instalar pnpm globalmente
 RUN npm install -g pnpm
 
-COPY pnpm-lock.yaml package.json ./
+# IMPORTANTE: pnpm-workspace.yaml debe copiarse antes de pnpm install
+# porque contiene la config de 'catalog' y 'onlyBuiltDependencies'
+# que debe coincidir exactamente con lo registrado en el lockfile.
+COPY pnpm-lock.yaml package.json pnpm-workspace.yaml ./
 
 RUN pnpm install --frozen-lockfile
 
@@ -33,6 +36,7 @@ RUN npm install -g pnpm
 
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/pnpm-lock.yaml ./
+COPY --from=builder /app/pnpm-workspace.yaml ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/apps/web/dist ./apps/web/dist
