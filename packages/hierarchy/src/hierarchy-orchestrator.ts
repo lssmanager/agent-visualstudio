@@ -18,13 +18,13 @@
  */
 
 import type { PrismaClient } from '@prisma/client'
-import { RunRepository } from '@lssmanager/run-engine'
+import { RunRepository } from '@lss/run-engine'
 import {
   RunStepEventEmitter,
   buildStatusChangeEvent,
-} from '@lssmanager/run-engine'
+} from '@lss/run-engine'
 
-// ── Constantes de módulo — se instancian UNA SOLA VEZ al importar ───────────
+// ── Constantes de módulo — se instancian UNA SOLA VEZ al importar ────────────
 
 /**
  * Palabras vacías filtradas antes del cálculo de score de capacidades.
@@ -49,7 +49,7 @@ const STOPWORDS_SET = new Set([
  */
 const TOKEN_SPLIT_RE = /[^a-záéíóúüñ\w]+/gi
 
-// ── Tipos públicos ───────────────────────────────────────────────────────────────────────────────
+// ── Tipos públicos ────────────────────────────────────────────────────────────────────────────────────
 
 export type HierarchyLevel = 'agency' | 'department' | 'workspace' | 'agent' | 'subagent'
 
@@ -203,7 +203,7 @@ export type RouteDecision =
   | { type: 'local';    node: HierarchyNode }
   | { type: 'delegate'; node: HierarchyNode; children: HierarchyNode[] }
 
-// ── [F2a-04] Tipos de matching por capacidad ─────────────────────────────────────────────────────
+// ── [F2a-04] Tipos de matching por capacidad ──────────────────────────────────────────────────────
 
 /** Score de afinidad de un agente para un task dado */
 export interface CapabilityScore {
@@ -260,7 +260,7 @@ export interface BlockedStatus {
   reason?:     string
 }
 
-// ── Opciones de configuración ────────────────────────────────────────────────────────────────
+// ── Opciones de configuración ──────────────────────────────────────────────────────────────────────────
 
 export interface OrchestratorOptions {
   /** Cuántas veces reintentar un subtask fallido antes de marcarlo como failed */
@@ -289,7 +289,7 @@ const DEFAULT_OPTIONS: Required<OrchestratorOptions> = {
   parallel:          true,
 }
 
-// ── [F2a-04] Funciones puras de tokenización y scoring ───────────────────────────────────────────
+// ── [F2a-04] Funciones puras de tokenización y scoring ───────────────────────────────────────────────
 
 /**
  * Tokeniza texto en un Set de palabras lowercase sin stopwords.
@@ -360,7 +360,7 @@ export function parseDelegateBlocks(raw: string): DelegateBlock[] {
   return blocks
 }
 
-// ── HierarchyOrchestrator ─────────────────────────────────────────────────────────────────
+// ── HierarchyOrchestrator ─────────────────────────────────────────────────────────────────────────────
 
 export class HierarchyOrchestrator {
   private readonly repo:       RunRepository
@@ -386,7 +386,7 @@ export class HierarchyOrchestrator {
     this.opts         = { ...DEFAULT_OPTIONS, ...opts }
   }
 
-  // ── API pública ──────────────────────────────────────────────────────────────────
+  // ── API pública ────────────────────────────────────────────────────────────────────────────
 
   async orchestrate(
     workspaceId: string,
@@ -559,7 +559,7 @@ export class HierarchyOrchestrator {
     }
   }
 
-  // ── Descomposición de tareas ─────────────────────────────────────────────────────────
+  // ── Descomposición de tareas ──────────────────────────────────────────────────────────────────────
 
   private async decomposeTasks(
     rootTask: string,
@@ -595,12 +595,6 @@ export class HierarchyOrchestrator {
     }]
   }
 
-  /**
-   * Descompone un task en subtareas usando el supervisor LLM.
-   *
-   * Formato de salida del LLM: bloques ---DELEGATE---/---END---.
-   * Si el LLM falla o no produce bloques válidos, se usa fallbackToCapabilityMatch().
-   */
   private async decomposeTask(
     rootTask: string,
     agents:   HierarchyNode[],
@@ -659,11 +653,6 @@ export class HierarchyOrchestrator {
     })
   }
 
-  /**
-   * Fallback cuando el supervisor no produce bloques válidos.
-   * Usa findSpecialistWithCapability() para asignación por Jaccard score.
-   * Nunca lanza. Siempre retorna al menos 1 HierarchyTask.
-   */
   private async fallbackToCapabilityMatch(
     rootTask: string,
     agents:   HierarchyNode[],
@@ -679,7 +668,7 @@ export class HierarchyOrchestrator {
     }]
   }
 
-  // ── Ejecución ──────────────────────────────────────────────────────────────────────────────
+  // ── Ejecución ──────────────────────────────────────────────────────────────────────────────────────
 
   private async executeParallel(
     subtasks:    HierarchyTask[],
@@ -843,7 +832,7 @@ export class HierarchyOrchestrator {
     }
   }
 
-  // ── Consolidación ────────────────────────────────────────────────────────────────────
+  // ── Consolidación ─────────────────────────────────────────────────────────────────────────────────
 
   private async consolidateResults(
     rootTask: string,
@@ -958,7 +947,7 @@ export class HierarchyOrchestrator {
     }
   }
 
-  // ── Utilidades privadas ──────────────────────────────────────────────────────────────────
+  // ── Utilidades privadas ────────────────────────────────────────────────────────────────────────────────
 
   private withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
     if (ms <= 0) return promise
@@ -1074,12 +1063,6 @@ export class HierarchyOrchestrator {
     return { type: 'delegate', node, children: node.children! }
   }
 
-  /**
-   * [F2a-03] Materializa una delegación en BD como RunStep { nodeType: 'delegation' }
-   * y lanza sub-orquestación sobre los hijos del nodo delegado.
-   *
-   * F2a-10: emite null→queued DESPUÉS de createStep() en BD.
-   */
   private async delegateTask(
     task:        HierarchyTask,
     decision:    Extract<RouteDecision, { type: 'delegate' }>,
@@ -1089,7 +1072,6 @@ export class HierarchyOrchestrator {
   ): Promise<SubtaskResult> {
     const start = Date.now()
 
-    // 1. Crear RunStep de delegación en BD
     const step = await this.repo.createStep({
       runId,
       nodeId:   decision.node.id,
@@ -1098,7 +1080,6 @@ export class HierarchyOrchestrator {
       input:    { task: task.description, ...task.input },
     })
 
-    // 2. F2a-10: Emitir null → queued DESPUÉS del write en BD (D-23d)
     if (this.emitter) {
       try {
         this.emitter.emitStepChanged(
@@ -1117,7 +1098,7 @@ export class HierarchyOrchestrator {
             totalTokens: null, costUsd: null,
           }),
         )
-      } catch { /* best-effort — nunca relanzar */ }
+      } catch { /* best-effort */ }
     }
 
     try {
@@ -1132,7 +1113,7 @@ export class HierarchyOrchestrator {
         this.repo.getPrisma(),
         this.supervisorFn,
         this.opts,
-        this.emitter,  // propagar emitter al sub-orquestador
+        this.emitter,
         { parentRunId: runId, parentStepId: step.id },
       )
 
