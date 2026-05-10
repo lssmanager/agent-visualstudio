@@ -10,6 +10,7 @@
  *   skipStep, completeStep, failStep, findAgentProfiles, getPrisma,
  *   getRunSteps (called by agent-executor)
  * - outputData field added to RunSpecExtended
+ * fix(tsc): runApproval -> approval (Prisma model name in schema is 'approval')
  */
 import type { PrismaClient, Prisma, RunStatus } from '@prisma/client';
 
@@ -259,13 +260,14 @@ export class RunRepository {
   }
 
   // ── createApproval ────────────────────────────────────────────────────────
+  // fix(tsc): renamed runApproval → approval to match Prisma schema model name
 
   async createApproval(data: {
     runId:   string;
     stepId?: string;
     reason?: string;
   }): Promise<{ id: string; runId: string; status: string }> {
-    const approval = await this.db.runApproval.create({
+    const approval = await this.db.approval.create({
       data: {
         runId:  data.runId,
         stepId: data.stepId ?? null,
@@ -277,6 +279,7 @@ export class RunRepository {
   }
 
   // ── waitForApproval ───────────────────────────────────────────────────────
+  // fix(tsc): renamed runApproval → approval to match Prisma schema model name
 
   async waitForApproval(
     approvalId: string,
@@ -284,7 +287,7 @@ export class RunRepository {
   ): Promise<{ status: string }> {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      const approval = await this.db.runApproval.findUnique({
+      const approval = await this.db.approval.findUnique({
         where: { id: approvalId },
       });
       if (approval && approval.status !== 'pending') {

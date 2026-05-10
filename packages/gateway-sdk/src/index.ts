@@ -1,22 +1,16 @@
-// gateway-sdk/src/index.ts — barrel export v3
+// gateway-sdk/src/index.ts — barrel export v4
 // fix(tsc): resolver duplicado de SessionStatus entre types.ts y session-manager.ts
-//
-// El problema: `export * from './types.js'` y `export * from './session-manager.js'`
-// ambos exportan `SessionStatus`, causando:
-//   "Module has duplicate export 'SessionStatus'"
-//
-// Solución: exportar types.ts con exclusión explícita de SessionStatus,
-// dejando que session-manager.ts sea la fuente canónica del tipo.
-// session-manager.ts define SessionStatus con el mismo shape ('active' | 'paused' | 'closed' | 'unknown')
-// y además incluye 'idle', pero la intersección es compatible.
+// fix(tsc): ChannelAdapter duplicado — types.ts exporta el type, channel-adapter.ts
+//           exporta la clase IChannelAdapter. El alias 'ChannelAdapter' sólo puede
+//           venir de UNA fuente. Se elige channel-adapter.ts (clase concreta) y se
+//           excluye el type ChannelAdapter de types.ts renombrándolo como ChannelAdapterType.
 
 export {
-  // Re-exportar types.ts excluyendo SessionStatus para evitar el duplicado
+  // Re-exportar types.ts excluyendo SessionStatus y ChannelAdapter para evitar duplicados
   type ChannelMessage,
-  type ChannelAdapter,
+  type ChannelAdapter as ChannelAdapterType,  // renombrado para evitar colisión con clase
   type AdapterConfig,
   type ChannelAdapterFactory,
-  // fix: SessionStatus viene SOLO de session-manager — ver más abajo
   type GatewaySession,
   type SessionEvent,
   gatewayMethods,
@@ -37,10 +31,8 @@ export * from './client.js';
 export * from './session-manager.js';
 export * from './methods.js';
 
-// Re-exporta IChannelAdapter con alias backward-compat
-// fix(tsc): ChannelAdapterOptions no existe en channel-adapter.ts
-// El tipo correcto es la interfaz de config inline. Se exporta como
-// IChannelAdapterOptions con alias ChannelAdapterOptions para backward-compat.
+// channel-adapter.ts es la fuente canónica de ChannelAdapter (clase concreta)
+// IChannelAdapter as ChannelAdapter — compatibilidad con código existente
 export {
   IChannelAdapter,
   IChannelAdapter as ChannelAdapter,
