@@ -226,10 +226,20 @@ export interface FlowNode {
   validationMessages?: string[];
 }
 
+/**
+ * FlowEdge — canonical edge type.
+ * fix(tsc): added `from` and `to` as aliases for `fromNodeId`/`toNodeId`
+ * to support legacy flow-engine code that accesses e.from / e.to directly.
+ * Both naming conventions are accepted; canonical fields are fromNodeId/toNodeId.
+ */
 export interface FlowEdge {
   id: string;
   fromNodeId: string;
   toNodeId: string;
+  /** @deprecated use fromNodeId. Kept for backward compat with flow-engine/agent-runner.ts */
+  from?: string;
+  /** @deprecated use toNodeId. Kept for backward compat with flow-engine/agent-runner.ts */
+  to?: string;
   kind: 'sequence' | 'condition_true' | 'condition_false' | 'handoff' | 'loop_back';
   label?: string;
   handoffPolicy?: HandoffPolicy;
